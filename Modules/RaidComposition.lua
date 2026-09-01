@@ -382,28 +382,31 @@ local function TryDockToEUIIcon()
     UpdateVisibility() -- retires the standalone bar
 
     dockedBadge = BuildDockedBadge(iconBtn)
-    hooksecurefunc(iconBtn, "Show", function()
-        if not DockingEnabled() then return end
-        dockedBadge:Show()
-        UpdateCounts()
-    end)
-    hooksecurefunc(iconBtn, "Hide", function()
-        dockedBadge:Hide()
-    end)
-    dockedBadge:SetShown(DockingEnabled() and iconBtn:IsShown())
-    UpdateCounts()
 
-    -- Belt-and-suspenders: EUI drives iconBtn's visibility through several
-    -- paths (driver transitions, the toggle keybind, collapse buttons), and
-    -- while every one of them ultimately calls Show()/Hide() on it (so the
-    -- hooksecurefunc above should catch all of them), periodically resyncing
-    -- straight off IsShown() costs nothing and guarantees the badge can never
-    -- drift out of sync with the icon it's supposed to mirror.
-    C_Timer.NewTicker(1, function()
-        if dockedBadge and dockedIconBtn then
-            dockedBadge:SetShown(DockingEnabled() and dockedIconBtn:IsShown())
-        end
-    end)
+    local function ResyncBadge()
+        dockedBadge:SetShown(DockingEnabled() and dockedIconBtn:IsShown())
+        UpdateCounts()
+    end
+
+    hooksecurefunc(iconBtn, "Show", ResyncBadge)
+    hooksecurefunc(iconBtn, "Hide", ResyncBadge)
+    -- Clicking the icon expands it (collapsed -> windows) via EUI's secure
+    -- "_onclick" attribute snippet, a separate execution path from the
+    -- button's ordinary OnClick script -- but the button still fires its
+    -- normal OnClick too (SecureHandlerClickTemplate adds the secure path,
+    -- it doesn't remove the standard one), so this observes the click
+    -- itself rather than waiting on Show/Hide to have actually propagated
+    -- yet, for zero added latency on this specific transition.
+    iconBtn:HookScript("OnClick", ResyncBadge)
+    ResyncBadge()
+
+    -- Belt-and-suspenders for every OTHER path that hides/shows the icon
+    -- (driver transitions, the toggle keybind, a shell's own collapse
+    -- button -- none of which we have a direct handle on to hook their
+    -- click): a fast poll costs nothing (one IsShown() check) and guarantees
+    -- the badge can't drift noticeably out of sync with the icon it mirrors,
+    -- even if some path doesn't route through Show/Hide the way the rest do.
+    C_Timer.NewTicker(0.15, ResyncBadge)
 end
 
 -- Freely reversible: if the badge/hooks already exist (dockInitialized),

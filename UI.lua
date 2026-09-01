@@ -1,37 +1,37 @@
 -- AniMods status/config panel. `/animods` (or `/ani`) toggles it.
 --
--- Two-pane layout: a left list of modules (status dot + name + a quick
--- enable/disable toggle right on the row) and a right detail pane showing
--- the selected module's full description/state/reason with room to actually
--- read it, instead of cramming everything into one narrow scrolling list.
+-- Built on DetailsFramework's own DF:CreateTabContainer -- one tab per
+-- registered module, each tab's body showing that module's title/state/
+-- description/dependencies/reason plus its GetInfoRows() content. This is a
+-- genuinely DF-native widget (real selected-tab border glow, proper title/
+-- button layout) rather than a hand-rolled sidebar imitating one: NSRT's own
+-- polished look turned out to come from a large amount of custom styling on
+-- top of DF (its own button/color helpers), not from DF itself, and
+-- replicating that by hand wasn't worth it for what this panel needs. Using
+-- DF's native tab widget directly gets a properly-DF-styled result for a
+-- fraction of the code, at the cost of tabs being a horizontal
+-- (wrapping) row rather than NSRT's vertical sidebar.
 --
--- The left list, header, and bottom controls are plain CreateFrame + standard
--- Blizzard XML templates -- same pattern NorthernSkyRaidTools's own options
--- window uses for its sidebar (hand-rolled, not a DF widget). The per-module
--- info rows (GetInfoRows()) are rendered with DetailsFramework instead,
--- matching how NSRT builds its *content* pages (DF:BuildMenu) -- that's where
--- our own hand-rolled rows had gotten genuinely cluttered with several
--- modules' worth of status+options crammed into tiny custom rows. DF is
--- bundled in Libs\DF (from Details, LGPL-2.1-or-later) rather than relied on
--- from NSRT/Details being installed -- AniMods should work without either.
+-- DetailsFramework is bundled in Libs\DF (from Details, LGPL-2.1-or-later)
+-- plus Libs\LibStub, loaded via the .toc before Core.lua/UI.lua -- not
+-- relied on from NSRT or Details being installed.
 
 local ADDON_NAME = "AniMods"
 local AniMods = _G.AniMods
 local DF = _G.DetailsFramework
 
-local ACCENT = { 1, 0.82, 0 }         -- gold accent, matches the rest of the workspace's addon titles
-local PANEL_BG = { 0.07, 0.07, 0.08, 0.96 }
-local PANE_BG = { 1, 1, 1, 0.03 }
-local ROW_HOVER = { ACCENT[1], ACCENT[2], ACCENT[3], 0.10 }
-local ROW_SELECTED = { ACCENT[1], ACCENT[2], ACCENT[3], 0.20 }
+local ACCENT = { 1, 0.82, 0 } -- gold accent, matches the rest of the workspace's addon titles
+local PANEL_WIDTH, PANEL_HEIGHT = 700, 500
 
-local PANEL_WIDTH, PANEL_HEIGHT = 640, 480
-local LEFT_WIDTH = 200
-local ROW_HEIGHT = 32
+-- Content clears the tab button band (DF/tabcontainer.md's documented
+-- pitfall: content anchored above this offset visually fights the buttons,
+-- which are siblings drawn on top, not children of the tab body).
+local CONTENT_TOP = -60
 
-local frame
-local rowPool = {}
-local selectedModule
+local tabContainer
+local tabFrameByName = {}
+local moduleOrder = {} -- names, index-aligned with the tab list
+local currentTabName
 
 -- Returns label, r, g, b for a module's current status entry.
 local function GetStateInfo(entry)
@@ -61,13 +61,13 @@ local function BuildCopyPopup()
     local f = CreateFrame("Frame", "AniModsCopyPopup", UIParent, "BackdropTemplate")
     f:SetSize(560, 340)
     f:SetPoint("CENTER")
-    f:SetFrameStrata("DIALOG") -- above the (non-DIALOG) AniMods panel it's opened from
+    f:SetFrameStrata("DIALOG") -- above the AniMods panel it's opened from
     f:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8x8",
         edgeFile = "Interface\\Buttons\\WHITE8x8",
         edgeSize = 1,
     })
-    f:SetBackdropColor(unpack(PANEL_BG))
+    f:SetBackdropColor(0.07, 0.07, 0.08, 0.96)
     f:SetBackdropBorderColor(1, 0.35, 0.35, 0.7)
     f:SetMovable(true)
     f:EnableMouse(true)
@@ -130,12 +130,11 @@ end
 --   { label = "Tanks", value = "2" }                                  -- status
 --   { label = "Party", get = fn, set = fn, note = "active now" }      -- toggle
 -- Rendered via DF:BuildMenuVolatile -- real polished widgets (checkboxes,
--- section labels) instead of hand-rolled rows. Specifically the *Volatile*
--- variant (DF's own pooled/rebuild-friendly one) rather than plain BuildMenu,
--- because a module's row count can change between refreshes (e.g.
--- RaidComposition shows fewer status rows solo than grouped) -- BuildMenu is
--- "set in stone" and doesn't support that; BuildMenuVolatile is built exactly
--- for menus that get rebuilt often.
+-- section labels). Specifically the *Volatile* variant (DF's own pooled/
+-- rebuild-friendly one) rather than plain BuildMenu, because a module's row
+-- count can change between refreshes (e.g. RaidComposition shows fewer status
+-- rows solo than grouped) -- BuildMenu is "set in stone" and doesn't support
+-- that; BuildMenuVolatile is built exactly for menus that get rebuilt often.
 
 local function BuildMenuOptionsFromInfoRows(rows)
     local menuOptions = {}
@@ -163,9 +162,8 @@ local function BuildMenuOptionsFromInfoRows(rows)
                     -- Rows can be part of a radio-style group (e.g. an icon
                     -- style picker: many get/set pairs, only one true at a
                     -- time) -- one click can change what every other row's
-                    -- get() now returns, so resync the whole panel
-                    -- immediately rather than waiting for the periodic
-                    -- refresh.
+                    -- get() now returns, so resync the whole tab immediately
+                    -- rather than waiting for the periodic refresh.
                     if AniMods.RefreshUI then AniMods.RefreshUI() end
                 end,
             })
@@ -184,351 +182,202 @@ end
 local function RefreshInfoRows(container, rows)
     if not container or not DF then return end
     local menuOptions = BuildMenuOptionsFromInfoRows(rows)
-    -- xOffset, yOffset, height, useColon, text/dropdown/switch templates
-    -- (nil = DF defaults), switchIsCheckbox = true (checkboxes, matching the
-    -- left module list's own toggles, rather than DF's slide-switch style).
     DF:BuildMenuVolatile(container, menuOptions, 6, -6, container:GetHeight(), false, nil, nil, nil, true)
 end
 
--- ── Right pane: detail view for the selected module ──────────────────────────
+-- ── Per-module tab content ────────────────────────────────────────────────────
 
-local function RefreshDetail()
-    local right = frame.right
-    local name = selectedModule
+local function RefreshModuleTab(name)
+    local tabFrame = name and tabFrameByName[name]
     local entry = name and AniMods.status[name]
-
-    if not entry then
-        right.title:SetText("")
-        right.state:SetText("")
-        right.desc:SetText("|cff888888Select a module on the left.|r")
-        right.deps:SetText("")
-        right.reason:SetText("")
-        right.toggle:Hide()
-        right.copyBtn:Hide()
-        right.key:SetText("")
-        RefreshInfoRows(right.infoContent, nil)
-        return
-    end
+    if not tabFrame or not entry then return end
 
     local stateLabel, r, g, b = GetStateInfo(entry)
-    right.title:SetText(entry.title)
-    right.state:SetText("[" .. stateLabel .. "]")
-    right.state:SetTextColor(r, g, b)
-    right.desc:SetText(entry.description or "|cff888888(no description)|r")
-    right.deps:SetText("Depends on: " .. (entry.dependencies or "(not documented)"))
+    tabFrame.stateText:SetText("[" .. stateLabel .. "]")
+    tabFrame.stateText:SetTextColor(r, g, b)
+    tabFrame.descText:SetText(entry.description or "|cff888888(no description)|r")
+    tabFrame.depsText:SetText("Depends on: " .. (entry.dependencies or "(not documented)"))
 
     if entry.errorTrace then
-        right.reason:SetText("|cffff4444" .. (entry.conditionReason or "error") .. "|r")
+        tabFrame.reasonText:SetText("|cffff4444" .. (entry.conditionReason or "error") .. "|r")
     elseif entry.conditionReason then
-        right.reason:SetText("|cffff9933" .. entry.conditionReason .. "|r")
+        tabFrame.reasonText:SetText("|cffff9933" .. entry.conditionReason .. "|r")
     else
-        right.reason:SetText("")
+        tabFrame.reasonText:SetText("")
     end
 
-    right.toggle:Show()
-    right.toggle:SetChecked(entry.userEnabled)
-    right.copyBtn:SetShown(entry.errorTrace ~= nil)
-    right.key:SetText("|cff555555" .. name .. "|r")
+    tabFrame.enableCheck:SetChecked(entry.userEnabled)
+    tabFrame.copyBtn:SetShown(entry.errorTrace ~= nil)
 
     -- Defensive: a module's GetInfoRows() runs on our UI thread on a timer
-    -- (see the OnUpdate refresh in BuildUI) -- one buggy module's debug hook
-    -- must never be able to break the whole panel.
+    -- (see the OnUpdate refresh below) -- one buggy module's debug hook must
+    -- never be able to break the whole panel.
     local rows
     if entry.module and entry.module.GetInfoRows then
         local ok, result = pcall(entry.module.GetInfoRows, entry.module)
         if ok then rows = result end
     end
-    RefreshInfoRows(right.infoContent, rows)
-end
-
--- ── Left pane: module list ────────────────────────────────────────────────────
-
-local function SelectModule(name)
-    selectedModule = name
-    for _, row in ipairs(rowPool) do
-        row.selectedBg:SetShown(row.moduleName == name)
-    end
-    RefreshDetail()
-end
-
-local function CreateRow(parent, index)
-    local row = CreateFrame("Button", nil, parent)
-    row:SetSize(LEFT_WIDTH - 10, ROW_HEIGHT - 2)
-    row:SetPoint("TOPLEFT", 2, -(index - 1) * ROW_HEIGHT)
-
-    row.hoverBg = row:CreateTexture(nil, "BACKGROUND")
-    row.hoverBg:SetAllPoints()
-    row.hoverBg:SetColorTexture(unpack(ROW_HOVER))
-    row.hoverBg:Hide()
-
-    row.selectedBg = row:CreateTexture(nil, "BACKGROUND")
-    row.selectedBg:SetAllPoints()
-    row.selectedBg:SetColorTexture(unpack(ROW_SELECTED))
-    row.selectedBg:Hide()
-
-    row.dot = row:CreateTexture(nil, "OVERLAY")
-    row.dot:SetSize(8, 8)
-    row.dot:SetPoint("LEFT", 4, 0)
-    row.dot:SetColorTexture(1, 1, 1)
-
-    row.title = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    row.title:SetPoint("LEFT", row.dot, "RIGHT", 6, 0)
-    row.title:SetPoint("RIGHT", row, "RIGHT", -26, 0)
-    row.title:SetJustifyH("LEFT")
-    row.title:SetWordWrap(false)
-
-    row.toggle = CreateFrame("CheckButton", nil, row, "UICheckButtonTemplate")
-    row.toggle:SetSize(18, 18)
-    row.toggle:SetPoint("RIGHT", -2, 0)
-    row.toggle:SetScript("OnClick", function(self)
-        if row.moduleName then
-            AniMods.SetModuleEnabled(row.moduleName, self:GetChecked())
-        end
-    end)
-
-    row:SetScript("OnClick", function() SelectModule(row.moduleName) end)
-    row:SetScript("OnEnter", function() row.hoverBg:Show() end)
-    row:SetScript("OnLeave", function() row.hoverBg:Hide() end)
-
-    return row
-end
-
-local function RefreshList()
-    local names = SortedModuleNames()
-
-    for _, row in ipairs(rowPool) do row:Hide() end
-
-    for i, name in ipairs(names) do
-        local entry = AniMods.status[name]
-        local row = rowPool[i]
-        if not row then
-            row = CreateRow(frame.left.content, i)
-            rowPool[i] = row
-        end
-
-        row.moduleName = name
-        row.title:SetText(entry.title)
-
-        local _, r, g, b = GetStateInfo(entry)
-        row.dot:SetVertexColor(r, g, b)
-        row.selectedBg:SetShown(name == selectedModule)
-        row.toggle:SetChecked(entry.userEnabled)
-
-        row:Show()
-    end
-
-    frame.left.content:SetHeight(math.max(1, #names * ROW_HEIGHT))
-
-    if not selectedModule and names[1] then
-        SelectModule(names[1])
-    end
+    RefreshInfoRows(tabFrame.infoContent, rows)
 end
 
 -- Called by Core.lua whenever module state changes (e.g. a toggle) so the
--- panel resyncs without a full rebuild.
+-- currently-open tab resyncs without waiting for the periodic refresh.
 function AniMods.RefreshUI()
-    if not frame then return end
-    RefreshList()
-    RefreshDetail()
+    if currentTabName then RefreshModuleTab(currentTabName) end
 end
 
--- ── Frame construction ────────────────────────────────────────────────────────
+local function BuildModuleTabContent(tabFrame, name)
+    -- Per-tab titleText dangles off the container's main title, not the tab
+    -- body (documented DF pitfall) -- redundant anyway since the selected tab
+    -- button already shows the module name.
+    if tabFrame.titleText then tabFrame.titleText:Hide() end
 
-local function BuildLeftPane(parent)
-    local left = CreateFrame("Frame", nil, parent)
-    left:SetPoint("TOPLEFT", 10, -50)
-    left:SetPoint("BOTTOMLEFT", 10, 40)
-    left:SetWidth(LEFT_WIDTH)
+    tabFrame.stateText = tabFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    tabFrame.stateText:SetPoint("TOPRIGHT", -16, CONTENT_TOP)
 
-    local bg = left:CreateTexture(nil, "BACKGROUND")
-    bg:SetAllPoints()
-    bg:SetColorTexture(unpack(PANE_BG))
+    tabFrame.nameText = tabFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    tabFrame.nameText:SetPoint("TOPLEFT", 16, CONTENT_TOP)
+    tabFrame.nameText:SetPoint("RIGHT", tabFrame.stateText, "LEFT", -8, 0)
+    tabFrame.nameText:SetJustifyH("LEFT")
+    tabFrame.nameText:SetWordWrap(false)
+    tabFrame.nameText:SetTextColor(unpack(ACCENT))
+    tabFrame.nameText:SetText(AniMods.status[name].title)
 
-    local inset = CreateFrame("Frame", nil, left, "InsetFrameTemplate")
-    inset:SetAllPoints()
+    tabFrame.descText = tabFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    tabFrame.descText:SetPoint("TOPLEFT", tabFrame.nameText, "BOTTOMLEFT", 0, -10)
+    tabFrame.descText:SetPoint("RIGHT", tabFrame, "RIGHT", -16, 0)
+    tabFrame.descText:SetJustifyH("LEFT")
+    tabFrame.descText:SetWordWrap(true)
+    tabFrame.descText:SetSpacing(3)
 
-    local scroll = CreateFrame("ScrollFrame", "AniModsListScroll", left, "UIPanelScrollFrameTemplate")
-    scroll:SetPoint("TOPLEFT", 4, -4)
-    scroll:SetPoint("BOTTOMRIGHT", -22, 4)
+    tabFrame.depsText = tabFrame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    tabFrame.depsText:SetPoint("TOPLEFT", tabFrame.descText, "BOTTOMLEFT", 0, -8)
+    tabFrame.depsText:SetPoint("RIGHT", tabFrame, "RIGHT", -16, 0)
+    tabFrame.depsText:SetJustifyH("LEFT")
+    tabFrame.depsText:SetWordWrap(true)
+    tabFrame.depsText:SetSpacing(3)
 
-    left.content = CreateFrame("Frame", nil, scroll)
-    scroll:SetScrollChild(left.content)
-    left.content:SetWidth(LEFT_WIDTH - 26)
-    left.content:SetHeight(1)
+    tabFrame.reasonText = tabFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    tabFrame.reasonText:SetPoint("TOPLEFT", tabFrame.depsText, "BOTTOMLEFT", 0, -8)
+    tabFrame.reasonText:SetPoint("RIGHT", tabFrame, "RIGHT", -16, 0)
+    tabFrame.reasonText:SetJustifyH("LEFT")
+    tabFrame.reasonText:SetWordWrap(true)
+    tabFrame.reasonText:SetSpacing(3)
 
-    return left
-end
+    -- Scrollable GetInfoRows() area.
+    local infoBg = CreateFrame("Frame", nil, tabFrame, "InsetFrameTemplate")
+    infoBg:SetPoint("TOPLEFT", tabFrame.reasonText, "BOTTOMLEFT", -4, -10)
+    infoBg:SetPoint("RIGHT", tabFrame, "RIGHT", -12, 0)
+    infoBg:SetPoint("BOTTOM", tabFrame, "BOTTOM", 0, 52)
 
-local function BuildRightPane(parent, leftPane)
-    local right = CreateFrame("Frame", nil, parent)
-    right:SetPoint("TOPLEFT", leftPane, "TOPRIGHT", 12, 0)
-    right:SetPoint("BOTTOMRIGHT", -10, 40)
-
-    local bg = right:CreateTexture(nil, "BACKGROUND")
-    bg:SetAllPoints()
-    bg:SetColorTexture(unpack(PANE_BG))
-
-    local inset = CreateFrame("Frame", nil, right, "InsetFrameTemplate")
-    inset:SetAllPoints()
-
-    right.state = right:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    right.state:SetPoint("TOPRIGHT", -14, -17)
-
-    right.title = right:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-    right.title:SetPoint("TOPLEFT", 14, -14)
-    right.title:SetPoint("RIGHT", right.state, "LEFT", -8, 0)
-    right.title:SetJustifyH("LEFT")
-    right.title:SetWordWrap(false)
-    right.title:SetTextColor(unpack(ACCENT))
-
-    right.desc = right:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    right.desc:SetPoint("TOPLEFT", right.title, "BOTTOMLEFT", 0, -12)
-    right.desc:SetPoint("RIGHT", right, "RIGHT", -14, 0)
-    right.desc:SetJustifyH("LEFT")
-    right.desc:SetWordWrap(true)
-    right.desc:SetSpacing(3)
-
-    -- Always visible (unlike `reason`, which only shows when something's
-    -- wrong) -- what this module needs to even be considered, independent of
-    -- whether that's currently satisfied.
-    right.deps = right:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    right.deps:SetPoint("TOPLEFT", right.desc, "BOTTOMLEFT", 0, -8)
-    right.deps:SetPoint("RIGHT", right, "RIGHT", -14, 0)
-    right.deps:SetJustifyH("LEFT")
-    right.deps:SetWordWrap(true)
-    right.deps:SetSpacing(3)
-
-    right.reason = right:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    right.reason:SetPoint("TOPLEFT", right.deps, "BOTTOMLEFT", 0, -10)
-    right.reason:SetPoint("RIGHT", right, "RIGHT", -14, 0)
-    right.reason:SetJustifyH("LEFT")
-    right.reason:SetWordWrap(true)
-    right.reason:SetSpacing(3)
-
-    -- Live status + per-item options (GetInfoRows()), scrollable since content
-    -- length varies per module.
-    local infoBg = CreateFrame("Frame", nil, right, "InsetFrameTemplate")
-    infoBg:SetPoint("TOPLEFT", right.reason, "BOTTOMLEFT", -4, -10)
-    infoBg:SetPoint("RIGHT", right, "RIGHT", -10, 0)
-    infoBg:SetPoint("BOTTOM", right, "BOTTOM", 0, 62)
-
-    local infoScroll = CreateFrame("ScrollFrame", "AniModsInfoScroll", infoBg, "UIPanelScrollFrameTemplate")
+    local infoScroll = CreateFrame("ScrollFrame", "AniModsTab" .. name .. "Scroll", infoBg, "UIPanelScrollFrameTemplate")
     infoScroll:SetPoint("TOPLEFT", 4, -4)
     infoScroll:SetPoint("BOTTOMRIGHT", -22, 4)
 
-    -- Named (not anonymous): DF's widget creation (BuildMenuVolatile) builds
-    -- default child widget names via "$parent..." substitution, which needs
-    -- this frame's own GetName() to resolve -- an anonymous parent here
-    -- throws "called $parent but parent was no name" from deep inside DF.
-    right.infoContent = CreateFrame("Frame", "AniModsInfoContent", infoScroll)
-    infoScroll:SetScrollChild(right.infoContent)
+    -- Named (not anonymous): DF's widget creation builds default child widget
+    -- names via "$parent..." substitution, which needs this frame's own
+    -- GetName() to resolve -- an anonymous parent throws "called $parent but
+    -- parent was no name" from deep inside DF.
+    tabFrame.infoContent = CreateFrame("Frame", "AniModsTab" .. name .. "Content", infoScroll)
+    infoScroll:SetScrollChild(tabFrame.infoContent)
     -- Generous fixed height rather than measuring DF's laid-out rows: content
-    -- shorter than this just leaves blank space at the bottom of the
-    -- scrollable area, which is harmless.
-    right.infoContent:SetHeight(1000)
+    -- shorter than this just leaves blank space at the bottom, which is
+    -- harmless.
+    tabFrame.infoContent:SetHeight(1000)
     infoScroll:SetScript("OnSizeChanged", function(self, w)
-        right.infoContent:SetWidth(w)
+        tabFrame.infoContent:SetWidth(w)
     end)
 
-    right.toggle = CreateFrame("CheckButton", nil, right, "UICheckButtonTemplate")
-    right.toggle:SetSize(24, 24)
-    right.toggle:SetPoint("BOTTOMLEFT", 10, 10)
-    right.toggle:SetScript("OnClick", function(self)
-        if selectedModule then
-            AniMods.SetModuleEnabled(selectedModule, self:GetChecked())
-        end
+    tabFrame.enableCheck = CreateFrame("CheckButton", nil, tabFrame, "UICheckButtonTemplate")
+    tabFrame.enableCheck:SetSize(22, 22)
+    tabFrame.enableCheck:SetPoint("BOTTOMLEFT", 12, 10)
+    tabFrame.enableCheck:SetScript("OnClick", function(self)
+        AniMods.SetModuleEnabled(name, self:GetChecked())
     end)
 
-    right.toggleLabel = right:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    right.toggleLabel:SetPoint("LEFT", right.toggle, "RIGHT", 4, 0)
-    right.toggleLabel:SetText("Enabled  |cff888888(/reload to apply)|r")
+    tabFrame.enableLabel = tabFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    tabFrame.enableLabel:SetPoint("LEFT", tabFrame.enableCheck, "RIGHT", 4, 0)
+    tabFrame.enableLabel:SetText("Enabled  |cff888888(/reload to apply)|r")
 
-    right.copyBtn = CreateFrame("Button", nil, right, "UIPanelButtonTemplate")
-    right.copyBtn:SetSize(110, 20)
-    right.copyBtn:SetPoint("BOTTOMRIGHT", -10, 40)
-    right.copyBtn:SetText("Show Error")
-    right.copyBtn:SetScript("OnClick", function()
-        local entry = selectedModule and AniMods.status[selectedModule]
+    tabFrame.copyBtn = CreateFrame("Button", nil, tabFrame, "UIPanelButtonTemplate")
+    tabFrame.copyBtn:SetSize(110, 20)
+    tabFrame.copyBtn:SetPoint("BOTTOMRIGHT", -12, 38)
+    tabFrame.copyBtn:SetText("Show Error")
+    tabFrame.copyBtn:SetScript("OnClick", function()
+        local entry = AniMods.status[name]
         if entry and entry.errorTrace then
             ShowCopyPopup(entry.title .. " — Enable() error", entry.errorTrace)
         end
     end)
-    right.copyBtn:Hide()
+    tabFrame.copyBtn:Hide()
 
-    right.key = right:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    right.key:SetPoint("BOTTOMRIGHT", -10, 14)
+    tabFrame.keyText = tabFrame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    tabFrame.keyText:SetPoint("BOTTOMRIGHT", -12, 12)
+    tabFrame.keyText:SetText("|cff555555" .. name .. "|r")
 
-    return right
+    tabFrameByName[name] = tabFrame
 end
 
-local function BuildUI()
-    if frame then return end
+-- ── Frame construction ────────────────────────────────────────────────────────
 
-    local f = CreateFrame("Frame", "AniModsFrame", UIParent, "BackdropTemplate")
-    f:SetSize(PANEL_WIDTH, PANEL_HEIGHT)
-    f:SetPoint("CENTER")
-    f:SetBackdrop({
-        bgFile = "Interface\\Buttons\\WHITE8x8",
-        edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = 1,
+local function BuildUI()
+    if tabContainer then return end
+
+    moduleOrder = SortedModuleNames()
+    local tabList = {}
+    for _, name in ipairs(moduleOrder) do
+        tabList[#tabList + 1] = { name = name, text = AniMods.status[name].title }
+    end
+
+    tabContainer = DF:CreateTabContainer(UIParent, "AniMods", "AniModsFrame", tabList, {
+        width = PANEL_WIDTH,
+        height = PANEL_HEIGHT,
+        button_width = 150,
+        button_selected_border_color = { ACCENT[1], ACCENT[2], ACCENT[3], 1 },
+    }, {
+        OnSelectIndex = function(container)
+            currentTabName = moduleOrder[container.CurrentIndex]
+            RefreshModuleTab(currentTabName)
+        end,
     })
-    f:SetBackdropColor(unpack(PANEL_BG))
-    f:SetBackdropBorderColor(ACCENT[1], ACCENT[2], ACCENT[3], 0.6)
-    f:SetMovable(true)
-    f:EnableMouse(true)
-    f:RegisterForDrag("LeftButton")
-    f:SetScript("OnDragStart", f.StartMoving)
-    f:SetScript("OnDragStop", f.StopMovingOrSizing)
-    f:Hide()
+    tabContainer:SetPoint("CENTER")
+    tabContainer:SetFrameStrata("MEDIUM")
     tinsert(_G.UISpecialFrames, "AniModsFrame")
 
-    f.title = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-    f.title:SetPoint("TOPLEFT", 14, -12)
-    f.title:SetText("AniMods")
-    f.title:SetTextColor(unpack(ACCENT))
+    for i, name in ipairs(moduleOrder) do
+        BuildModuleTabContent(tabContainer:GetTabFrameByIndex(i), name)
+    end
 
-    f.closeBtn = CreateFrame("Button", nil, f, "UIPanelCloseButton")
-    f.closeBtn:SetPoint("TOPRIGHT", -2, -2)
+    currentTabName = moduleOrder[1]
+    RefreshModuleTab(currentTabName)
 
-    f.hint = f:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    f.hint:SetPoint("TOPLEFT", 14, -34)
-    f.hint:SetText("Left: modules (click to select, checkbox to toggle). Right: details for the selected module.")
-
-    f.left = BuildLeftPane(f)
-    f.right = BuildRightPane(f, f.left)
-
-    f.reloadBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-    f.reloadBtn:SetSize(120, 22)
-    f.reloadBtn:SetPoint("BOTTOMRIGHT", -10, 10)
-    f.reloadBtn:SetText("Reload UI")
-    f.reloadBtn:SetScript("OnClick", function() ReloadUI() end)
-
-    f:SetScript("OnShow", function()
-        RefreshList()
-        RefreshDetail()
-    end)
-
-    -- Keep the selected module's info rows (live status/eligibility) fresh
+    -- Keep the currently-open tab's info rows (live status/eligibility) fresh
     -- while the panel is open. OnUpdate doesn't fire on hidden frames, so
     -- this naturally stops costing anything once the panel is closed.
-    local INFO_REFRESH_INTERVAL = 1.0
-    f.infoRefreshElapsed = 0
-    f:SetScript("OnUpdate", function(self, elapsed)
-        self.infoRefreshElapsed = self.infoRefreshElapsed + elapsed
-        if self.infoRefreshElapsed >= INFO_REFRESH_INTERVAL then
-            self.infoRefreshElapsed = 0
-            RefreshDetail()
+    local ticker = CreateFrame("Frame")
+    ticker.elapsed = 0
+    tabContainer:HookScript("OnHide", function() ticker:Hide() end)
+    tabContainer:HookScript("OnShow", function() ticker:Show() end)
+    ticker:SetScript("OnUpdate", function(self, elapsed)
+        self.elapsed = self.elapsed + elapsed
+        if self.elapsed >= 1.0 then
+            self.elapsed = 0
+            if currentTabName then RefreshModuleTab(currentTabName) end
         end
     end)
 
-    frame = f
+    -- DF doesn't guarantee a freshly-built container starts hidden; force it
+    -- so the very first /ani reliably *opens* the panel instead of closing
+    -- one the user never saw.
+    tabContainer:Hide()
+    ticker:Hide()
 end
 
 function AniMods.ToggleUI()
     BuildUI()
-    if frame:IsShown() then
-        frame:Hide()
+    if tabContainer:IsShown() then
+        tabContainer:Hide()
     else
-        frame:Show()
+        tabContainer:Show()
     end
 end

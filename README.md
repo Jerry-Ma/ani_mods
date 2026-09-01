@@ -83,37 +83,38 @@ and inspectable instead of silently double-hooking or crashing on a missing glob
 
 ## UI
 
-`/animods` opens the status panel: a two-pane layout, left list / right detail (same
-idea as AutoItemMacro's preset editor).
+`/animods` opens the status panel: one tab per registered module, built on
+DetailsFramework's own `DF:CreateTabContainer` — a real DF-native widget (proper
+title/button layout, a genuine selected-tab border glow in AniMods' gold accent color)
+rather than a hand-rolled imitation of one.
 
-- **Left** — every registered module, one row each: a colored status dot (active /
-  inactive-by-condition / disabled / failed), the module name, and a checkbox to
-  enable/disable it right there. Click a row to select it.
-- **Right** — the selected module's full title, state badge, description, an
-  always-visible "Depends on:" line (its `dependencies` field — what it needs,
-  regardless of whether that's currently satisfied), and (if inactive) the reason why,
-  with enough width to actually read it instead of truncating; below that, its
-  `GetInfoRows()` (see above) in a scrollable, DetailsFramework-rendered area (see
-  below); at the bottom, an enabled checkbox mirroring the row one. If a module's
-  `Enable()` threw an error (state "Failed"), a **Show Error** button appears and opens
-  a popup with the full traceback (message + `debugstack()`) in a selectable text box
-  (Ctrl+A/Ctrl+C) — not just the one-line `pcall` message. (WoW's addon sandbox doesn't
-  expose the `debug` table at all — only specific whitelisted globals like
-  `debugstack()`, which is what this actually uses.)
+Each tab shows: the module's full title, state badge, description, an always-visible
+"Depends on:" line (its `dependencies` field — what it needs, regardless of whether
+that's currently satisfied), and (if inactive) the reason why; below that, its
+`GetInfoRows()` (see above) in a scrollable, DetailsFramework-rendered area
+(`DF:BuildMenuVolatile` — see below); at the bottom, an enabled checkbox. If a
+module's `Enable()` threw an error (state "Failed"), a **Show Error** button appears
+and opens a popup with the full traceback (message + `debugstack()`) in a selectable
+text box (Ctrl+A/Ctrl+C) — not just the one-line `pcall` message. (WoW's addon
+sandbox doesn't expose the `debug` table at all — only specific whitelisted globals
+like `debugstack()`, which is what this actually uses.)
 
-The chrome (main panel, left module list, header, bottom controls, the copy-error
-popup) is plain `CreateFrame` + standard Blizzard XML templates, styled with a flat
-dark backdrop and a gold accent. That part matches how NorthernSkyRaidTools's own
-options window builds its sidebar — hand-rolled, not a library widget.
+Why DF for the whole panel, not just the content: NorthernSkyRaidTools's polished
+look turned out to come from a large amount of custom hand-rolled styling on top of
+DF (its own button/color helper module), not from DF itself — DF's own default panel
+chrome is fairly plain. Replicating that custom styling by hand wasn't worth it for
+what this panel needs, so instead of imitating NSRT's exact vertical-sidebar look,
+AniMods uses DF's own native tab-container widget directly — genuinely DF-styled
+throughout for a fraction of the code, at the cost of tabs being a horizontal
+(wrapping) row instead of a vertical sidebar. (DandersFrames_Options was also
+checked as a possible reference — it turned out not to use DetailsFramework at all,
+despite a same-named `DF` table of its own; it's a comparable amount of hand-rolled
+custom GUI code to NSRT's, just centralized more tidily. Not a shortcut.)
 
-The `GetInfoRows()` content area, though, is rendered with **DetailsFramework**
-(`DF:BuildMenuVolatile`) — matching how NSRT builds its own *content* pages
-(`DF:BuildMenu`). That's the part that had gotten genuinely cluttered as hand-rolled
-22px rows once a module accumulated several sections' worth of status + options; real
-DF widgets read cleaner at that density. `BuildMenuVolatile` specifically (not plain
+The `GetInfoRows()` content area specifically uses `DF:BuildMenuVolatile` (not plain
 `BuildMenu`, which is "set in stone") because a module's row count can change between
-refreshes — e.g. RaidComposition shows fewer status rows solo than grouped —
-and `BuildMenuVolatile` is DF's own pooled/rebuild-friendly variant for exactly that.
+refreshes — e.g. RaidComposition shows fewer status rows solo than grouped — and
+`BuildMenuVolatile` is DF's own pooled/rebuild-friendly variant for exactly that.
 
 DetailsFramework is bundled in `Libs\DF` (copied from `Details/Libs/DF`,
 LGPL-2.1-or-later — see `Libs\DF\LICENSE`) plus `Libs\LibStub`, loaded via the `.toc`
@@ -154,12 +155,16 @@ AniMods works without them.
   - **Docked badge** — a compact count badge anchored just below Raid Tools' own
     collapsed icon (the global frame `EllesmereUIRaidToolsIcon`), reading as part of
     that minimized display rather than a separate floating thing. Anchored via
-    `SetPoint` (just reads its rect) and synced via `hooksecurefunc(iconBtn,
-    "Show"/"Hide", ...)`, which reliably fires even though EUI's own visibility runs
-    through a secure `SecureHandlerStateTemplate` snippet — plus a 1-second resync
-    ticker as a belt-and-suspenders backstop, since a badge that silently stops
-    tracking the icon's actual visibility is worse than one that costs an extra cheap
-    `IsShown()` check every second. No taint risk (never touches EUI's secure frames,
+    `SetPoint` (just reads its rect) and synced three ways: `hooksecurefunc(iconBtn,
+    "Show"/"Hide", ...)` (fires even though EUI's own visibility runs through a secure
+    `SecureHandlerStateTemplate` snippet, not a plain Lua call); an `OnClick` hook on
+    the icon itself for zero-latency feedback on the expand action specifically
+    (`SecureHandlerClickTemplate`'s secure `_onclick` attribute is a separate execution
+    path from the button's ordinary `OnClick` script, which still fires too); and a
+    fast (0.15s) resync ticker as a belt-and-suspenders backstop for every other path
+    that can hide/show the icon (driver transitions, the toggle keybind, a shell's own
+    collapse button) that we don't have a direct handle on to hook. No taint risk (never
+    touches EUI's secure frames,
     only observes and anchors to them), and no tooltip of its own — a second popup
     fighting for the same screen space as EUI's own Raid Tools UI would just be
     annoying. Optional (**"Dock to its icon"** toggle in the "Integration" section,
