@@ -326,7 +326,7 @@ local function BuildRightPane(parent, leftPane)
     right.copyBtn = CreateFrame("Button", nil, right, "UIPanelButtonTemplate")
     right.copyBtn:SetSize(110, 20)
     right.copyBtn:SetPoint("BOTTOMRIGHT", -10, 40)
-    right.copyBtn:SetText("Copy Error")
+    right.copyBtn:SetText("Show Error")
     right.copyBtn:SetScript("OnClick", function()
         local entry = selectedModule and AniMods.status[selectedModule]
         if entry and entry.errorTrace then

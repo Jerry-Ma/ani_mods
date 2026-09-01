@@ -153,7 +153,7 @@ local function InitModules()
                 -- ErrorHandler joins "<message>\n<stack>" - the part before
                 -- the first newline is the original brief message, good
                 -- enough for the inline reason; the full thing is one click
-                -- away via the Copy Error button.
+                -- away via the Show Error button.
                 local briefMsg = tostring(err):match("^[^\n]*") or tostring(err)
                 reason = "error in Enable(): " .. briefMsg
             end
