@@ -117,15 +117,27 @@ happened to ship one gets removed/updated by CurseForge.
   module turned off, this still applies. Migrated from the standalone ChatContextSwitch
   addon (now removed). Half-baked / not fully tested — bugs may remain from the
   original.
-- **RaidComposition** — small movable Tank/Healer/DPS count bar, shown while in a
-  group; its detail pane shows the live counts (or "N/A" when solo). EllesmereUI's QoL
-  Raid Tools panel has no composition display the way NDui's raid tool does, so this
-  fills the gap; only active when EllesmereUIQoL is loaded and NDui is not. A
-  standalone frame rather than something injected into EllesmereUI's secure Raid Tools
-  shells (taint risk, fragile across EUI updates) — same approach NDui itself uses.
-  Counts via `UnitGroupRolesAssigned()` per group-unit token, not a port of NDui's
-  `GetRaidRosterInfo` roster-scanning logic — more direct/native, no manual
-  online/dead/subgroup filtering needed. Role icons use the modern
-  `UI-LFG-RoleIcon-*-Micro` atlases (the legacy `GetTexCoordsForRoleSmallCircle()`
-  helper no longer exists in this client), falling back to manual texcoords if the
-  atlas isn't available.
+- **RaidComposition** — Tank/Healer/DPS role counts while in a group; its detail pane
+  shows the live counts (or "N/A" when solo). EllesmereUI's QoL Raid Tools panel has no
+  composition display the way NDui's raid tool does, so this fills the gap; only active
+  when EllesmereUIQoL is loaded and NDui is not.
+
+  Docks a compact badge onto Raid Tools' own collapsed icon (the global frame
+  `EllesmereUIRaidToolsIcon`) so it reads as part of that minimized display, rather
+  than a separate floating thing — anchored to it (`SetPoint`, which just reads its
+  rect) and synced via `hooksecurefunc(iconBtn, "Show"/"Hide", ...)`, which reliably
+  fires even though EUI's own visibility runs through a secure
+  `SecureHandlerStateTemplate` snippet, without touching any of EUI's secure frames
+  directly (no taint risk). EllesmereUIQoL only builds that icon on first use of Raid
+  Tools with a non-"never" mode ("never" is its own default), so this retries on a
+  couple of login-delay timers and on `GROUP_ROSTER_UPDATE` in case it appears later;
+  until/unless it does, a small movable standalone bar is the fallback. Its detail pane
+  shows which mode is active ("Docked to EllesmereUI icon: Yes/No").
+
+  Role icons use the modern `UI-LFG-RoleIcon-*-Micro` atlases by default (the legacy
+  `GetTexCoordsForRoleSmallCircle()` helper no longer exists in this client), falling
+  back to manual texcoords if the atlas isn't available. The detail pane also offers
+  alternate icon styles borrowed from NDui_Plus's bundled media (LynUI, ElvUI-style,
+  three ToxiUI variants) — read straight from NDui_Plus's texture files by path, which
+  works whether or not NDui_Plus is actually enabled, so those options only appear when
+  it's installed at all. Selecting one applies live, no reload needed.

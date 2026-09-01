@@ -168,6 +168,12 @@ local function RefreshInfoRows(container, rows)
             row.checkbox:SetChecked(descriptor.get())
             row.checkbox:SetScript("OnClick", function(self)
                 descriptor.set(self:GetChecked())
+                -- Rows can be part of a radio-style group (e.g. an icon style
+                -- picker: many get/set pairs, only one true at a time) -- one
+                -- click can change what every other row's get() now returns,
+                -- so resync the whole list immediately rather than waiting
+                -- for the periodic refresh.
+                if AniMods.RefreshUI then AniMods.RefreshUI() end
             end)
             row.label:ClearAllPoints()
             row.label:SetPoint("LEFT", row.checkbox, "RIGHT", 4, 0)
