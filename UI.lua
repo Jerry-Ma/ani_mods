@@ -416,7 +416,11 @@ local function BuildRightPane(parent, leftPane)
     infoScroll:SetPoint("TOPLEFT", 4, -4)
     infoScroll:SetPoint("BOTTOMRIGHT", -22, 4)
 
-    right.infoContent = CreateFrame("Frame", nil, infoScroll)
+    -- Named (not anonymous): DF's widget creation (BuildMenuVolatile) builds
+    -- default child widget names via "$parent..." substitution, which needs
+    -- this frame's own GetName() to resolve -- an anonymous parent here
+    -- throws "called $parent but parent was no name" from deep inside DF.
+    right.infoContent = CreateFrame("Frame", "AniModsInfoContent", infoScroll)
     infoScroll:SetScrollChild(right.infoContent)
     -- Generous fixed height rather than measuring DF's laid-out rows: content
     -- shorter than this just leaves blank space at the bottom of the
