@@ -1,7 +1,7 @@
 -- ChatContextSwitch
 -- Switches the chat input context (channel) by pressing Tab in the chat edit box.
--- Originally extracted from NDui by Siweia. Designed to run alongside NDui (chat
--- module disabled) + Chattynator.
+-- Ported from NDui's chat module (NDui/Modules/Chat/Core.lua, module:UpdateTabChannelSwitch)
+-- — this is a faithful reimplementation of that logic, not the original file.
 --
 -- Behaviour:
 --   Tab        → cycle forward through active chat types
@@ -9,10 +9,26 @@
 --
 -- The cycle: SAY → PARTY → RAID → INSTANCE_CHAT → GUILD → OFFICER → (CHANNEL if in world channel) → SAY
 --
--- NOTE: half-baked / not fully tested, carried over as-is from the standalone
--- ChatContextSwitch addon. Known-good enough for daily use, bugs may remain.
+-- Only applies when NDui is not loaded — NDui already installs this exact behavior
+-- itself, so hooking it again here would be redundant (see `condition` below).
+-- Verified independent of the chat addon otherwise in use: EllesmereUIChat doesn't
+-- implement Tab channel-cycling at all, so this fills the gap for it.
+--
+-- Compatibility: if the edit box text already starts with "/", the handler bails
+-- out immediately and leaves Tab to Blizzard's default slash-command autocomplete
+-- cycling (present regardless of chat addon) — so this never interferes with that.
+--
+-- NOTE: half-baked / not fully tested, carried over as-is from the original
+-- standalone ChatContextSwitch addon. Known-good enough for daily use, bugs may
+-- remain.
 
-local ChatContextSwitch = {}
+local ChatContextSwitch = {
+    title = "Chat Context Switch",
+    description = "Tab/Shift+Tab cycles the chat channel (SAY/PARTY/RAID/.../world CHANNEL). Only active when NDui is not loaded.",
+    condition = {
+        forbids = { "NDui" },
+    },
+}
 
 -- ---------------------------------------------------------------------------
 -- World-channel support (CN region only)

@@ -6,4 +6,5 @@
 ## SavedVariables: AniModsDB
 
 Core.lua
+UI.lua
 Modules\ChatContextSwitch.lua
