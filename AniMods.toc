@@ -1,0 +1,9 @@
+## Interface: 120100
+## Title: AniMods
+## Notes: Ani's personal collection of small WoW UI patches and QoL tweaks, cherry-picked from other addons.
+## Author: Ani
+## Version: 1.0.0
+## SavedVariables: AniModsDB
+
+Core.lua
+Modules\ChatContextSwitch.lua
