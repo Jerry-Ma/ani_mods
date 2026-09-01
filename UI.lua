@@ -5,13 +5,19 @@
 -- the selected module's full description/state/reason with room to actually
 -- read it, instead of cramming everything into one narrow scrolling list.
 --
--- Self-contained on purpose: plain CreateFrame + BackdropTemplate + standard
--- Blizzard XML templates (UIPanelScrollFrameTemplate, UIPanelButtonTemplate).
--- No embedded third-party UI library — nothing to go stale if another addon
--- that happened to ship one gets removed/updated by CurseForge.
+-- The left list, header, and bottom controls are plain CreateFrame + standard
+-- Blizzard XML templates -- same pattern NorthernSkyRaidTools's own options
+-- window uses for its sidebar (hand-rolled, not a DF widget). The per-module
+-- info rows (GetInfoRows()) are rendered with DetailsFramework instead,
+-- matching how NSRT builds its *content* pages (DF:BuildMenu) -- that's where
+-- our own hand-rolled rows had gotten genuinely cluttered with several
+-- modules' worth of status+options crammed into tiny custom rows. DF is
+-- bundled in Libs\DF (from Details, LGPL-2.1-or-later) rather than relied on
+-- from NSRT/Details being installed -- AniMods should work without either.
 
 local ADDON_NAME = "AniMods"
 local AniMods = _G.AniMods
+local DF = _G.DetailsFramework
 
 local ACCENT = { 1, 0.82, 0 }         -- gold accent, matches the rest of the workspace's addon titles
 local PANEL_BG = { 0.07, 0.07, 0.08, 0.96 }
@@ -123,108 +129,65 @@ end
 --   { section = "Status" }                                            -- header
 --   { label = "Tanks", value = "2" }                                  -- status
 --   { label = "Party", get = fn, set = fn, note = "active now" }      -- toggle
--- Anything with `get` renders as a checkbox; a `section` renders as a divider
--- header (for grouping an otherwise-flat scrolling list into skimmable
--- chunks); everything else is a plain label/value readout. Deliberately the
--- one generic row shape both of AniMods' current modules need (a live status
--- line, a toggle with a live annotation, or a section break) rather than a
--- full widget framework.
+-- Rendered via DF:BuildMenuVolatile -- real polished widgets (checkboxes,
+-- section labels) instead of hand-rolled rows. Specifically the *Volatile*
+-- variant (DF's own pooled/rebuild-friendly one) rather than plain BuildMenu,
+-- because a module's row count can change between refreshes (e.g.
+-- RaidComposition shows fewer status rows solo than grouped) -- BuildMenu is
+-- "set in stone" and doesn't support that; BuildMenuVolatile is built exactly
+-- for menus that get rebuilt often.
 
-local INFO_ROW_HEIGHT = 22
-local SECTION_ROW_HEIGHT = 22
-local SECTION_GAP = 6 -- extra breathing room above a section header (not the first row)
-local infoRowPool = {}
-
-local function GetInfoRow(parent, index)
-    local row = infoRowPool[index]
-    if row then return row end
-
-    row = CreateFrame("Frame", nil, parent)
-    row:SetHeight(INFO_ROW_HEIGHT)
-
-    row.checkbox = CreateFrame("CheckButton", nil, row, "UICheckButtonTemplate")
-    row.checkbox:SetSize(18, 18)
-    row.checkbox:SetPoint("LEFT", 0, 0)
-
-    row.label = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    row.label:SetJustifyH("LEFT")
-
-    row.value = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    row.value:SetPoint("RIGHT", 0, 0)
-    row.value:SetJustifyH("RIGHT")
-
-    row.divider = row:CreateTexture(nil, "ARTWORK")
-    row.divider:SetHeight(1)
-    row.divider:SetPoint("BOTTOMLEFT", 0, 1)
-    row.divider:SetPoint("BOTTOMRIGHT", 0, 1)
-    row.divider:SetColorTexture(1, 1, 1, 0.15)
-    row.divider:Hide()
-
-    infoRowPool[index] = row
-    return row
-end
-
-local function RefreshInfoRows(container, rows)
-    for _, row in ipairs(infoRowPool) do row:Hide() end
-    if not container then return end
-
-    local y = 0
-    for i, descriptor in ipairs(rows or {}) do
-        local row = GetInfoRow(container, i)
-        row:ClearAllPoints()
-
+local function BuildMenuOptionsFromInfoRows(rows)
+    local menuOptions = {}
+    for _, descriptor in ipairs(rows or {}) do
         if descriptor.section then
-            local gap = (i > 1) and SECTION_GAP or 0
-            y = y + gap
-            row:SetHeight(SECTION_ROW_HEIGHT)
-            row:SetPoint("TOPLEFT", 0, -y)
-            row:SetPoint("RIGHT", container, "RIGHT", 0, 0)
-
-            row.checkbox:Hide()
-            row.value:SetText("")
-            row.label:ClearAllPoints()
-            row.label:SetPoint("BOTTOMLEFT", 0, 4)
-            row.label:SetText("|cffffd700" .. descriptor.section .. "|r")
-            row.divider:Show()
-
-            y = y + SECTION_ROW_HEIGHT
-        else
-            row:SetHeight(INFO_ROW_HEIGHT)
-            row:SetPoint("TOPLEFT", 0, -y)
-            row:SetPoint("RIGHT", container, "RIGHT", 0, 0)
-            row.divider:Hide()
-
-            if descriptor.get then
-                row.checkbox:Show()
-                row.checkbox:SetChecked(descriptor.get())
-                row.checkbox:SetScript("OnClick", function(self)
-                    descriptor.set(self:GetChecked())
+            if #menuOptions > 0 then
+                tinsert(menuOptions, { type = "blank" })
+            end
+            tinsert(menuOptions, {
+                type = "label",
+                get = function() return descriptor.section end,
+                text_template = DF:GetTemplate("font", "ORANGE_FONT_TEMPLATE"),
+            })
+        elseif descriptor.get then
+            local name = descriptor.label
+            if descriptor.note then
+                name = name .. "  |cff59ff59" .. descriptor.note .. "|r"
+            end
+            tinsert(menuOptions, {
+                type = "toggle",
+                name = name,
+                get = descriptor.get,
+                set = function(_, _, value)
+                    descriptor.set(value)
                     -- Rows can be part of a radio-style group (e.g. an icon
                     -- style picker: many get/set pairs, only one true at a
                     -- time) -- one click can change what every other row's
-                    -- get() now returns, so resync the whole list immediately
-                    -- rather than waiting for the periodic refresh.
+                    -- get() now returns, so resync the whole panel
+                    -- immediately rather than waiting for the periodic
+                    -- refresh.
                     if AniMods.RefreshUI then AniMods.RefreshUI() end
-                end)
-                row.label:ClearAllPoints()
-                row.label:SetPoint("LEFT", row.checkbox, "RIGHT", 4, 0)
-                row.label:SetText(descriptor.label)
-                row.value:SetText(descriptor.note and ("|cff59ff59" .. descriptor.note .. "|r") or "")
-            else
-                row.checkbox:Hide()
-                row.label:ClearAllPoints()
-                row.label:SetPoint("LEFT", 0, 0)
-                row.label:SetText(descriptor.label)
-                row.value:SetText(descriptor.value or "")
-            end
-
-            y = y + INFO_ROW_HEIGHT
+                end,
+            })
+        else
+            tinsert(menuOptions, {
+                type = "label",
+                get = function()
+                    return descriptor.label .. ":  |cffaaaaaa" .. tostring(descriptor.value or "") .. "|r"
+                end,
+            })
         end
-
-        row:Show()
     end
+    return menuOptions
+end
 
-    container:SetHeight(math.max(1, y))
+local function RefreshInfoRows(container, rows)
+    if not container or not DF then return end
+    local menuOptions = BuildMenuOptionsFromInfoRows(rows)
+    -- xOffset, yOffset, height, useColon, text/dropdown/switch templates
+    -- (nil = DF defaults), switchIsCheckbox = true (checkboxes, matching the
+    -- left module list's own toggles, rather than DF's slide-switch style).
+    DF:BuildMenuVolatile(container, menuOptions, 6, -6, container:GetHeight(), false, nil, nil, nil, true)
 end
 
 -- ── Right pane: detail view for the selected module ──────────────────────────
@@ -455,7 +418,10 @@ local function BuildRightPane(parent, leftPane)
 
     right.infoContent = CreateFrame("Frame", nil, infoScroll)
     infoScroll:SetScrollChild(right.infoContent)
-    right.infoContent:SetHeight(1)
+    -- Generous fixed height rather than measuring DF's laid-out rows: content
+    -- shorter than this just leaves blank space at the bottom of the
+    -- scrollable area, which is harmless.
+    right.infoContent:SetHeight(1000)
     infoScroll:SetScript("OnSizeChanged", function(self, w)
         right.infoContent:SetWidth(w)
     end)

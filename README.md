@@ -93,19 +93,34 @@ idea as AutoItemMacro's preset editor).
   always-visible "Depends on:" line (its `dependencies` field — what it needs,
   regardless of whether that's currently satisfied), and (if inactive) the reason why,
   with enough width to actually read it instead of truncating; below that, its
-  `GetInfoRows()` (see above) in a scrollable area; at the
-  bottom, an enabled checkbox mirroring the row one. If a module's `Enable()` threw an
-  error (state "Failed"), a **Show Error** button appears and opens a popup with the
-  full traceback (message + `debugstack()`) in a selectable text box (Ctrl+A/Ctrl+C) —
-  not just the one-line `pcall` message. (WoW's addon sandbox doesn't expose the
-  `debug` table at all — only specific whitelisted globals like `debugstack()`, which
-  is what this actually uses.)
+  `GetInfoRows()` (see above) in a scrollable, DetailsFramework-rendered area (see
+  below); at the bottom, an enabled checkbox mirroring the row one. If a module's
+  `Enable()` threw an error (state "Failed"), a **Show Error** button appears and opens
+  a popup with the full traceback (message + `debugstack()`) in a selectable text box
+  (Ctrl+A/Ctrl+C) — not just the one-line `pcall` message. (WoW's addon sandbox doesn't
+  expose the `debug` table at all — only specific whitelisted globals like
+  `debugstack()`, which is what this actually uses.)
 
-The panel is plain `CreateFrame` + standard Blizzard XML templates
-(`UIPanelScrollFrameTemplate`, `UIPanelButtonTemplate`, `UIPanelCloseButton`) styled
-with a flat dark backdrop and a gold accent — deliberately self-contained, no embedded
-third-party UI library, so there's nothing to go stale if some other addon that
-happened to ship one gets removed/updated by CurseForge.
+The chrome (main panel, left module list, header, bottom controls, the copy-error
+popup) is plain `CreateFrame` + standard Blizzard XML templates, styled with a flat
+dark backdrop and a gold accent. That part matches how NorthernSkyRaidTools's own
+options window builds its sidebar — hand-rolled, not a library widget.
+
+The `GetInfoRows()` content area, though, is rendered with **DetailsFramework**
+(`DF:BuildMenuVolatile`) — matching how NSRT builds its own *content* pages
+(`DF:BuildMenu`). That's the part that had gotten genuinely cluttered as hand-rolled
+22px rows once a module accumulated several sections' worth of status + options; real
+DF widgets read cleaner at that density. `BuildMenuVolatile` specifically (not plain
+`BuildMenu`, which is "set in stone") because a module's row count can change between
+refreshes — e.g. RaidComposition shows fewer status rows solo than grouped —
+and `BuildMenuVolatile` is DF's own pooled/rebuild-friendly variant for exactly that.
+
+DetailsFramework is bundled in `Libs\DF` (copied from `Details/Libs/DF`,
+LGPL-2.1-or-later — see `Libs\DF\LICENSE`) plus `Libs\LibStub`, loaded via the `.toc`
+before `Core.lua`/`UI.lua` — **not** relied on from NSRT or Details being installed.
+LibStub's own version-gated `NewLibrary` means this coexists safely if either of those
+also happen to be installed (whichever copy loads first wins; the rest no-op), but
+AniMods works without them.
 
 ## Commands
 
