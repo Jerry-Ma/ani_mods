@@ -54,19 +54,24 @@ for free:
 ```lua
 function MyFeature:GetInfoRows()
     return {
-        { label = "Some live value", value = tostring(someState) },             -- status
-        { label = "Include X",       get = GetX, set = SetX, note = "active now" }, -- toggle
+        { section = "Status" },                                                  -- section header
+        { label = "Some live value", value = tostring(someState) },              -- status
+        { section = "Options" },
+        { label = "Include X", get = GetX, set = SetX, note = "active now" },    -- toggle
     }
 end
 ```
 
 A row with `get`/`set` renders as a checkbox (for per-item options, e.g. which entries
-participate in some cycle/list); anything else is a plain read-only label/value line
-(for live internal state — "N/A" when not applicable is a normal `value`). Refreshed
-every second while the panel is open, plus whenever a toggle changes, so it reflects
-current reality, not what was true when the module loaded. This is deliberately the
-one generic row shape rather than a full widget framework — extend it if a module ever
-needs something `GetInfoRows()` can't express.
+participate in some cycle/list); a row with `section` renders as a divider header,
+grouping an otherwise-flat scrolling list into skimmable chunks (a module with several
+kinds of info — live status, integration facts, a style picker — should section them
+rather than dumping everything in one list); anything else is a plain read-only
+label/value line (for live internal state — "N/A" when not applicable is a normal
+`value`). Refreshed every second while the panel is open, plus whenever a toggle
+changes, so it reflects current reality, not what was true when the module loaded.
+This is deliberately the one generic row shape rather than a full widget framework —
+extend it if a module ever needs something `GetInfoRows()` can't express.
 
 ### Why conditions?
 
@@ -116,49 +121,57 @@ happened to ship one gets removed/updated by CurseForge.
 - **ChatContextSwitch** — cycle chat channel (SAY → PARTY → RAID → INSTANCE_CHAT →
   GUILD → OFFICER → world CHANNEL) with Tab / Shift+Tab in the chat edit box. Ported
   from NDui's chat module (`NDui/Modules/Chat/Core.lua`). Each channel in the cycle can
-  be individually enabled/disabled from its detail pane, which also shows which ones
-  are eligible right now ("active now"). Only active when NDui is *not currently
-  handling this itself* — NDui's own chat module installs the identical hook, but only
-  when enabled (`C.db["Chat"]["Disable"]` is falsy); if NDui is installed with its chat
-  module turned off, this still applies. Migrated from the standalone ChatContextSwitch
-  addon (now removed). Half-baked / not fully tested — bugs may remain from the
-  original.
+  be individually enabled/disabled from its detail pane ("Channels in the cycle"
+  section), which also shows which ones are eligible right now ("active now"). OFFICER
+  and the world CHANNEL default to off (most players aren't guild officers or in a
+  custom world channel — by default they'd just be two usually-dead stops every lap);
+  the rest default on. Only active when NDui is *not currently handling this itself* —
+  NDui's own chat module installs the identical hook, but only when enabled
+  (`C.db["Chat"]["Disable"]` is falsy); if NDui is installed with its chat module turned
+  off, this still applies. Migrated from the standalone ChatContextSwitch addon (now
+  removed). Half-baked / not fully tested — bugs may remain from the original.
 - **RaidComposition** — Tank/Healer/DPS role counts while in a group; its detail pane
-  shows the live counts (or "N/A" when solo). EllesmereUI's QoL Raid Tools panel has no
-  composition display the way NDui's raid tool does, so this fills the gap; only active
-  when EllesmereUIQoL is loaded and NDui is not.
+  ("Status" section) shows the live counts, or "N/A" when solo. EllesmereUI's QoL Raid
+  Tools panel has no composition display the way NDui's raid tool does, so this fills
+  the gap; only active when EllesmereUIQoL is loaded and NDui is not. Three independent
+  display surfaces:
 
-  Docks a compact badge onto Raid Tools' own collapsed icon (the global frame
-  `EllesmereUIRaidToolsIcon`) so it reads as part of that minimized display, rather
-  than a separate floating thing — anchored to it (`SetPoint`, which just reads its
-  rect) and synced via `hooksecurefunc(iconBtn, "Show"/"Hide", ...)`, which reliably
-  fires even though EUI's own visibility runs through a secure
-  `SecureHandlerStateTemplate` snippet, without touching any of EUI's secure frames
-  directly (no taint risk). EllesmereUIQoL only builds that icon on first use of Raid
-  Tools with a non-"never" mode ("never" is its own default), so this retries on a
-  couple of login-delay timers and on `GROUP_ROSTER_UPDATE` in case it appears later;
-  until/unless it does, a small movable standalone bar is the fallback. Its detail pane
-  shows both facts directly: EUI's actual configured Raid Tools mode (read via
-  `_G._EUI_RaidTools_DB()`, the plain read-only getter `EllesmereUIQoL_RaidTools.lua`
-  exposes for its own options panel — "never" means Raid Tools is off and nothing to
-  dock to exists yet) and whether docking to it has actually happened.
+  - **Docked badge** — a compact count badge anchored just below Raid Tools' own
+    collapsed icon (the global frame `EllesmereUIRaidToolsIcon`), reading as part of
+    that minimized display rather than a separate floating thing. Anchored via
+    `SetPoint` (just reads its rect) and synced via `hooksecurefunc(iconBtn,
+    "Show"/"Hide", ...)`, which reliably fires even though EUI's own visibility runs
+    through a secure `SecureHandlerStateTemplate` snippet — plus a 1-second resync
+    ticker as a belt-and-suspenders backstop, since a badge that silently stops
+    tracking the icon's actual visibility is worse than one that costs an extra cheap
+    `IsShown()` check every second. No taint risk (never touches EUI's secure frames,
+    only observes and anchors to them), and no tooltip of its own — a second popup
+    fighting for the same screen space as EUI's own Raid Tools UI would just be
+    annoying. Optional (**"Dock to its icon"** toggle in the "Integration" section,
+    live-reversible even though the underlying hook can't be un-hooked); when off, or
+    while EllesmereUIQoL only builds that icon on first use of Raid Tools with a
+    non-"never" mode ("never" is its own default — so nothing to dock to may not exist
+    yet), a small movable standalone bar is the fallback. The detail pane shows EUI's
+    actual configured mode directly (`_G._EUI_RaidTools_DB()`, the plain read-only
+    getter `EllesmereUIQoL_RaidTools.lua` exposes for its own options panel) and
+    whether docking has actually happened, as separate facts.
+  - **Broker (LDB) plugin** — registers as a LibDataBroker data source ("AniMods: Raid
+    Composition"), pickable as a widget in EllesmereUIDataBars (or any other
+    LDB-consuming data bar). EUI ships LibStub + LibDataBroker-1.1 itself
+    (`EllesmereUI/Libs/`) and `EllesmereUIDataBars` depends on `EllesmereUI`, so the
+    library is guaranteed present whenever this module's own condition holds — no need
+    to embed a copy. `text` carries all three role icons inline (`|A:atlas:h:w|a`,
+    styled to match whichever icon style is selected) plus their counts, and goes empty
+    — not "N/A" — when solo, so a transparent-background databar can just disappear.
+    Hovering shows a per-role breakdown of class-colored squares (one per member in
+    that role) rather than a bare count; clicking opens the AniMods panel.
 
-  Also registers as a LibDataBroker data source ("AniMods: Raid Composition") — pick it
-  as a widget in EllesmereUIDataBars (or any other LDB-consuming data bar). EUI ships
-  LibStub + LibDataBroker-1.1 itself (`EllesmereUI/Libs/`) and `EllesmereUIDataBars`
-  depends on `EllesmereUI`, so the library is guaranteed present whenever this module's
-  own condition holds — no need to embed a copy. `text` updates live with the counts
-  ("2/5/13", or "N/A" when solo); hover for a per-role tooltip breakdown; click opens
-  the AniMods panel. A third, independent display surface alongside the two above — the
-  detail pane's "Broker (LDB) plugin" row confirms whether it registered.
-
-  Role icons match EllesmereUI's own look: the detail pane offers the 5 of
-  EllesmereUIRaidFrames's 7 `ROLE_ICON_STYLES` that are plain Blizzard atlas name
-  references (Modern Circle/Styled/Classic Circle/Classic/Blizzard Default) — nothing
-  to embed, no license concern, since the atlas art lives in the game client, not in
-  any addon's files. Its other 2 styles ("modern", EUI's actual default, and
-  "blizzLight") point at EUI's own custom PNGs, which aren't reproduced here since EUI's
-  license is all-rights-reserved (unlike NDui_Plus, whose MIT-licensed role-icon media
-  was considered and dropped once this module started targeting EllesmereUI
-  specifically rather than being addon-agnostic). Selecting a style applies live, no
-  reload needed.
+  Role icons match EllesmereUI's own look ("Icon Style" section): 5 of
+  EllesmereUIRaidFrames's 7 `ROLE_ICON_STYLES` are plain Blizzard atlas name references
+  (Modern Circle/Styled/Classic Circle/Classic/Blizzard Default) — nothing to embed, no
+  license concern, since the atlas art lives in the game client, not in any addon's
+  files. Its other 2 styles ("modern", EUI's actual default, and "blizzLight") point at
+  EUI's own custom PNGs, not reproduced here since EUI's license is all-rights-reserved
+  (unlike NDui_Plus, whose MIT-licensed role-icon media was considered and dropped once
+  this module started targeting EllesmereUI specifically rather than being
+  addon-agnostic). Selecting a style applies live, no reload needed.

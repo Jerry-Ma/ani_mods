@@ -10,7 +10,9 @@
 -- The cycle: SAY -> PARTY -> RAID -> INSTANCE_CHAT -> GUILD -> OFFICER -> (CHANNEL if in world channel) -> SAY
 -- Each entry can be individually enabled/disabled from the AniMods status panel
 -- (see CYCLE_DEFS / GetInfoRows below) -- disabling one just removes it from the
--- cycle even when it would otherwise be eligible.
+-- cycle even when it would otherwise be eligible. OFFICER and CHANNEL default to
+-- OFF (see DEFAULT_DISABLED): most players aren't guild officers or in a custom
+-- world channel, so by default they'd just be two usually-dead stops every lap.
 --
 -- Compatibility: if the edit box text already starts with "/", the handler bails
 -- out immediately and leaves Tab to Blizzard's default slash-command autocomplete
@@ -68,9 +70,14 @@ local function ChannelDB()
     return AniModsDB.chatContextSwitch.channels
 end
 
+-- OFFICER and the world CHANNEL are off by default: most players aren't
+-- guild officers and aren't in a custom world channel, so cycling through
+-- them by default just adds two usually-dead stops to every lap.
+local DEFAULT_DISABLED = { OFFICER = true, CHANNEL = true }
+
 local function IsChannelEnabled(key)
     local v = ChannelDB()[key]
-    if v == nil then return true end -- default: on
+    if v == nil then return not DEFAULT_DISABLED[key] end
     return v
 end
 
@@ -216,6 +223,7 @@ end
 function ChatContextSwitch:GetInfoRows()
     local rows = {}
 
+    rows[#rows + 1] = { section = "Status" }
     local ns = _G.NDui
     rows[#rows + 1] = {
         label = "NDui chat module",
@@ -223,6 +231,7 @@ function ChatContextSwitch:GetInfoRows()
             or (NDuiChatModuleActive() and "enabled (NDui handles this)" or "disabled (we take over)"),
     }
 
+    rows[#rows + 1] = { section = "Channels in the cycle" }
     for _, def in ipairs(CYCLE_DEFS) do
         rows[#rows + 1] = {
             label = def.label,

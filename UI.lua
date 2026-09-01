@@ -120,14 +120,19 @@ end
 
 -- ── Info rows: each module's live "debug + options" readout ──────────────────
 -- A module's GetInfoRows() (optional) returns an ordered list of rows:
+--   { section = "Status" }                                            -- header
 --   { label = "Tanks", value = "2" }                                  -- status
 --   { label = "Party", get = fn, set = fn, note = "active now" }      -- toggle
--- Anything with `get` renders as a checkbox; everything else is a plain
--- label/value readout. This is deliberately the one generic row shape both
--- of AniMods' current modules need (a live status line, or a toggle with a
--- live annotation) rather than separate Status/Options mini-frameworks.
+-- Anything with `get` renders as a checkbox; a `section` renders as a divider
+-- header (for grouping an otherwise-flat scrolling list into skimmable
+-- chunks); everything else is a plain label/value readout. Deliberately the
+-- one generic row shape both of AniMods' current modules need (a live status
+-- line, a toggle with a live annotation, or a section break) rather than a
+-- full widget framework.
 
 local INFO_ROW_HEIGHT = 22
+local SECTION_ROW_HEIGHT = 22
+local SECTION_GAP = 6 -- extra breathing room above a section header (not the first row)
 local infoRowPool = {}
 
 local function GetInfoRow(parent, index)
@@ -148,6 +153,13 @@ local function GetInfoRow(parent, index)
     row.value:SetPoint("RIGHT", 0, 0)
     row.value:SetJustifyH("RIGHT")
 
+    row.divider = row:CreateTexture(nil, "ARTWORK")
+    row.divider:SetHeight(1)
+    row.divider:SetPoint("BOTTOMLEFT", 0, 1)
+    row.divider:SetPoint("BOTTOMRIGHT", 0, 1)
+    row.divider:SetColorTexture(1, 1, 1, 0.15)
+    row.divider:Hide()
+
     infoRowPool[index] = row
     return row
 end
@@ -160,35 +172,56 @@ local function RefreshInfoRows(container, rows)
     for i, descriptor in ipairs(rows or {}) do
         local row = GetInfoRow(container, i)
         row:ClearAllPoints()
-        row:SetPoint("TOPLEFT", 0, -y)
-        row:SetPoint("RIGHT", container, "RIGHT", 0, 0)
 
-        if descriptor.get then
-            row.checkbox:Show()
-            row.checkbox:SetChecked(descriptor.get())
-            row.checkbox:SetScript("OnClick", function(self)
-                descriptor.set(self:GetChecked())
-                -- Rows can be part of a radio-style group (e.g. an icon style
-                -- picker: many get/set pairs, only one true at a time) -- one
-                -- click can change what every other row's get() now returns,
-                -- so resync the whole list immediately rather than waiting
-                -- for the periodic refresh.
-                if AniMods.RefreshUI then AniMods.RefreshUI() end
-            end)
-            row.label:ClearAllPoints()
-            row.label:SetPoint("LEFT", row.checkbox, "RIGHT", 4, 0)
-            row.label:SetText(descriptor.label)
-            row.value:SetText(descriptor.note and ("|cff59ff59" .. descriptor.note .. "|r") or "")
-        else
+        if descriptor.section then
+            local gap = (i > 1) and SECTION_GAP or 0
+            y = y + gap
+            row:SetHeight(SECTION_ROW_HEIGHT)
+            row:SetPoint("TOPLEFT", 0, -y)
+            row:SetPoint("RIGHT", container, "RIGHT", 0, 0)
+
             row.checkbox:Hide()
+            row.value:SetText("")
             row.label:ClearAllPoints()
-            row.label:SetPoint("LEFT", 0, 0)
-            row.label:SetText(descriptor.label)
-            row.value:SetText(descriptor.value or "")
+            row.label:SetPoint("BOTTOMLEFT", 0, 4)
+            row.label:SetText("|cffffd700" .. descriptor.section .. "|r")
+            row.divider:Show()
+
+            y = y + SECTION_ROW_HEIGHT
+        else
+            row:SetHeight(INFO_ROW_HEIGHT)
+            row:SetPoint("TOPLEFT", 0, -y)
+            row:SetPoint("RIGHT", container, "RIGHT", 0, 0)
+            row.divider:Hide()
+
+            if descriptor.get then
+                row.checkbox:Show()
+                row.checkbox:SetChecked(descriptor.get())
+                row.checkbox:SetScript("OnClick", function(self)
+                    descriptor.set(self:GetChecked())
+                    -- Rows can be part of a radio-style group (e.g. an icon
+                    -- style picker: many get/set pairs, only one true at a
+                    -- time) -- one click can change what every other row's
+                    -- get() now returns, so resync the whole list immediately
+                    -- rather than waiting for the periodic refresh.
+                    if AniMods.RefreshUI then AniMods.RefreshUI() end
+                end)
+                row.label:ClearAllPoints()
+                row.label:SetPoint("LEFT", row.checkbox, "RIGHT", 4, 0)
+                row.label:SetText(descriptor.label)
+                row.value:SetText(descriptor.note and ("|cff59ff59" .. descriptor.note .. "|r") or "")
+            else
+                row.checkbox:Hide()
+                row.label:ClearAllPoints()
+                row.label:SetPoint("LEFT", 0, 0)
+                row.label:SetText(descriptor.label)
+                row.value:SetText(descriptor.value or "")
+            end
+
+            y = y + INFO_ROW_HEIGHT
         end
 
         row:Show()
-        y = y + INFO_ROW_HEIGHT
     end
 
     container:SetHeight(math.max(1, y))
