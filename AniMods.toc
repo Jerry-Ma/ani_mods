@@ -6,7 +6,7 @@
 ## SavedVariables: AniModsDB
 
 Libs\LibStub\LibStub.lua
-Libs\DF\load.xml
+Libs\AceGUI-3.0\AceGUI-3.0.xml
 
 Core.lua
 UI.lua

@@ -84,44 +84,44 @@ and inspectable instead of silently double-hooking or crashing on a missing glob
 ## UI
 
 `/animods` opens the status panel: one tab per registered module, built on
-DetailsFramework's own `DF:CreateTabContainer` — a real DF-native widget (proper
-title/button layout, a genuine selected-tab border glow in AniMods' gold accent color)
-rather than a hand-rolled imitation of one.
+**AceGUI-3.0** (`Frame` + `TabGroup` + `ScrollFrame`/List, with `Heading`/`CheckBox`/
+`Label`/`Button` widgets).
 
 Each tab shows: the module's full title, state badge, description, an always-visible
 "Depends on:" line (its `dependencies` field — what it needs, regardless of whether
 that's currently satisfied), and (if inactive) the reason why; below that, its
-`GetInfoRows()` (see above) in a scrollable, DetailsFramework-rendered area
-(`DF:BuildMenuVolatile` — see below); at the bottom, an enabled checkbox. If a
-module's `Enable()` threw an error (state "Failed"), a **Show Error** button appears
-and opens a popup with the full traceback (message + `debugstack()`) in a selectable
-text box (Ctrl+A/Ctrl+C) — not just the one-line `pcall` message. (WoW's addon
-sandbox doesn't expose the `debug` table at all — only specific whitelisted globals
-like `debugstack()`, which is what this actually uses.)
+`GetInfoRows()` (see above) rendered as AceGUI widgets (a `section` becomes a real
+`Heading` divider widget, a `get`/`set` row becomes a `CheckBox`, everything else a
+`Label`); at the bottom, an enabled checkbox. If a module's `Enable()` threw an error
+(state "Failed"), a **Show Error** button appears and opens a popup (an AceGUI `Frame`
++ `MultiLineEditBox`) with the full traceback (message + `debugstack()`) — not just
+the one-line `pcall` message. (WoW's addon sandbox doesn't expose the `debug` table at
+all — only specific whitelisted globals like `debugstack()`, which is what this
+actually uses.)
 
-Why DF for the whole panel, not just the content: NorthernSkyRaidTools's polished
-look turned out to come from a large amount of custom hand-rolled styling on top of
-DF (its own button/color helper module), not from DF itself — DF's own default panel
-chrome is fairly plain. Replicating that custom styling by hand wasn't worth it for
-what this panel needs, so instead of imitating NSRT's exact vertical-sidebar look,
-AniMods uses DF's own native tab-container widget directly — genuinely DF-styled
-throughout for a fraction of the code, at the cost of tabs being a horizontal
-(wrapping) row instead of a vertical sidebar. (DandersFrames_Options was also
-checked as a possible reference — it turned out not to use DetailsFramework at all,
-despite a same-named `DF` table of its own; it's a comparable amount of hand-rolled
-custom GUI code to NSRT's, just centralized more tidily. Not a shortcut.)
+**Why AceGUI, after two other things were tried and backed out:** a plain hand-rolled
+Blizzard-frame UI worked correctly every round but only ever drew a "too cluttered"
+complaint once a module's row count grew. DetailsFramework was tried next, twice,
+specifically to match NorthernSkyRaidTools's/EllesmereUI's polish — but DF's
+declarative `BuildMenu`/`BuildMenuVolatile` API has real sharp edges that are invisible
+from reading the code: a `nil` switch template silently aborted the whole menu build
+partway through with a real Lua error, and there is no way to catch that kind of thing
+without a live client to test against, which isn't available in this workflow. AceGUI
+is the most mature, most thoroughly documented WoW UI toolkit there is (a stable API
+since roughly Cataclysm, already embedded — and thus proven compatible in this exact
+folder — in 20+ addons), with a small, predictable widget-tree API (`Create`,
+`AddChild`, `SetCallback`) that's reliable to reason about correctly from the code
+alone. Confirmed against real precedent here too: `ClickableRaidBuffs` (an addon the
+user pointed to as looking good) uses this exact library
+(`ClickableRaidBuffs\Libs\Ace3\AceGUI-3.0`); `TwintopInsanityBar` (pointed to as
+looking bad) is fully custom hand-rolled, no AceGUI or DF — a reminder that "hand-built
+from scratch" isn't automatically better or worse, and a well-established library is
+the safer default.
 
-The `GetInfoRows()` content area specifically uses `DF:BuildMenuVolatile` (not plain
-`BuildMenu`, which is "set in stone") because a module's row count can change between
-refreshes — e.g. RaidComposition shows fewer status rows solo than grouped — and
-`BuildMenuVolatile` is DF's own pooled/rebuild-friendly variant for exactly that.
-
-DetailsFramework is bundled in `Libs\DF` (copied from `Details/Libs/DF`,
-LGPL-2.1-or-later — see `Libs\DF\LICENSE`) plus `Libs\LibStub`, loaded via the `.toc`
-before `Core.lua`/`UI.lua` — **not** relied on from NSRT or Details being installed.
-LibStub's own version-gated `NewLibrary` means this coexists safely if either of those
-also happen to be installed (whichever copy loads first wins; the rest no-op), but
-AniMods works without them.
+AceGUI-3.0 is bundled in `Libs\AceGUI-3.0` (copied from HandyNotes's embed, itself the
+standard Ace3 distribution, BSD-licensed) plus `Libs\LibStub`, loaded via the `.toc`
+before `Core.lua`/`UI.lua` — not relied on any other addon's copy being
+installed/loaded.
 
 ## Commands
 
