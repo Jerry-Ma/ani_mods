@@ -149,8 +149,13 @@ local function InitModules()
             if ok then
                 active = true
             else
-                reason = "error in Enable() — see 'Copy Error' below for the full trace"
                 errorTrace = err
+                -- ErrorHandler joins "<message>\n<stack>" - the part before
+                -- the first newline is the original brief message, good
+                -- enough for the inline reason; the full thing is one click
+                -- away via the Copy Error button.
+                local briefMsg = tostring(err):match("^[^\n]*") or tostring(err)
+                reason = "error in Enable(): " .. briefMsg
             end
         end
 
