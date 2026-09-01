@@ -65,11 +65,37 @@ local function UpdateVisibility()
     frame:SetShown(IsInGroup())
 end
 
+-- GetTexCoordsForRoleSmallCircle() no longer exists in this client (confirmed
+-- via a real "attempt to call a nil value" crash) -- Blizzard evidently
+-- dropped it at some point. DandersFrames (Frames/Core.lua) already worked
+-- around this: prefer the modern per-role atlas (sharper, and the thing that
+-- replaced the old function), falling back to a manual texcoord crop of the
+-- legacy sprite sheet only if that atlas isn't available.
+local ROLE_ATLAS = {
+    TANK    = "UI-LFG-RoleIcon-Tank-Micro",
+    HEALER  = "UI-LFG-RoleIcon-Healer-Micro",
+    DAMAGER = "UI-LFG-RoleIcon-DPS-Micro",
+}
+
+local ROLE_TEXCOORDS = {
+    TANK    = { 0, 0.296875, 0.296875, 0.65 },
+    HEALER  = { 0.296875, 0.59375, 0, 0.296875 },
+    DAMAGER = { 0.296875, 0.59375, 0.296875, 0.65 },
+}
+
 local function CreateRoleIcon(parent, role)
     local icon = parent:CreateTexture(nil, "ARTWORK")
     icon:SetSize(16, 16)
-    icon:SetTexture("Interface\\LFGFrame\\UI-LFG-ICON-PORTRAITROLES")
-    icon:SetTexCoord(GetTexCoordsForRoleSmallCircle(role))
+
+    local atlas = ROLE_ATLAS[role]
+    if atlas and C_Texture and C_Texture.GetAtlasInfo and C_Texture.GetAtlasInfo(atlas) then
+        icon:SetAtlas(atlas)
+    else
+        local c = ROLE_TEXCOORDS[role]
+        icon:SetTexture("Interface\\LFGFrame\\UI-LFG-ICON-PORTRAITROLES")
+        if c then icon:SetTexCoord(c[1], c[2], c[3], c[4]) end
+    end
+
     return icon
 end
 
