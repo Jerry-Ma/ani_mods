@@ -130,12 +130,18 @@ local function InitModules()
         end
 
         local active = false
+        local errorTrace
         if conditionMet and userEnabled and module.Enable then
-            local ok, err = pcall(module.Enable, module)
+            -- xpcall (not pcall) so the message handler runs while the stack
+            -- is still live: that's what makes debug.traceback() useful here,
+            -- rather than just the "file:line: message" a caught pcall error
+            -- gives you after the stack has already unwound.
+            local ok, err = xpcall(module.Enable, debug.traceback, module)
             if ok then
                 active = true
             else
-                reason = "error in Enable(): " .. tostring(err)
+                reason = "error in Enable() — see 'Copy Error' below for the full trace"
+                errorTrace = err
             end
         end
 
@@ -145,6 +151,7 @@ local function InitModules()
             description     = module.description,
             conditionMet    = conditionMet,
             conditionReason = reason,
+            errorTrace      = errorTrace,
             userEnabled     = userEnabled,
             active          = active,
         }

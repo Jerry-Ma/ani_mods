@@ -47,6 +47,77 @@ local function SortedModuleNames()
     return names
 end
 
+-- ── Copy-to-clipboard popup (for full Enable() error tracebacks) ─────────────
+
+local copyPopup
+
+local function BuildCopyPopup()
+    local f = CreateFrame("Frame", "AniModsCopyPopup", UIParent, "BackdropTemplate")
+    f:SetSize(560, 340)
+    f:SetPoint("CENTER")
+    f:SetFrameStrata("DIALOG") -- above the (non-DIALOG) AniMods panel it's opened from
+    f:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8x8",
+        edgeFile = "Interface\\Buttons\\WHITE8x8",
+        edgeSize = 1,
+    })
+    f:SetBackdropColor(unpack(PANEL_BG))
+    f:SetBackdropBorderColor(1, 0.35, 0.35, 0.7)
+    f:SetMovable(true)
+    f:EnableMouse(true)
+    f:RegisterForDrag("LeftButton")
+    f:SetScript("OnDragStart", f.StartMoving)
+    f:SetScript("OnDragStop", f.StopMovingOrSizing)
+    f:Hide()
+    tinsert(_G.UISpecialFrames, "AniModsCopyPopup")
+
+    f.title = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    f.title:SetPoint("TOPLEFT", 14, -12)
+    f.title:SetPoint("RIGHT", f, "RIGHT", -30, 0)
+    f.title:SetJustifyH("LEFT")
+    f.title:SetTextColor(1, 0.45, 0.45)
+
+    f.closeBtn = CreateFrame("Button", nil, f, "UIPanelCloseButton")
+    f.closeBtn:SetPoint("TOPRIGHT", -2, -2)
+
+    f.hint = f:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    f.hint:SetPoint("TOPLEFT", 14, -32)
+    f.hint:SetText("Ctrl+A, Ctrl+C to copy. Esc to close.")
+
+    local scrollBg = CreateFrame("Frame", nil, f, "InsetFrameTemplate")
+    scrollBg:SetPoint("TOPLEFT", 10, -50)
+    scrollBg:SetPoint("BOTTOMRIGHT", -10, 10)
+
+    local scroll = CreateFrame("ScrollFrame", "AniModsCopyScroll", scrollBg, "UIPanelScrollFrameTemplate")
+    scroll:SetPoint("TOPLEFT", 4, -4)
+    scroll:SetPoint("BOTTOMRIGHT", -26, 4)
+
+    local edit = CreateFrame("EditBox", nil, scroll)
+    edit:SetMultiLine(true)
+    edit:SetAutoFocus(false)
+    edit:SetFontObject(ChatFontNormal)
+    edit:SetWidth(500)
+    edit:SetHeight(800) -- generous fixed height; the scrollframe clips/scrolls it
+    edit:SetScript("OnEscapePressed", function(self)
+        self:ClearFocus()
+        f:Hide()
+    end)
+    scroll:SetScrollChild(edit)
+    f.edit = edit
+
+    copyPopup = f
+    return f
+end
+
+local function ShowCopyPopup(title, text)
+    local f = copyPopup or BuildCopyPopup()
+    f.title:SetText(title)
+    f.edit:SetText(text or "")
+    f:Show()
+    f.edit:SetFocus()
+    f.edit:HighlightText()
+end
+
 -- ── Right pane: detail view for the selected module ──────────────────────────
 
 local function RefreshDetail()
@@ -60,6 +131,7 @@ local function RefreshDetail()
         right.desc:SetText("|cff888888Select a module on the left.|r")
         right.reason:SetText("")
         right.toggle:Hide()
+        right.copyBtn:Hide()
         right.key:SetText("")
         return
     end
@@ -70,7 +142,9 @@ local function RefreshDetail()
     right.state:SetTextColor(r, g, b)
     right.desc:SetText(entry.description or "|cff888888(no description)|r")
 
-    if entry.conditionReason then
+    if entry.errorTrace then
+        right.reason:SetText("|cffff4444" .. (entry.conditionReason or "error") .. "|r")
+    elseif entry.conditionReason then
         right.reason:SetText("|cffff9933" .. entry.conditionReason .. "|r")
     else
         right.reason:SetText("")
@@ -78,6 +152,7 @@ local function RefreshDetail()
 
     right.toggle:Show()
     right.toggle:SetChecked(entry.userEnabled)
+    right.copyBtn:SetShown(entry.errorTrace ~= nil)
     right.key:SetText("|cff555555" .. name .. "|r")
 end
 
@@ -247,6 +322,18 @@ local function BuildRightPane(parent, leftPane)
     right.toggleLabel = right:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     right.toggleLabel:SetPoint("LEFT", right.toggle, "RIGHT", 4, 0)
     right.toggleLabel:SetText("Enabled  |cff888888(/reload to apply)|r")
+
+    right.copyBtn = CreateFrame("Button", nil, right, "UIPanelButtonTemplate")
+    right.copyBtn:SetSize(110, 20)
+    right.copyBtn:SetPoint("BOTTOMRIGHT", -10, 40)
+    right.copyBtn:SetText("Copy Error")
+    right.copyBtn:SetScript("OnClick", function()
+        local entry = selectedModule and AniMods.status[selectedModule]
+        if entry and entry.errorTrace then
+            ShowCopyPopup(entry.title .. " — Enable() error", entry.errorTrace)
+        end
+    end)
+    right.copyBtn:Hide()
 
     right.key = right:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     right.key:SetPoint("BOTTOMRIGHT", -10, 14)

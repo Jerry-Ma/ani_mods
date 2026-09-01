@@ -67,7 +67,10 @@ idea as AutoItemMacro's preset editor).
   enable/disable it right there. Click a row to select it.
 - **Right** — the selected module's full title, state badge, description, and (if
   inactive) the reason why, with enough width to actually read it instead of
-  truncating. A second enabled checkbox here mirrors the row one for convenience.
+  truncating. A second enabled checkbox here mirrors the row one for convenience. If a
+  module's `Enable()` threw an error (state "Failed"), a **Copy Error** button appears
+  and opens a popup with the full `debug.traceback()` in a selectable text box
+  (Ctrl+A/Ctrl+C) — not just the one-line `pcall` message.
 
 The panel is plain `CreateFrame` + standard Blizzard XML templates
 (`UIPanelScrollFrameTemplate`, `UIPanelButtonTemplate`, `UIPanelCloseButton`) styled
