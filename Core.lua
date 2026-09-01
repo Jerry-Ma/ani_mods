@@ -40,6 +40,15 @@ function AniMods.RegisterModule(name, module)
     modules[name] = module
 end
 
+-- WoW's addon sandbox does not expose the `debug` table at all (confirmed:
+-- indexing it is a nil-value error here), only specific whitelisted globals
+-- like debugstack(). This combines the original error message with the call
+-- stack from where it was thrown -- debugstack() only sees the stack, not the
+-- message, so xpcall's message handler has to glue both together itself.
+local function ErrorHandler(err)
+    return tostring(err) .. "\n" .. (debugstack(2) or "")
+end
+
 -- ── AddOn / version helpers ───────────────────────────────────────────────────
 
 local function IsAddOnLoaded(name)
@@ -132,11 +141,11 @@ local function InitModules()
         local active = false
         local errorTrace
         if conditionMet and userEnabled and module.Enable then
-            -- xpcall (not pcall) so the message handler runs while the stack
-            -- is still live: that's what makes debug.traceback() useful here,
-            -- rather than just the "file:line: message" a caught pcall error
-            -- gives you after the stack has already unwound.
-            local ok, err = xpcall(module.Enable, debug.traceback, module)
+            -- xpcall (not pcall) so ErrorHandler runs while the stack is
+            -- still live: that's what makes debugstack() useful here, rather
+            -- than just the "file:line: message" a caught pcall error gives
+            -- you after the stack has already unwound.
+            local ok, err = xpcall(module.Enable, ErrorHandler, module)
             if ok then
                 active = true
             else
