@@ -134,10 +134,13 @@ happened to ship one gets removed/updated by CurseForge.
   until/unless it does, a small movable standalone bar is the fallback. Its detail pane
   shows which mode is active ("Docked to EllesmereUI icon: Yes/No").
 
-  Role icons use the modern `UI-LFG-RoleIcon-*-Micro` atlases by default (the legacy
-  `GetTexCoordsForRoleSmallCircle()` helper no longer exists in this client), falling
-  back to manual texcoords if the atlas isn't available. The detail pane also offers
-  alternate icon styles borrowed from NDui_Plus's bundled media (LynUI, ElvUI-style,
-  three ToxiUI variants) — read straight from NDui_Plus's texture files by path, which
-  works whether or not NDui_Plus is actually enabled, so those options only appear when
-  it's installed at all. Selecting one applies live, no reload needed.
+  Role icons match EllesmereUI's own look: the detail pane offers the 5 of
+  EllesmereUIRaidFrames's 7 `ROLE_ICON_STYLES` that are plain Blizzard atlas name
+  references (Modern Circle/Styled/Classic Circle/Classic/Blizzard Default) — nothing
+  to embed, no license concern, since the atlas art lives in the game client, not in
+  any addon's files. Its other 2 styles ("modern", EUI's actual default, and
+  "blizzLight") point at EUI's own custom PNGs, which aren't reproduced here since EUI's
+  license is all-rights-reserved (unlike NDui_Plus, whose MIT-licensed role-icon media
+  was considered and dropped once this module started targeting EllesmereUI
+  specifically rather than being addon-agnostic). Selecting a style applies live, no
+  reload needed.

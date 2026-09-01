@@ -31,7 +31,7 @@
 
 local RaidComposition = {
     title = "Raid Composition",
-    description = "Tank/Healer/DPS role counts while in a group. Docks onto EllesmereUI's Raid Tools collapsed icon when available; otherwise a small movable bar.",
+    description = "Tank/Healer/DPS role counts while in a group, styled to match EllesmereUI. Docks onto EllesmereUI's Raid Tools collapsed icon when available; otherwise a small movable bar.",
     condition = {
         requires = { "EllesmereUIQoL" },
         forbids = { "NDui" },
@@ -68,103 +68,52 @@ end
 -- ---------------------------------------------------------------------------
 -- Role icon styles
 -- ---------------------------------------------------------------------------
--- "blizzard" needs nothing else installed. The rest reuse NDui_Plus's bundled
--- role-icon media (Media/Texture/<style>/<Tank|Healer|DPS>) -- texture files
--- are read straight off disk by path, independent of whether NDui_Plus is
--- currently enabled/loaded, so this works even if NDui_Plus is only present
--- (not necessarily active) alongside EllesmereUI/AniMods.
-
-local NDUI_PLUS_TEX = "Interface\\AddOns\\NDui_Plus\\Media\\Texture\\"
-
+-- Since this module docks onto EllesmereUI's own Raid Tools icon, its role
+-- icons should look like EllesmereUI's, not some other addon's. Sourced from
+-- EllesmereUIRaidFrames.lua's own ROLE_ICON_STYLES table (7 variants there).
+-- These 5 are pure Blizzard atlas name references -- no EUI-owned asset
+-- involved, just the same public atlas API anyone can use, so nothing needs
+-- copying and there's no license concern reusing them. Its other 2 styles
+-- ("modern", the actual EUI default, and "blizzLight") point at EUI's own
+-- custom PNGs under EllesmereUIRaidFrames\Media\ -- deliberately NOT
+-- reproduced here: EUI's license.txt is "all rights reserved" (no
+-- redistribution permission), so we stick to what's safe to reference.
 local ICON_STYLES = {
-    blizzard = {
-        name = "Blizzard (default)",
-        -- GetTexCoordsForRoleSmallCircle() no longer exists in this client
-        -- (confirmed via a real "attempt to call a nil value" crash) --
-        -- Blizzard evidently dropped it. Prefer the modern per-role atlas
-        -- (sharper, and the thing that replaced the old function), falling
-        -- back to a manual texcoord crop of the legacy sprite sheet only if
-        -- that atlas isn't available (mirrors DandersFrames/Frames/Core.lua).
-        atlas = {
-            TANK    = "UI-LFG-RoleIcon-Tank-Micro",
-            HEALER  = "UI-LFG-RoleIcon-Healer-Micro",
-            DAMAGER = "UI-LFG-RoleIcon-DPS-Micro",
-        },
-        legacyTexture = "Interface\\LFGFrame\\UI-LFG-ICON-PORTRAITROLES",
-        legacyTexCoord = {
-            TANK    = { 0, 0.296875, 0.296875, 0.65 },
-            HEALER  = { 0.296875, 0.59375, 0, 0.296875 },
-            DAMAGER = { 0.296875, 0.59375, 0.296875, 0.65 },
-        },
+    moderncircle = {
+        name = "Modern Circle",
+        atlas = { TANK = "UI-LFG-RoleIcon-Tank", HEALER = "UI-LFG-RoleIcon-Healer", DAMAGER = "UI-LFG-RoleIcon-DPS" },
     },
-    lynui = {
-        name = "NDui_Plus: LynUI",
-        texture = {
-            TANK = NDUI_PLUS_TEX .. "LynUI\\Tank", HEALER = NDUI_PLUS_TEX .. "LynUI\\Healer", DAMAGER = NDUI_PLUS_TEX .. "LynUI\\DPS",
-        },
+    styled = {
+        name = "Styled",
+        atlas = { TANK = "UI-LFG-RoleIcon-Tank-Background", HEALER = "UI-LFG-RoleIcon-Healer-Background", DAMAGER = "UI-LFG-RoleIcon-DPS-Background" },
     },
-    elvui = {
-        name = "NDui_Plus: ElvUI",
-        texture = {
-            TANK = NDUI_PLUS_TEX .. "ElvUI\\Tank", HEALER = NDUI_PLUS_TEX .. "ElvUI\\Healer", DAMAGER = NDUI_PLUS_TEX .. "ElvUI\\DPS",
-        },
+    classiccircle = {
+        name = "Classic Circle",
+        atlas = { TANK = "UI-LFG-RoleIcon-Tank-Micro-GroupFinder", HEALER = "UI-LFG-RoleIcon-Healer-Micro-GroupFinder", DAMAGER = "UI-LFG-RoleIcon-DPS-Micro-GroupFinder" },
     },
-    toxiui_white = {
-        name = "NDui_Plus: ToxiUI White",
-        texture = {
-            TANK = NDUI_PLUS_TEX .. "ToxiUI\\WhiteTank", HEALER = NDUI_PLUS_TEX .. "ToxiUI\\WhiteHeal", DAMAGER = NDUI_PLUS_TEX .. "ToxiUI\\WhiteDPS",
-        },
+    classic = {
+        name = "Classic",
+        atlas = { TANK = "roleicon-tiny-tank", HEALER = "roleicon-tiny-healer", DAMAGER = "roleicon-tiny-dps" },
     },
-    toxiui_new = {
-        name = "NDui_Plus: ToxiUI New",
-        texture = {
-            TANK = NDUI_PLUS_TEX .. "ToxiUI\\NewTank", HEALER = NDUI_PLUS_TEX .. "ToxiUI\\NewHeal", DAMAGER = NDUI_PLUS_TEX .. "ToxiUI\\NewDPS",
-        },
-    },
-    toxiui_stylized = {
-        name = "NDui_Plus: ToxiUI Stylized",
-        texture = {
-            TANK = NDUI_PLUS_TEX .. "ToxiUI\\StylizedTank", HEALER = NDUI_PLUS_TEX .. "ToxiUI\\StylizedHeal", DAMAGER = NDUI_PLUS_TEX .. "ToxiUI\\StylizedDPS",
-        },
+    blizzdefault = {
+        name = "Blizzard Default",
+        atlas = { TANK = "GM-icon-role-tank", HEALER = "GM-icon-role-healer", DAMAGER = "GM-icon-role-dps" },
     },
 }
 
-local ICON_STYLE_ORDER = { "blizzard", "lynui", "elvui", "toxiui_white", "toxiui_new", "toxiui_stylized" }
-
-local function NDuiPlusInstalled()
-    local getMeta = (_G.C_AddOns and _G.C_AddOns.GetAddOnMetadata) or _G.GetAddOnMetadata
-    -- Works for an addon that's merely present on disk, not just loaded --
-    -- exactly what we need since we're reading its texture files by path,
-    -- not calling into its Lua.
-    return getMeta and getMeta("NDui_Plus", "Title") ~= nil
-end
+local ICON_STYLE_ORDER = { "moderncircle", "styled", "classiccircle", "classic", "blizzdefault" }
 
 local function GetIconStyle()
     local key = ModuleDB().iconStyle
     if key and ICON_STYLES[key] then return key end
-    return "blizzard"
+    return "moderncircle"
 end
 
 -- Applies a style to an existing icon texture object -- used both when a
 -- role icon is first created and to live-restyle it when the option changes.
 local function ApplyRoleIcon(icon, role, styleKey)
-    local style = ICON_STYLES[styleKey] or ICON_STYLES.blizzard
-
-    if style.texture and style.texture[role] then
-        icon:SetTexture(style.texture[role])
-        icon:SetTexCoord(0, 1, 0, 1)
-        return
-    end
-
-    local atlas = style.atlas and style.atlas[role]
-    if atlas and C_Texture and C_Texture.GetAtlasInfo and C_Texture.GetAtlasInfo(atlas) then
-        icon:SetAtlas(atlas)
-        return
-    end
-
-    icon:SetTexture(style.legacyTexture or "Interface\\LFGFrame\\UI-LFG-ICON-PORTRAITROLES")
-    local c = style.legacyTexCoord and style.legacyTexCoord[role]
-    if c then icon:SetTexCoord(c[1], c[2], c[3], c[4]) else icon:SetTexCoord(0, 1, 0, 1) end
+    local style = ICON_STYLES[styleKey] or ICON_STYLES.moderncircle
+    icon:SetAtlas(style.atlas[role])
 end
 
 -- ---------------------------------------------------------------------------
@@ -344,17 +293,14 @@ function RaidComposition:GetInfoRows()
         value = usingDockedMode and "Yes" or "No (standalone bar; Raid Tools icon not found)",
     }
 
-    local hasNDuiPlus = NDuiPlusInstalled()
     local currentStyle = GetIconStyle()
     for _, key in ipairs(ICON_STYLE_ORDER) do
-        if key == "blizzard" or hasNDuiPlus then
-            rows[#rows + 1] = {
-                label = "Icon style: " .. ICON_STYLES[key].name,
-                get   = function() return GetIconStyle() == key end,
-                set   = function(v) if v then SetIconStyle(key) end end,
-                note  = (currentStyle == key) and "selected" or nil,
-            }
-        end
+        rows[#rows + 1] = {
+            label = "Icon style: " .. ICON_STYLES[key].name,
+            get   = function() return GetIconStyle() == key end,
+            set   = function(v) if v then SetIconStyle(key) end end,
+            note  = (currentStyle == key) and "selected" or nil,
+        }
     end
 
     return rows
