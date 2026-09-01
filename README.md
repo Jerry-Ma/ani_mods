@@ -92,3 +92,11 @@ happened to ship one gets removed/updated by CurseForge.
   loaded, since NDui already provides this itself. Migrated from the standalone
   ChatContextSwitch addon (now removed). Half-baked / not fully tested — bugs may
   remain from the original.
+- **RaidComposition** — small movable Tank/Healer/DPS count bar, shown while in a
+  group. EllesmereUI's QoL Raid Tools panel has no composition display the way NDui's
+  raid tool does, so this fills the gap; only active when EllesmereUIQoL is loaded and
+  NDui is not. A standalone frame rather than something injected into EllesmereUI's
+  secure Raid Tools shells (taint risk, fragile across EUI updates) — same approach
+  NDui itself uses. Counts via `UnitGroupRolesAssigned()` per group-unit token, not a
+  port of NDui's `GetRaidRosterInfo` roster-scanning logic — more direct/native, no
+  manual online/dead/subgroup filtering needed.

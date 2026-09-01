@@ -260,7 +260,6 @@ local function BuildUI()
     local f = CreateFrame("Frame", "AniModsFrame", UIParent, "BackdropTemplate")
     f:SetSize(PANEL_WIDTH, PANEL_HEIGHT)
     f:SetPoint("CENTER")
-    f:SetFrameStrata("DIALOG")
     f:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8x8",
         edgeFile = "Interface\\Buttons\\WHITE8x8",
