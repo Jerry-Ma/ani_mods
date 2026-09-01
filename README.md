@@ -71,10 +71,12 @@ happened to ship one gets removed/updated by CurseForge.
 
 ## Commands
 
-- `/animods` — open the status panel
-- `/animods list` — print module states to chat
-- `/animods enable <name>` / `/animods disable <name>` — toggle a module (takes effect
-  after `/reload`)
+`/animods` (or the shorter `/ani`):
+
+- `/ani` — open the status panel
+- `/ani list` — print module states to chat
+- `/ani enable <name>` / `/ani disable <name>` — toggle a module (takes effect after
+  `/reload`)
 
 ## Current modules
 

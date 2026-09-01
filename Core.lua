@@ -188,6 +188,7 @@ end)
 -- ── Slash commands ────────────────────────────────────────────────────────────
 
 _G.SLASH_ANIMODS1 = "/animods"
+_G.SLASH_ANIMODS2 = "/ani"
 _G.SlashCmdList["ANIMODS"] = function(msg)
     msg = strtrim((msg or ""):lower())
     local cmd, name = msg:match("^(%S*)%s*(.-)$")
