@@ -132,7 +132,14 @@ local function BuildCycles()
         local chatType, isActive = def.chatType, def.IsActive
         list[#list + 1] = {
             chatType = chatType,
-            IsActive = function(editbox)
+            -- Called as `next:IsActive(editbox)` below (colon syntax), which
+            -- passes this very cycle-entry table as the implicit first arg
+            -- and the real chat editbox as the *second* -- a `function(editbox)`
+            -- single-param signature here would silently bind `editbox` to the
+            -- wrong value (this table, not the editbox). That was a real,
+            -- dormant bug inherited from the original standalone addon (only
+            -- reachable for CHANNEL, and only on the CN portal).
+            IsActive = function(_, editbox)
                 if not IsChannelEnabled(def.key) then return false end
                 local eligible = isActive()
                 if chatType == "CHANNEL" and eligible then
