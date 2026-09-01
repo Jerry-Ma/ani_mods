@@ -134,6 +134,15 @@ happened to ship one gets removed/updated by CurseForge.
   until/unless it does, a small movable standalone bar is the fallback. Its detail pane
   shows which mode is active ("Docked to EllesmereUI icon: Yes/No").
 
+  Also registers as a LibDataBroker data source ("AniMods: Raid Composition") — pick it
+  as a widget in EllesmereUIDataBars (or any other LDB-consuming data bar). EUI ships
+  LibStub + LibDataBroker-1.1 itself (`EllesmereUI/Libs/`) and `EllesmereUIDataBars`
+  depends on `EllesmereUI`, so the library is guaranteed present whenever this module's
+  own condition holds — no need to embed a copy. `text` updates live with the counts
+  ("2/5/13", or "N/A" when solo); hover for a per-role tooltip breakdown; click opens
+  the AniMods panel. A third, independent display surface alongside the two above — the
+  detail pane's "Broker (LDB) plugin" row confirms whether it registered.
+
   Role icons match EllesmereUI's own look: the detail pane offers the 5 of
   EllesmereUIRaidFrames's 7 `ROLE_ICON_STYLES` that are plain Blizzard atlas name
   references (Modern Circle/Styled/Classic Circle/Classic/Blizzard Default) — nothing

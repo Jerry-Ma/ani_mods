@@ -117,12 +117,44 @@ local function ApplyRoleIcon(icon, role, styleKey)
 end
 
 -- ---------------------------------------------------------------------------
--- Displays: a standalone bar (fallback) and a badge docked to EUI's icon
+-- Displays: a standalone bar (fallback), a badge docked to EUI's icon, and a
+-- LibDataBroker data source (pick it as a widget in EllesmereUIDataBars, or
+-- any other LDB-consuming data bar)
 -- ---------------------------------------------------------------------------
 
 local frame          -- standalone bar (built always; fallback display)
 local dockedBadge     -- compact badge anchored to EllesmereUIRaidToolsIcon
 local usingDockedMode = false
+local ldbObject       -- LibDataBroker data source, if LDB is available
+
+-- EllesmereUI ships LibStub + LibDataBroker-1.1 itself (EllesmereUI/Libs/),
+-- and EllesmereUIDataBars depends on EllesmereUI, so LibStub is guaranteed
+-- present whenever this module's own condition (EllesmereUIQoL loaded) holds.
+-- Guarded anyway, silently: GetLibrary(..., true) never errors on a miss.
+local function InitLDB()
+    local libStub = _G.LibStub
+    local ldb = libStub and libStub:GetLibrary("LibDataBroker-1.1", true)
+    if not ldb then return end
+
+    ldbObject = ldb:NewDataObject("AniModsRaidComposition", {
+        type = "data source",
+        label = "AniMods: Raid Composition",
+        text = "N/A",
+        OnClick = function() if AniMods.ToggleUI then AniMods.ToggleUI() end end,
+        OnTooltipShow = function(tt)
+            tt:AddLine("AniMods: Raid Composition")
+            if not IsInGroup() then
+                tt:AddLine("Not in a group", 0.6, 0.6, 0.6)
+                return
+            end
+            local counts = CountRoles()
+            tt:AddLine(IsInRaid() and "Raid" or "Party", 0.6, 0.6, 0.6)
+            tt:AddDoubleLine("Tanks", tostring(counts.TANK), 1, 1, 1, 0.35, 1, 0.35)
+            tt:AddDoubleLine("Healers", tostring(counts.HEALER), 1, 1, 1, 0.35, 1, 0.35)
+            tt:AddDoubleLine("DPS", tostring(counts.DAMAGER), 1, 1, 1, 1, 0.35, 0.35)
+        end,
+    })
+end
 
 local function SetIconStyle(key)
     ModuleDB().iconStyle = key
@@ -145,6 +177,12 @@ local function UpdateCounts()
     if dockedBadge then
         dockedBadge.text:SetFormattedText(
             "|cff59c0ff%d|r/|cff2ecc71%d|r/|cffff5555%d|r", counts.TANK, counts.HEALER, counts.DAMAGER)
+    end
+
+    if ldbObject then
+        ldbObject.text = IsInGroup()
+            and ("%d/%d/%d"):format(counts.TANK, counts.HEALER, counts.DAMAGER)
+            or "N/A"
     end
 end
 
@@ -292,6 +330,11 @@ function RaidComposition:GetInfoRows()
         label = "Docked to EllesmereUI icon",
         value = usingDockedMode and "Yes" or "No (standalone bar; Raid Tools icon not found)",
     }
+    rows[#rows + 1] = {
+        label = "Broker (LDB) plugin",
+        value = ldbObject and "Registered as \"AniMods: Raid Composition\" -- pick it in a databar"
+            or "Not registered (LibDataBroker-1.1 not found)",
+    }
 
     local currentStyle = GetIconStyle()
     for _, key in ipairs(ICON_STYLE_ORDER) do
@@ -308,6 +351,7 @@ end
 
 function RaidComposition:Enable()
     frame = BuildFrame()
+    InitLDB()
     UpdateVisibility()
     UpdateCounts()
 
