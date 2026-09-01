@@ -59,9 +59,15 @@ and inspectable instead of silently double-hooking or crashing on a missing glob
 
 ## UI
 
-`/animods` opens the status panel: a list of every registered module, colored by
-state (active / inactive-by-condition / disabled / failed), with the reason shown for
-anything not active, and an enable/disable checkbox per module.
+`/animods` opens the status panel: a two-pane layout, left list / right detail (same
+idea as AutoItemMacro's preset editor).
+
+- **Left** — every registered module, one row each: a colored status dot (active /
+  inactive-by-condition / disabled / failed), the module name, and a checkbox to
+  enable/disable it right there. Click a row to select it.
+- **Right** — the selected module's full title, state badge, description, and (if
+  inactive) the reason why, with enough width to actually read it instead of
+  truncating. A second enabled checkbox here mirrors the row one for convenience.
 
 The panel is plain `CreateFrame` + standard Blizzard XML templates
 (`UIPanelScrollFrameTemplate`, `UIPanelButtonTemplate`, `UIPanelCloseButton`) styled

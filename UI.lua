@@ -1,6 +1,9 @@
--- AniMods status/config panel. `/animods` toggles it. One row per registered
--- module: colored status dot, title, condition/failure reason (if any), and an
--- enable/disable checkbox.
+-- AniMods status/config panel. `/animods` (or `/ani`) toggles it.
+--
+-- Two-pane layout: a left list of modules (status dot + name + a quick
+-- enable/disable toggle right on the row) and a right detail pane showing
+-- the selected module's full description/state/reason with room to actually
+-- read it, instead of cramming everything into one narrow scrolling list.
 --
 -- Self-contained on purpose: plain CreateFrame + BackdropTemplate + standard
 -- Blizzard XML templates (UIPanelScrollFrameTemplate, UIPanelButtonTemplate).
@@ -12,14 +15,17 @@ local AniMods = _G.AniMods
 
 local ACCENT = { 1, 0.82, 0 }         -- gold accent, matches the rest of the workspace's addon titles
 local PANEL_BG = { 0.07, 0.07, 0.08, 0.96 }
-local ROW_BG = { 1, 1, 1, 0.03 }
-local ROW_HOVER = { ACCENT[1], ACCENT[2], ACCENT[3], 0.08 }
+local PANE_BG = { 1, 1, 1, 0.03 }
+local ROW_HOVER = { ACCENT[1], ACCENT[2], ACCENT[3], 0.10 }
+local ROW_SELECTED = { ACCENT[1], ACCENT[2], ACCENT[3], 0.20 }
 
-local ROW_HEIGHT = 54
-local PANEL_WIDTH, PANEL_HEIGHT = 460, 420
+local PANEL_WIDTH, PANEL_HEIGHT = 640, 480
+local LEFT_WIDTH = 200
+local ROW_HEIGHT = 32
 
 local frame
 local rowPool = {}
+local selectedModule
 
 -- Returns label, r, g, b for a module's current status entry.
 local function GetStateInfo(entry)
@@ -34,63 +40,101 @@ local function GetStateInfo(entry)
     end
 end
 
+local function SortedModuleNames()
+    local names = {}
+    for name in pairs(AniMods.status) do tinsert(names, name) end
+    table.sort(names)
+    return names
+end
+
+-- ── Right pane: detail view for the selected module ──────────────────────────
+
+local function RefreshDetail()
+    local right = frame.right
+    local name = selectedModule
+    local entry = name and AniMods.status[name]
+
+    if not entry then
+        right.title:SetText("")
+        right.state:SetText("")
+        right.desc:SetText("|cff888888Select a module on the left.|r")
+        right.reason:SetText("")
+        right.toggle:Hide()
+        right.key:SetText("")
+        return
+    end
+
+    local stateLabel, r, g, b = GetStateInfo(entry)
+    right.title:SetText(entry.title)
+    right.state:SetText("[" .. stateLabel .. "]")
+    right.state:SetTextColor(r, g, b)
+    right.desc:SetText(entry.description or "|cff888888(no description)|r")
+
+    if entry.conditionReason then
+        right.reason:SetText("|cffff9933" .. entry.conditionReason .. "|r")
+    else
+        right.reason:SetText("")
+    end
+
+    right.toggle:Show()
+    right.toggle:SetChecked(entry.userEnabled)
+    right.key:SetText("|cff555555" .. name .. "|r")
+end
+
+-- ── Left pane: module list ────────────────────────────────────────────────────
+
+local function SelectModule(name)
+    selectedModule = name
+    for _, row in ipairs(rowPool) do
+        row.selectedBg:SetShown(row.moduleName == name)
+    end
+    RefreshDetail()
+end
+
 local function CreateRow(parent, index)
-    local row = CreateFrame("Frame", nil, parent)
-    row:SetSize(PANEL_WIDTH - 20, ROW_HEIGHT - 4)
+    local row = CreateFrame("Button", nil, parent)
+    row:SetSize(LEFT_WIDTH - 10, ROW_HEIGHT - 2)
     row:SetPoint("TOPLEFT", 2, -(index - 1) * ROW_HEIGHT)
 
-    row.bg = row:CreateTexture(nil, "BACKGROUND")
-    row.bg:SetAllPoints()
-    row.bg:SetColorTexture(unpack(ROW_BG))
+    row.hoverBg = row:CreateTexture(nil, "BACKGROUND")
+    row.hoverBg:SetAllPoints()
+    row.hoverBg:SetColorTexture(unpack(ROW_HOVER))
+    row.hoverBg:Hide()
 
-    row.hover = row:CreateTexture(nil, "ARTWORK")
-    row.hover:SetAllPoints()
-    row.hover:SetColorTexture(unpack(ROW_HOVER))
-    row.hover:Hide()
+    row.selectedBg = row:CreateTexture(nil, "BACKGROUND")
+    row.selectedBg:SetAllPoints()
+    row.selectedBg:SetColorTexture(unpack(ROW_SELECTED))
+    row.selectedBg:Hide()
 
     row.dot = row:CreateTexture(nil, "OVERLAY")
-    row.dot:SetSize(9, 9)
-    row.dot:SetPoint("TOPLEFT", 8, -8)
+    row.dot:SetSize(8, 8)
+    row.dot:SetPoint("LEFT", 4, 0)
     row.dot:SetColorTexture(1, 1, 1)
 
-    row.title = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    row.title:SetPoint("TOPLEFT", row.dot, "TOPRIGHT", 8, 2)
-    row.title:SetPoint("RIGHT", row, "RIGHT", -60, 0)
+    row.title = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    row.title:SetPoint("LEFT", row.dot, "RIGHT", 6, 0)
+    row.title:SetPoint("RIGHT", row, "RIGHT", -26, 0)
     row.title:SetJustifyH("LEFT")
     row.title:SetWordWrap(false)
 
-    row.state = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    row.state:SetPoint("LEFT", row.title, "RIGHT", 6, 0)
-
-    row.note = row:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    row.note:SetPoint("TOPLEFT", row.dot, "BOTTOMRIGHT", 8, -6)
-    row.note:SetPoint("RIGHT", row, "RIGHT", -60, 0)
-    row.note:SetJustifyH("LEFT")
-    row.note:SetWordWrap(true)
-    row.note:SetHeight(28)
-
     row.toggle = CreateFrame("CheckButton", nil, row, "UICheckButtonTemplate")
-    row.toggle:SetSize(24, 24)
-    row.toggle:SetPoint("TOPRIGHT", -4, -4)
+    row.toggle:SetSize(18, 18)
+    row.toggle:SetPoint("RIGHT", -2, 0)
     row.toggle:SetScript("OnClick", function(self)
         if row.moduleName then
             AniMods.SetModuleEnabled(row.moduleName, self:GetChecked())
         end
     end)
 
-    row:EnableMouse(true)
-    row:SetScript("OnEnter", function() row.hover:Show() end)
-    row:SetScript("OnLeave", function() row.hover:Hide() end)
+    row:SetScript("OnClick", function() SelectModule(row.moduleName) end)
+    row:SetScript("OnEnter", function() row.hoverBg:Show() end)
+    row:SetScript("OnLeave", function() row.hoverBg:Hide() end)
 
     return row
 end
 
-local function RefreshRows()
-    if not frame then return end
-
-    local names = {}
-    for name in pairs(AniMods.status) do tinsert(names, name) end
-    table.sort(names)
+local function RefreshList()
+    local names = SortedModuleNames()
 
     for _, row in ipairs(rowPool) do row:Hide() end
 
@@ -98,32 +142,116 @@ local function RefreshRows()
         local entry = AniMods.status[name]
         local row = rowPool[i]
         if not row then
-            row = CreateRow(frame.content, i)
+            row = CreateRow(frame.left.content, i)
             rowPool[i] = row
         end
 
         row.moduleName = name
         row.title:SetText(entry.title)
 
-        local stateLabel, r, g, b = GetStateInfo(entry)
-        row.state:SetText("[" .. stateLabel .. "]")
-        row.state:SetTextColor(r, g, b)
+        local _, r, g, b = GetStateInfo(entry)
         row.dot:SetVertexColor(r, g, b)
-
-        row.note:SetText(entry.conditionReason or entry.description or "")
+        row.selectedBg:SetShown(name == selectedModule)
         row.toggle:SetChecked(entry.userEnabled)
 
         row:Show()
     end
 
-    frame.content:SetHeight(math.max(1, #names * ROW_HEIGHT))
-    frame.hint:SetShown(#names > 0)
+    frame.left.content:SetHeight(math.max(1, #names * ROW_HEIGHT))
+
+    if not selectedModule and names[1] then
+        SelectModule(names[1])
+    end
 end
 
 -- Called by Core.lua whenever module state changes (e.g. a toggle) so the
--- panel's rows resync without a full rebuild.
+-- panel resyncs without a full rebuild.
 function AniMods.RefreshUI()
-    RefreshRows()
+    if not frame then return end
+    RefreshList()
+    RefreshDetail()
+end
+
+-- ── Frame construction ────────────────────────────────────────────────────────
+
+local function BuildLeftPane(parent)
+    local left = CreateFrame("Frame", nil, parent)
+    left:SetPoint("TOPLEFT", 10, -50)
+    left:SetPoint("BOTTOMLEFT", 10, 40)
+    left:SetWidth(LEFT_WIDTH)
+
+    local bg = left:CreateTexture(nil, "BACKGROUND")
+    bg:SetAllPoints()
+    bg:SetColorTexture(unpack(PANE_BG))
+
+    local inset = CreateFrame("Frame", nil, left, "InsetFrameTemplate")
+    inset:SetAllPoints()
+
+    local scroll = CreateFrame("ScrollFrame", "AniModsListScroll", left, "UIPanelScrollFrameTemplate")
+    scroll:SetPoint("TOPLEFT", 4, -4)
+    scroll:SetPoint("BOTTOMRIGHT", -22, 4)
+
+    left.content = CreateFrame("Frame", nil, scroll)
+    scroll:SetScrollChild(left.content)
+    left.content:SetWidth(LEFT_WIDTH - 26)
+    left.content:SetHeight(1)
+
+    return left
+end
+
+local function BuildRightPane(parent, leftPane)
+    local right = CreateFrame("Frame", nil, parent)
+    right:SetPoint("TOPLEFT", leftPane, "TOPRIGHT", 12, 0)
+    right:SetPoint("BOTTOMRIGHT", -10, 40)
+
+    local bg = right:CreateTexture(nil, "BACKGROUND")
+    bg:SetAllPoints()
+    bg:SetColorTexture(unpack(PANE_BG))
+
+    local inset = CreateFrame("Frame", nil, right, "InsetFrameTemplate")
+    inset:SetAllPoints()
+
+    right.state = right:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    right.state:SetPoint("TOPRIGHT", -14, -17)
+
+    right.title = right:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    right.title:SetPoint("TOPLEFT", 14, -14)
+    right.title:SetPoint("RIGHT", right.state, "LEFT", -8, 0)
+    right.title:SetJustifyH("LEFT")
+    right.title:SetWordWrap(false)
+    right.title:SetTextColor(unpack(ACCENT))
+
+    right.desc = right:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    right.desc:SetPoint("TOPLEFT", right.title, "BOTTOMLEFT", 0, -12)
+    right.desc:SetPoint("RIGHT", right, "RIGHT", -14, 0)
+    right.desc:SetJustifyH("LEFT")
+    right.desc:SetWordWrap(true)
+    right.desc:SetSpacing(3)
+
+    right.reason = right:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    right.reason:SetPoint("TOPLEFT", right.desc, "BOTTOMLEFT", 0, -10)
+    right.reason:SetPoint("RIGHT", right, "RIGHT", -14, 0)
+    right.reason:SetJustifyH("LEFT")
+    right.reason:SetWordWrap(true)
+    right.reason:SetSpacing(3)
+
+    right.toggle = CreateFrame("CheckButton", nil, right, "UICheckButtonTemplate")
+    right.toggle:SetSize(24, 24)
+    right.toggle:SetPoint("BOTTOMLEFT", 10, 10)
+    right.toggle:SetScript("OnClick", function(self)
+        if selectedModule then
+            AniMods.SetModuleEnabled(selectedModule, self:GetChecked())
+        end
+    end)
+
+    right.toggleLabel = right:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    right.toggleLabel:SetPoint("LEFT", right.toggle, "RIGHT", 4, 0)
+    right.toggleLabel:SetText("Enabled  |cff888888(/reload to apply)|r")
+
+    right.key = right:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    right.key:SetPoint("BOTTOMRIGHT", -10, 14)
+
+    return right
 end
 
 local function BuildUI()
@@ -158,20 +286,10 @@ local function BuildUI()
 
     f.hint = f:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     f.hint:SetPoint("TOPLEFT", 14, -34)
-    f.hint:SetText("Toggling a module requires /reload to take effect.")
+    f.hint:SetText("Left: modules (click to select, checkbox to toggle). Right: details for the selected module.")
 
-    local scrollBg = CreateFrame("Frame", nil, f, "InsetFrameTemplate")
-    scrollBg:SetPoint("TOPLEFT", 10, -50)
-    scrollBg:SetPoint("BOTTOMRIGHT", -10, 40)
-
-    local scroll = CreateFrame("ScrollFrame", "AniModsScroll", scrollBg, "UIPanelScrollFrameTemplate")
-    scroll:SetPoint("TOPLEFT", 4, -4)
-    scroll:SetPoint("BOTTOMRIGHT", -26, 4)
-
-    f.content = CreateFrame("Frame", nil, scroll)
-    scroll:SetScrollChild(f.content)
-    f.content:SetWidth(PANEL_WIDTH - 40)
-    f.content:SetHeight(1)
+    f.left = BuildLeftPane(f)
+    f.right = BuildRightPane(f, f.left)
 
     f.reloadBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
     f.reloadBtn:SetSize(120, 22)
@@ -179,7 +297,10 @@ local function BuildUI()
     f.reloadBtn:SetText("Reload UI")
     f.reloadBtn:SetScript("OnClick", function() ReloadUI() end)
 
-    f:SetScript("OnShow", RefreshRows)
+    f:SetScript("OnShow", function()
+        RefreshList()
+        RefreshDetail()
+    end)
 
     frame = f
 end
