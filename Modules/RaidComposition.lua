@@ -152,6 +152,21 @@ local function BuildFrame()
     return f
 end
 
+-- Status panel: live group composition (N/A when solo, per the "N/A if not
+-- applicable" rule -- every module's detail pane doubles as its debug view).
+function RaidComposition:GetInfoRows()
+    if not IsInGroup() then
+        return { { label = "Status", value = "N/A (not in a group)" } }
+    end
+    local counts = CountRoles()
+    return {
+        { label = "Group type", value = IsInRaid() and "Raid" or "Party" },
+        { label = "Tanks",      value = tostring(counts.TANK) },
+        { label = "Healers",    value = tostring(counts.HEALER) },
+        { label = "DPS",        value = tostring(counts.DAMAGER) },
+    }
+end
+
 function RaidComposition:Enable()
     frame = BuildFrame()
     UpdateVisibility()

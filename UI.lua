@@ -118,6 +118,76 @@ local function ShowCopyPopup(title, text)
     f.edit:HighlightText()
 end
 
+-- ── Info rows: each module's live "debug + options" readout ──────────────────
+-- A module's GetInfoRows() (optional) returns an ordered list of rows:
+--   { label = "Tanks", value = "2" }                                  -- status
+--   { label = "Party", get = fn, set = fn, note = "active now" }      -- toggle
+-- Anything with `get` renders as a checkbox; everything else is a plain
+-- label/value readout. This is deliberately the one generic row shape both
+-- of AniMods' current modules need (a live status line, or a toggle with a
+-- live annotation) rather than separate Status/Options mini-frameworks.
+
+local INFO_ROW_HEIGHT = 22
+local infoRowPool = {}
+
+local function GetInfoRow(parent, index)
+    local row = infoRowPool[index]
+    if row then return row end
+
+    row = CreateFrame("Frame", nil, parent)
+    row:SetHeight(INFO_ROW_HEIGHT)
+
+    row.checkbox = CreateFrame("CheckButton", nil, row, "UICheckButtonTemplate")
+    row.checkbox:SetSize(18, 18)
+    row.checkbox:SetPoint("LEFT", 0, 0)
+
+    row.label = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    row.label:SetJustifyH("LEFT")
+
+    row.value = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    row.value:SetPoint("RIGHT", 0, 0)
+    row.value:SetJustifyH("RIGHT")
+
+    infoRowPool[index] = row
+    return row
+end
+
+local function RefreshInfoRows(container, rows)
+    for _, row in ipairs(infoRowPool) do row:Hide() end
+    if not container then return end
+
+    local y = 0
+    for i, descriptor in ipairs(rows or {}) do
+        local row = GetInfoRow(container, i)
+        row:ClearAllPoints()
+        row:SetPoint("TOPLEFT", 0, -y)
+        row:SetPoint("RIGHT", container, "RIGHT", 0, 0)
+
+        if descriptor.get then
+            row.checkbox:Show()
+            row.checkbox:SetChecked(descriptor.get())
+            row.checkbox:SetScript("OnClick", function(self)
+                descriptor.set(self:GetChecked())
+            end)
+            row.label:ClearAllPoints()
+            row.label:SetPoint("LEFT", row.checkbox, "RIGHT", 4, 0)
+            row.label:SetText(descriptor.label)
+            row.value:SetText(descriptor.note and ("|cff59ff59" .. descriptor.note .. "|r") or "")
+        else
+            row.checkbox:Hide()
+            row.label:ClearAllPoints()
+            row.label:SetPoint("LEFT", 0, 0)
+            row.label:SetText(descriptor.label)
+            row.value:SetText(descriptor.value or "")
+        end
+
+        row:Show()
+        y = y + INFO_ROW_HEIGHT
+    end
+
+    container:SetHeight(math.max(1, y))
+end
+
 -- ── Right pane: detail view for the selected module ──────────────────────────
 
 local function RefreshDetail()
@@ -133,6 +203,7 @@ local function RefreshDetail()
         right.toggle:Hide()
         right.copyBtn:Hide()
         right.key:SetText("")
+        RefreshInfoRows(right.infoContent, nil)
         return
     end
 
@@ -154,6 +225,16 @@ local function RefreshDetail()
     right.toggle:SetChecked(entry.userEnabled)
     right.copyBtn:SetShown(entry.errorTrace ~= nil)
     right.key:SetText("|cff555555" .. name .. "|r")
+
+    -- Defensive: a module's GetInfoRows() runs on our UI thread on a timer
+    -- (see the OnUpdate refresh in BuildUI) -- one buggy module's debug hook
+    -- must never be able to break the whole panel.
+    local rows
+    if entry.module and entry.module.GetInfoRows then
+        local ok, result = pcall(entry.module.GetInfoRows, entry.module)
+        if ok then rows = result end
+    end
+    RefreshInfoRows(right.infoContent, rows)
 end
 
 -- ── Left pane: module list ────────────────────────────────────────────────────
@@ -310,6 +391,24 @@ local function BuildRightPane(parent, leftPane)
     right.reason:SetWordWrap(true)
     right.reason:SetSpacing(3)
 
+    -- Live status + per-item options (GetInfoRows()), scrollable since content
+    -- length varies per module.
+    local infoBg = CreateFrame("Frame", nil, right, "InsetFrameTemplate")
+    infoBg:SetPoint("TOPLEFT", right.reason, "BOTTOMLEFT", -4, -10)
+    infoBg:SetPoint("RIGHT", right, "RIGHT", -10, 0)
+    infoBg:SetPoint("BOTTOM", right, "BOTTOM", 0, 62)
+
+    local infoScroll = CreateFrame("ScrollFrame", "AniModsInfoScroll", infoBg, "UIPanelScrollFrameTemplate")
+    infoScroll:SetPoint("TOPLEFT", 4, -4)
+    infoScroll:SetPoint("BOTTOMRIGHT", -22, 4)
+
+    right.infoContent = CreateFrame("Frame", nil, infoScroll)
+    infoScroll:SetScrollChild(right.infoContent)
+    right.infoContent:SetHeight(1)
+    infoScroll:SetScript("OnSizeChanged", function(self, w)
+        right.infoContent:SetWidth(w)
+    end)
+
     right.toggle = CreateFrame("CheckButton", nil, right, "UICheckButtonTemplate")
     right.toggle:SetSize(24, 24)
     right.toggle:SetPoint("BOTTOMLEFT", 10, 10)
@@ -386,6 +485,19 @@ local function BuildUI()
     f:SetScript("OnShow", function()
         RefreshList()
         RefreshDetail()
+    end)
+
+    -- Keep the selected module's info rows (live status/eligibility) fresh
+    -- while the panel is open. OnUpdate doesn't fire on hidden frames, so
+    -- this naturally stops costing anything once the panel is closed.
+    local INFO_REFRESH_INTERVAL = 1.0
+    f.infoRefreshElapsed = 0
+    f:SetScript("OnUpdate", function(self, elapsed)
+        self.infoRefreshElapsed = self.infoRefreshElapsed + elapsed
+        if self.infoRefreshElapsed >= INFO_REFRESH_INTERVAL then
+            self.infoRefreshElapsed = 0
+            RefreshDetail()
+        end
     end)
 
     frame = f

@@ -1,22 +1,20 @@
 -- ChatContextSwitch
 -- Switches the chat input context (channel) by pressing Tab in the chat edit box.
 -- Ported from NDui's chat module (NDui/Modules/Chat/Core.lua, module:UpdateTabChannelSwitch)
--- — this is a faithful reimplementation of that logic, not the original file.
+-- -- this is a faithful reimplementation of that logic, not the original file.
 --
 -- Behaviour:
---   Tab        → cycle forward through active chat types
---   Shift+Tab  → cycle backward; from WHISPER/BN_WHISPER always jumps to SAY
+--   Tab        -> cycle forward through active AND enabled chat types
+--   Shift+Tab  -> cycle backward; from WHISPER/BN_WHISPER always jumps to SAY
 --
--- The cycle: SAY → PARTY → RAID → INSTANCE_CHAT → GUILD → OFFICER → (CHANNEL if in world channel) → SAY
---
--- Only applies when NDui is not loaded — NDui already installs this exact behavior
--- itself, so hooking it again here would be redundant (see `condition` below).
--- Verified independent of the chat addon otherwise in use: EllesmereUIChat doesn't
--- implement Tab channel-cycling at all, so this fills the gap for it.
+-- The cycle: SAY -> PARTY -> RAID -> INSTANCE_CHAT -> GUILD -> OFFICER -> (CHANNEL if in world channel) -> SAY
+-- Each entry can be individually enabled/disabled from the AniMods status panel
+-- (see CYCLE_DEFS / GetInfoRows below) -- disabling one just removes it from the
+-- cycle even when it would otherwise be eligible.
 --
 -- Compatibility: if the edit box text already starts with "/", the handler bails
 -- out immediately and leaves Tab to Blizzard's default slash-command autocomplete
--- cycling (present regardless of chat addon) — so this never interferes with that.
+-- cycling (present regardless of chat addon) -- so this never interferes with that.
 --
 -- NOTE: half-baked / not fully tested, carried over as-is from the original
 -- standalone ChatContextSwitch addon. Known-good enough for daily use, bugs may
@@ -24,11 +22,60 @@
 
 local ChatContextSwitch = {
     title = "Chat Context Switch",
-    description = "Tab/Shift+Tab cycles the chat channel (SAY/PARTY/RAID/.../world CHANNEL). Only active when NDui is not loaded.",
-    condition = {
-        forbids = { "NDui" },
-    },
+    description = "Tab/Shift+Tab cycles the chat channel (SAY/PARTY/RAID/.../world CHANNEL).",
 }
+
+-- ---------------------------------------------------------------------------
+-- NDui chat-module awareness
+-- ---------------------------------------------------------------------------
+-- NDui installs this exact Tab-cycling behavior itself (Modules/Chat/Core.lua,
+-- module:OnLogin -> hooksecurefunc("ChatEdit_CustomTabPressed", ...)) but only
+-- when its own Chat module is enabled (guarded by `if C.db["Chat"]["Disable"]
+-- then return end`). So: skip ourselves only when NDui is loaded AND its chat
+-- module is actually active; if the user has NDui installed but its chat
+-- module turned off (the original standalone addon's exact use case), we
+-- still need to provide this.
+--
+-- NDui exposes its internals as `_G.NDui = {B, C, L, DB}` (NDui/Init.lua:
+-- `_G[addonName] = ns`), populated at NDui's own ADDON_LOADED -- long before
+-- any addon's PLAYER_LOGIN handler (when this condition is evaluated) fires,
+-- so C.db is guaranteed to already be populated here regardless of load order
+-- between AniMods and NDui.
+local function NDuiChatModuleActive()
+    local ns = _G.NDui
+    if not ns then return false end
+    local C = ns[2]
+    return not (C and C.db and C.db["Chat"] and C.db["Chat"]["Disable"])
+end
+
+ChatContextSwitch.condition = {
+    check = function()
+        if NDuiChatModuleActive() then
+            return false, "NDui is loaded and its Chat module is enabled (NDui already provides this)"
+        end
+        return true
+    end,
+}
+
+-- ---------------------------------------------------------------------------
+-- Per-channel enable/disable (persisted, editable from the AniMods panel)
+-- ---------------------------------------------------------------------------
+
+local function ChannelDB()
+    AniModsDB.chatContextSwitch = AniModsDB.chatContextSwitch or {}
+    AniModsDB.chatContextSwitch.channels = AniModsDB.chatContextSwitch.channels or {}
+    return AniModsDB.chatContextSwitch.channels
+end
+
+local function IsChannelEnabled(key)
+    local v = ChannelDB()[key]
+    if v == nil then return true end -- default: on
+    return v
+end
+
+local function SetChannelEnabled(key, enabled)
+    ChannelDB()[key] = enabled and true or false
+end
 
 -- ---------------------------------------------------------------------------
 -- World-channel support (CN region only)
@@ -55,23 +102,54 @@ end
 -- ---------------------------------------------------------------------------
 -- Channel cycle definition
 -- ---------------------------------------------------------------------------
+-- `key` is the persisted per-channel toggle id and the label shown in the
+-- status panel. `IsActive` is the *live eligibility* check (unrelated to the
+-- user's enable/disable choice) -- e.g. PARTY is only eligible while grouped.
 
-local cycles = {
-    { chatType = "SAY",           IsActive = function()           return true end },
-    { chatType = "PARTY",         IsActive = function()           return IsInGroup() end },
-    { chatType = "RAID",          IsActive = function()           return IsInRaid() end },
-    { chatType = "INSTANCE_CHAT", IsActive = function()           return IsPartyLFG() or C_PartyInfo.IsPartyWalkIn() end },
-    { chatType = "GUILD",         IsActive = function()           return IsInGuild() end },
-    { chatType = "OFFICER",       IsActive = function()           return C_GuildInfo.IsGuildOfficer() end },
-    { chatType = "CHANNEL",       IsActive = function(editbox)
-        if inWorldChannel and worldChannelID then
-            editbox:SetAttribute("channelTarget", worldChannelID)
-            return true
-        end
-    end },
-    -- sentinel: wraps back to SAY
-    { chatType = "SAY",           IsActive = function()           return true end },
+local CYCLE_DEFS = {
+    { key = "SAY",           chatType = "SAY",           label = "Say",           IsActive = function() return true end },
+    { key = "PARTY",         chatType = "PARTY",         label = "Party",         IsActive = function() return IsInGroup() end },
+    { key = "RAID",          chatType = "RAID",          label = "Raid",          IsActive = function() return IsInRaid() end },
+    { key = "INSTANCE_CHAT", chatType = "INSTANCE_CHAT", label = "Instance",      IsActive = function() return IsPartyLFG() or C_PartyInfo.IsPartyWalkIn() end },
+    { key = "GUILD",         chatType = "GUILD",         label = "Guild",         IsActive = function() return IsInGuild() end },
+    { key = "OFFICER",       chatType = "OFFICER",       label = "Officer",       IsActive = function() return C_GuildInfo.IsGuildOfficer() end },
+    { key = "CHANNEL",       chatType = "CHANNEL",       label = "World Channel", IsActive = function() return inWorldChannel and worldChannelID ~= nil end },
 }
+
+-- Live eligibility right now, ignoring the user's enable/disable choice --
+-- used only for the status-panel "active now" indicator.
+local function IsEligibleNow(def)
+    return def.IsActive() and true or false
+end
+
+-- Builds the runtime cycle: each real entry gated by its enable toggle, plus
+-- a trailing SAY sentinel (also gated by SAY's own toggle) that the wraparound
+-- search below always lands on. Built fresh on every Tab press -- cheap (7
+-- entries) and avoids trying to mutate a shared table when toggles change.
+local function BuildCycles()
+    local list = {}
+    for _, def in ipairs(CYCLE_DEFS) do
+        local chatType, isActive = def.chatType, def.IsActive
+        list[#list + 1] = {
+            chatType = chatType,
+            IsActive = function(editbox)
+                if not IsChannelEnabled(def.key) then return false end
+                local eligible = isActive()
+                if chatType == "CHANNEL" and eligible then
+                    editbox:SetAttribute("channelTarget", worldChannelID)
+                end
+                return eligible
+            end,
+        }
+    end
+    -- sentinel: wraps back to SAY
+    local sayKey = CYCLE_DEFS[1].key
+    list[#list + 1] = {
+        chatType = "SAY",
+        IsActive = function() return IsChannelEnabled(sayKey) end,
+    }
+    return list
+end
 
 -- ---------------------------------------------------------------------------
 -- Switch helper
@@ -101,6 +179,7 @@ local function OnCustomTabPressed(self)
         return
     end
 
+    local cycles = BuildCycles()
     local numCycles = #cycles
     for i = 1, numCycles do
         if currentType == cycles[i].chatType then
@@ -120,6 +199,32 @@ local function OnCustomTabPressed(self)
             break
         end
     end
+end
+
+-- ---------------------------------------------------------------------------
+-- Status panel: live eligibility + per-channel toggles
+-- ---------------------------------------------------------------------------
+
+function ChatContextSwitch:GetInfoRows()
+    local rows = {}
+
+    local ns = _G.NDui
+    rows[#rows + 1] = {
+        label = "NDui chat module",
+        value = not ns and "not loaded"
+            or (NDuiChatModuleActive() and "enabled (NDui handles this)" or "disabled (we take over)"),
+    }
+
+    for _, def in ipairs(CYCLE_DEFS) do
+        rows[#rows + 1] = {
+            label = def.label,
+            get   = function() return IsChannelEnabled(def.key) end,
+            set   = function(v) SetChannelEnabled(def.key, v) end,
+            note  = IsEligibleNow(def) and "active now" or nil,
+        }
+    end
+
+    return rows
 end
 
 -- ---------------------------------------------------------------------------

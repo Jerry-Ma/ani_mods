@@ -43,11 +43,26 @@ Modules are enabled by default (once `condition` passes). Most WoW UI hooks can'
 cleanly undone at runtime, so there's no `Disable()` contract — toggling a module off
 in the status panel just skips its `Enable()` next login/reload.
 
-If a module needs its own configurable options beyond the standard enable/disable
-toggle, just build them the normal way inside `Enable()` (its own mini settings frame,
-a slash command, whatever fits) — there's no generic options-widget framework here on
-purpose. For one addon with one module so far, that would be indirection with no
-payoff; add one if/when a module actually needs it.
+A module can optionally expose `GetInfoRows()`, returning an ordered list of rows
+rendered in its detail pane — this is the "debug + options" section every module gets
+for free:
+
+```lua
+function MyFeature:GetInfoRows()
+    return {
+        { label = "Some live value", value = tostring(someState) },             -- status
+        { label = "Include X",       get = GetX, set = SetX, note = "active now" }, -- toggle
+    }
+end
+```
+
+A row with `get`/`set` renders as a checkbox (for per-item options, e.g. which entries
+participate in some cycle/list); anything else is a plain read-only label/value line
+(for live internal state — "N/A" when not applicable is a normal `value`). Refreshed
+every second while the panel is open, plus whenever a toggle changes, so it reflects
+current reality, not what was true when the module loaded. This is deliberately the
+one generic row shape rather than a full widget framework — extend it if a module ever
+needs something `GetInfoRows()` can't express.
 
 ### Why conditions?
 
@@ -67,10 +82,13 @@ idea as AutoItemMacro's preset editor).
   enable/disable it right there. Click a row to select it.
 - **Right** — the selected module's full title, state badge, description, and (if
   inactive) the reason why, with enough width to actually read it instead of
-  truncating. A second enabled checkbox here mirrors the row one for convenience. If a
-  module's `Enable()` threw an error (state "Failed"), a **Show Error** button appears
-  and opens a popup with the full `debug.traceback()` in a selectable text box
-  (Ctrl+A/Ctrl+C) — not just the one-line `pcall` message.
+  truncating; below that, its `GetInfoRows()` (see above) in a scrollable area; at the
+  bottom, an enabled checkbox mirroring the row one. If a module's `Enable()` threw an
+  error (state "Failed"), a **Show Error** button appears and opens a popup with the
+  full traceback (message + `debugstack()`) in a selectable text box (Ctrl+A/Ctrl+C) —
+  not just the one-line `pcall` message. (WoW's addon sandbox doesn't expose the
+  `debug` table at all — only specific whitelisted globals like `debugstack()`, which
+  is what this actually uses.)
 
 The panel is plain `CreateFrame` + standard Blizzard XML templates
 (`UIPanelScrollFrameTemplate`, `UIPanelButtonTemplate`, `UIPanelCloseButton`) styled
@@ -91,15 +109,23 @@ happened to ship one gets removed/updated by CurseForge.
 
 - **ChatContextSwitch** — cycle chat channel (SAY → PARTY → RAID → INSTANCE_CHAT →
   GUILD → OFFICER → world CHANNEL) with Tab / Shift+Tab in the chat edit box. Ported
-  from NDui's chat module (`NDui/Modules/Chat/Core.lua`); only active when NDui is not
-  loaded, since NDui already provides this itself. Migrated from the standalone
-  ChatContextSwitch addon (now removed). Half-baked / not fully tested — bugs may
-  remain from the original.
+  from NDui's chat module (`NDui/Modules/Chat/Core.lua`). Each channel in the cycle can
+  be individually enabled/disabled from its detail pane, which also shows which ones
+  are eligible right now ("active now"). Only active when NDui is *not currently
+  handling this itself* — NDui's own chat module installs the identical hook, but only
+  when enabled (`C.db["Chat"]["Disable"]` is falsy); if NDui is installed with its chat
+  module turned off, this still applies. Migrated from the standalone ChatContextSwitch
+  addon (now removed). Half-baked / not fully tested — bugs may remain from the
+  original.
 - **RaidComposition** — small movable Tank/Healer/DPS count bar, shown while in a
-  group. EllesmereUI's QoL Raid Tools panel has no composition display the way NDui's
-  raid tool does, so this fills the gap; only active when EllesmereUIQoL is loaded and
-  NDui is not. A standalone frame rather than something injected into EllesmereUI's
-  secure Raid Tools shells (taint risk, fragile across EUI updates) — same approach
-  NDui itself uses. Counts via `UnitGroupRolesAssigned()` per group-unit token, not a
-  port of NDui's `GetRaidRosterInfo` roster-scanning logic — more direct/native, no
-  manual online/dead/subgroup filtering needed.
+  group; its detail pane shows the live counts (or "N/A" when solo). EllesmereUI's QoL
+  Raid Tools panel has no composition display the way NDui's raid tool does, so this
+  fills the gap; only active when EllesmereUIQoL is loaded and NDui is not. A
+  standalone frame rather than something injected into EllesmereUI's secure Raid Tools
+  shells (taint risk, fragile across EUI updates) — same approach NDui itself uses.
+  Counts via `UnitGroupRolesAssigned()` per group-unit token, not a port of NDui's
+  `GetRaidRosterInfo` roster-scanning logic — more direct/native, no manual
+  online/dead/subgroup filtering needed. Role icons use the modern
+  `UI-LFG-RoleIcon-*-Micro` atlases (the legacy `GetTexCoordsForRoleSmallCircle()`
+  helper no longer exists in this client), falling back to manual texcoords if the
+  atlas isn't available.

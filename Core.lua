@@ -118,8 +118,11 @@ local function EvaluateCondition(condition)
         end
     end
 
-    if condition.check and not condition.check() then
-        return false, "condition not met"
+    if condition.check then
+        local ok, why = condition.check()
+        if not ok then
+            return false, why or "condition not met"
+        end
     end
 
     return true
