@@ -205,6 +205,7 @@ local function RefreshDetail()
         right.title:SetText("")
         right.state:SetText("")
         right.desc:SetText("|cff888888Select a module on the left.|r")
+        right.deps:SetText("")
         right.reason:SetText("")
         right.toggle:Hide()
         right.copyBtn:Hide()
@@ -218,6 +219,7 @@ local function RefreshDetail()
     right.state:SetText("[" .. stateLabel .. "]")
     right.state:SetTextColor(r, g, b)
     right.desc:SetText(entry.description or "|cff888888(no description)|r")
+    right.deps:SetText("Depends on: " .. (entry.dependencies or "(not documented)"))
 
     if entry.errorTrace then
         right.reason:SetText("|cffff4444" .. (entry.conditionReason or "error") .. "|r")
@@ -390,8 +392,18 @@ local function BuildRightPane(parent, leftPane)
     right.desc:SetWordWrap(true)
     right.desc:SetSpacing(3)
 
+    -- Always visible (unlike `reason`, which only shows when something's
+    -- wrong) -- what this module needs to even be considered, independent of
+    -- whether that's currently satisfied.
+    right.deps = right:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    right.deps:SetPoint("TOPLEFT", right.desc, "BOTTOMLEFT", 0, -8)
+    right.deps:SetPoint("RIGHT", right, "RIGHT", -14, 0)
+    right.deps:SetJustifyH("LEFT")
+    right.deps:SetWordWrap(true)
+    right.deps:SetSpacing(3)
+
     right.reason = right:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    right.reason:SetPoint("TOPLEFT", right.desc, "BOTTOMLEFT", 0, -10)
+    right.reason:SetPoint("TOPLEFT", right.deps, "BOTTOMLEFT", 0, -10)
     right.reason:SetPoint("RIGHT", right, "RIGHT", -14, 0)
     right.reason:SetJustifyH("LEFT")
     right.reason:SetWordWrap(true)

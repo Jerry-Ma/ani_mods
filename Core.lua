@@ -166,6 +166,7 @@ local function InitModules()
             module          = module, -- reference for any future per-module UI needs
             title           = module.title or name,
             description     = module.description,
+            dependencies    = module.dependencies, -- always-visible "depends on" line, distinct from conditionReason (which only shows on failure)
             conditionMet    = conditionMet,
             conditionReason = reason,
             errorTrace      = errorTrace,

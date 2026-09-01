@@ -32,6 +32,7 @@
 local RaidComposition = {
     title = "Raid Composition",
     description = "Tank/Healer/DPS role counts while in a group, styled to match EllesmereUI. Docks onto EllesmereUI's Raid Tools collapsed icon when available; otherwise a small movable bar.",
+    dependencies = "Requires EllesmereUIQoL to be enabled. Also incompatible with NDui (NDui has its own composition display).",
     condition = {
         requires = { "EllesmereUIQoL" },
         forbids = { "NDui" },
@@ -284,8 +285,22 @@ local function BuildDockedBadge(iconBtn)
     return badge
 end
 
+-- EllesmereUIQoL_RaidTools.lua exposes `_G._EUI_RaidTools_DB = function()
+-- return db end` for its own options panel -- a plain read-only getter, safe
+-- to call from outside. db.profile.raidTools.mode is "never" (QoL's own
+-- default -- Raid Tools built/shown nowhere at all), or "raid"/"group"/
+-- "always". This is the authoritative answer to "is Raid Tools even on",
+-- independent of (and available before) whether we've actually found/docked
+-- to its icon yet.
+local function GetEUIRaidToolsMode()
+    local getDB = _G._EUI_RaidTools_DB
+    local db = getDB and getDB()
+    return db and db.profile and db.profile.raidTools and db.profile.raidTools.mode
+end
+
 -- EllesmereUIQoL only builds its Raid Tools frames (including the collapsed
--- icon) on first Apply with a non-"never" mode -- "never" is QoL's own
+-- icon) on first Apply with a non-"never" mode -- in other words, we only
+-- ever dock while GetEUIRaidToolsMode() ~= "never". "never" is QoL's own
 -- default, meaning the icon frame may not exist yet (or ever) at our own
 -- Enable() time. Called from Enable() and re-checked on a few login-delay
 -- timers plus GROUP_ROSTER_UPDATE so we still dock if it appears later.
@@ -326,9 +341,17 @@ function RaidComposition:GetInfoRows()
         rows[#rows + 1] = { label = "DPS",        value = tostring(counts.DAMAGER) }
     end
 
+    local mode = GetEUIRaidToolsMode()
+    if not mode then
+        rows[#rows + 1] = { label = "EllesmereUI Raid Tools", value = "Unknown (not configured yet this session)" }
+    elseif mode == "never" then
+        rows[#rows + 1] = { label = "EllesmereUI Raid Tools", value = "Disabled (mode: never)" }
+    else
+        rows[#rows + 1] = { label = "EllesmereUI Raid Tools", value = "Enabled (mode: " .. mode .. ")" }
+    end
     rows[#rows + 1] = {
-        label = "Docked to EllesmereUI icon",
-        value = usingDockedMode and "Yes" or "No (standalone bar; Raid Tools icon not found)",
+        label = "Docked to its icon",
+        value = usingDockedMode and "Yes" or "No (standalone bar instead)",
     }
     rows[#rows + 1] = {
         label = "Broker (LDB) plugin",

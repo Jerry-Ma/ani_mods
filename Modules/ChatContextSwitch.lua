@@ -23,6 +23,7 @@
 local ChatContextSwitch = {
     title = "Chat Context Switch",
     description = "Tab/Shift+Tab cycles the chat channel (SAY/PARTY/RAID/.../world CHANNEL).",
+    dependencies = "None. Only checks whether NDui's Chat module is disabled -- if NDui isn't even loaded, that check just passes.",
 }
 
 -- ---------------------------------------------------------------------------

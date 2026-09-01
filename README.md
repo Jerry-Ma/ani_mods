@@ -16,8 +16,12 @@ module registry:
 
 ```lua
 local MyFeature = {
-    title       = "My Feature",              -- optional, defaults to the registered name
-    description = "One-line summary shown in the status panel.",
+    title        = "My Feature",              -- optional, defaults to the registered name
+    description  = "One-line summary shown in the status panel.",
+    dependencies = "Plain-English summary of what this needs, shown as an always-visible" ..
+                   " \"Depends on:\" line in the detail pane -- distinct from the condition" ..
+                   " table below, which is machine-checked and only surfaces a reason when" ..
+                   " it currently fails. Write \"None\" if there's nothing.",
 
     -- Optional: gates whether Enable() runs at all. Evaluated once at PLAYER_LOGIN,
     -- so IsAddOnLoaded() checks against *other* addons are reliable no matter the
@@ -80,9 +84,11 @@ idea as AutoItemMacro's preset editor).
 - **Left** — every registered module, one row each: a colored status dot (active /
   inactive-by-condition / disabled / failed), the module name, and a checkbox to
   enable/disable it right there. Click a row to select it.
-- **Right** — the selected module's full title, state badge, description, and (if
-  inactive) the reason why, with enough width to actually read it instead of
-  truncating; below that, its `GetInfoRows()` (see above) in a scrollable area; at the
+- **Right** — the selected module's full title, state badge, description, an
+  always-visible "Depends on:" line (its `dependencies` field — what it needs,
+  regardless of whether that's currently satisfied), and (if inactive) the reason why,
+  with enough width to actually read it instead of truncating; below that, its
+  `GetInfoRows()` (see above) in a scrollable area; at the
   bottom, an enabled checkbox mirroring the row one. If a module's `Enable()` threw an
   error (state "Failed"), a **Show Error** button appears and opens a popup with the
   full traceback (message + `debugstack()`) in a selectable text box (Ctrl+A/Ctrl+C) —
@@ -132,7 +138,10 @@ happened to ship one gets removed/updated by CurseForge.
   Tools with a non-"never" mode ("never" is its own default), so this retries on a
   couple of login-delay timers and on `GROUP_ROSTER_UPDATE` in case it appears later;
   until/unless it does, a small movable standalone bar is the fallback. Its detail pane
-  shows which mode is active ("Docked to EllesmereUI icon: Yes/No").
+  shows both facts directly: EUI's actual configured Raid Tools mode (read via
+  `_G._EUI_RaidTools_DB()`, the plain read-only getter `EllesmereUIQoL_RaidTools.lua`
+  exposes for its own options panel — "never" means Raid Tools is off and nothing to
+  dock to exists yet) and whether docking to it has actually happened.
 
   Also registers as a LibDataBroker data source ("AniMods: Raid Composition") — pick it
   as a widget in EllesmereUIDataBars (or any other LDB-consuming data bar). EUI ships
