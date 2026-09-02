@@ -6,10 +6,10 @@
 -- display the way NDui's raid tool does (NDui/Modules/Misc/RaidTool.lua,
 -- M:RaidTool_RoleCount). This docks a small count badge onto Raid Tools' own
 -- collapsed-icon button (the global frame `EllesmereUIRaidToolsIcon`) so it
--- reads as part of that minimized display, with a movable standalone bar as
--- the fallback when that icon isn't available (e.g. Raid Tools mode is
--- "never", EllesmereUIQoL's default -- in that mode EUI builds no Raid Tools
--- frames at all).
+-- reads as part of that minimized display. Docking onto that icon is the
+-- only display mode -- there's nothing sensible to show if the icon isn't
+-- there yet (Raid Tools mode "never", EllesmereUIQoL's own default, builds no
+-- Raid Tools frames at all); the module just waits and docks once it appears.
 --
 -- Docking is done without touching EUI's secure frames in any way that could
 -- taint them: our badge is our own separate frame, merely SetPoint-anchored
@@ -31,8 +31,11 @@
 
 local RaidComposition = {
     title = "Raid Composition",
-    description = "Tank/Healer/DPS role counts while in a group, styled to match EllesmereUI. Docks onto EllesmereUI's Raid Tools collapsed icon when available; otherwise a small movable bar.",
-    dependencies = "Requires EllesmereUIQoL to be enabled. Also incompatible with NDui (NDui has its own composition display).",
+    description = "Tank/Healer/DPS role counts, docked onto EllesmereUI's Raid Tools icon.",
+    dependencies = {
+        { text = "EllesmereUIQoL loaded", met = function() return AniMods.IsAddOnLoaded("EllesmereUIQoL") end },
+        { text = "NDui not loaded",       met = function() return not AniMods.IsAddOnLoaded("NDui") end },
+    },
     condition = {
         requires = { "EllesmereUIQoL" },
         forbids = { "NDui" },
@@ -40,6 +43,7 @@ local RaidComposition = {
 }
 
 local ROLES = { "TANK", "HEALER", "DAMAGER" }
+local ROLE_COLOR = { TANK = "59c0ff", HEALER = "2ecc71", DAMAGER = "ff5555" }
 
 local function ModuleDB()
     AniModsDB.raidComposition = AniModsDB.raidComposition or {}
@@ -94,43 +98,124 @@ local function CollectRoleClasses()
     return byRole
 end
 
+-- Shared tooltip body -- a per-role breakdown of class-colored squares (one
+-- per member in that role) rather than a bare count -- used by both the
+-- broker (LDB) plugin's tooltip (always on) and the docked badge's tooltip
+-- (optional, see "Show tooltip on docked badge" in GetInfoRows).
+local function ShowCompositionTooltip(tt)
+    if not IsInGroup() then
+        tt:AddLine("Not in a group", 0.6, 0.6, 0.6)
+        return
+    end
+    local byRole = CollectRoleClasses()
+    local ROLE_LABEL = { TANK = "Tank", HEALER = "Healer", DAMAGER = "DPS" }
+    local total = #byRole.TANK + #byRole.HEALER + #byRole.DAMAGER
+
+    -- Header carries the actual headcount instead of just naming the group
+    -- type, and a one-line composition summary (e.g. "2 Tank  5 Healer  13
+    -- DPS") sits above the per-role breakdown so the shape of the group is
+    -- readable at a glance before the squares.
+    tt:AddLine(("%s (%d)"):format(IsInRaid() and "Raid" or "Party", total), 1, 0.82, 0)
+    tt:AddLine(("%d Tank  %d Healer  %d DPS"):format(#byRole.TANK, #byRole.HEALER, #byRole.DAMAGER), 0.8, 0.8, 0.8)
+
+    for _, role in ipairs(ROLES) do
+        local squares = {}
+        for _, class in ipairs(byRole[role]) do
+            local c = RAID_CLASS_COLORS and RAID_CLASS_COLORS[class]
+            squares[#squares + 1] = "|c" .. (c and c.colorStr or "ffffffff") .. "\226\150\160|r"
+        end
+        tt:AddDoubleLine(ROLE_LABEL[role], #squares > 0 and table.concat(squares, " ") or "-",
+            1, 1, 1, 1, 1, 1)
+    end
+end
+
 -- ---------------------------------------------------------------------------
 -- Role icon styles
 -- ---------------------------------------------------------------------------
--- Since this module docks onto EllesmereUI's own Raid Tools icon, its role
--- icons should look like EllesmereUI's, not some other addon's. Sourced from
--- EllesmereUIRaidFrames.lua's own ROLE_ICON_STYLES table (7 variants there).
--- These 5 are pure Blizzard atlas name references -- no EUI-owned asset
--- involved, just the same public atlas API anyone can use, so nothing needs
--- copying and there's no license concern reusing them. Its other 2 styles
--- ("modern", the actual EUI default, and "blizzLight") point at EUI's own
--- custom PNGs under EllesmereUIRaidFrames\Media\ -- deliberately NOT
--- reproduced here: EUI's license.txt is "all rights reserved" (no
--- redistribution permission), so we stick to what's safe to reference.
+-- Since this module docks onto EllesmereUI's own Raid Tools icon, its default
+-- style should look like EllesmereUI's, not some other addon's -- but the
+-- other styles here are offered too since there's no reason to force just
+-- one. Each style is `kind = "atlas"` (a plain Blizzard atlas name, nothing
+-- to embed -- the art lives in the game client) or `kind = "texture"` (a
+-- bundled .tga file under Media\RoleIcons\, an actual asset we ship).
+--
+-- atlas styles: the first 5 are sourced from EllesmereUIRaidFrames.lua's own
+-- ROLE_ICON_STYLES table (7 variants there); its other 2 styles ("modern",
+-- the actual EUI default, and "blizzLight") point at EUI's own custom PNGs
+-- under EllesmereUIRaidFrames\Media\ -- deliberately NOT reproduced here:
+-- EUI's license.txt is "all rights reserved" (no redistribution permission),
+-- so we stick to what's safe to reference. "NDui" is what NDui's own
+-- raid-frame UI actually shows (B:ReskinSmallRole in
+-- NDui/Core/Functions.lua) -- also a plain Blizzard atlas reference, not a
+-- copy of an NDui-authored asset.
+--
+-- texture styles: NDui_Plus overrides NDui's B.ReskinSmallRole with a choice
+-- of custom icon sets (NDui_Plus/Media/Media.lua, P.RoleList) instead of the
+-- plain atlas -- genuinely different art, and the reason it's said to look
+-- better. NDui_Plus is MIT-licensed (Media\RoleIcons\LICENSE.txt has the
+-- full text), so its .tga files are copied here rather than just referenced,
+-- same as any other bundled Lib -- this module doesn't depend on NDui_Plus
+-- being installed. Only 4 of NDui_Plus's 5 RoleList entries have real files
+-- in this install (`ToxiUI/Stylized*` is a dead reference with no backing
+-- texture there), so only those 4 are offered.
+local ROLE_ICON_MEDIA = "Interface\\AddOns\\AniMods\\Media\\RoleIcons\\"
 local ICON_STYLES = {
     moderncircle = {
         name = "Modern Circle",
-        atlas = { TANK = "UI-LFG-RoleIcon-Tank", HEALER = "UI-LFG-RoleIcon-Healer", DAMAGER = "UI-LFG-RoleIcon-DPS" },
+        kind = "atlas",
+        icons = { TANK = "UI-LFG-RoleIcon-Tank", HEALER = "UI-LFG-RoleIcon-Healer", DAMAGER = "UI-LFG-RoleIcon-DPS" },
     },
     styled = {
         name = "Styled",
-        atlas = { TANK = "UI-LFG-RoleIcon-Tank-Background", HEALER = "UI-LFG-RoleIcon-Healer-Background", DAMAGER = "UI-LFG-RoleIcon-DPS-Background" },
+        kind = "atlas",
+        icons = { TANK = "UI-LFG-RoleIcon-Tank-Background", HEALER = "UI-LFG-RoleIcon-Healer-Background", DAMAGER = "UI-LFG-RoleIcon-DPS-Background" },
     },
     classiccircle = {
         name = "Classic Circle",
-        atlas = { TANK = "UI-LFG-RoleIcon-Tank-Micro-GroupFinder", HEALER = "UI-LFG-RoleIcon-Healer-Micro-GroupFinder", DAMAGER = "UI-LFG-RoleIcon-DPS-Micro-GroupFinder" },
+        kind = "atlas",
+        icons = { TANK = "UI-LFG-RoleIcon-Tank-Micro-GroupFinder", HEALER = "UI-LFG-RoleIcon-Healer-Micro-GroupFinder", DAMAGER = "UI-LFG-RoleIcon-DPS-Micro-GroupFinder" },
     },
     classic = {
         name = "Classic",
-        atlas = { TANK = "roleicon-tiny-tank", HEALER = "roleicon-tiny-healer", DAMAGER = "roleicon-tiny-dps" },
+        kind = "atlas",
+        icons = { TANK = "roleicon-tiny-tank", HEALER = "roleicon-tiny-healer", DAMAGER = "roleicon-tiny-dps" },
     },
     blizzdefault = {
         name = "Blizzard Default",
-        atlas = { TANK = "GM-icon-role-tank", HEALER = "GM-icon-role-healer", DAMAGER = "GM-icon-role-dps" },
+        kind = "atlas",
+        icons = { TANK = "GM-icon-role-tank", HEALER = "GM-icon-role-healer", DAMAGER = "GM-icon-role-dps" },
+    },
+    ndui = {
+        name = "NDui",
+        kind = "atlas",
+        icons = { TANK = "groupfinder-icon-role-micro-tank", HEALER = "groupfinder-icon-role-micro-heal", DAMAGER = "groupfinder-icon-role-micro-dps" },
+    },
+    nduiplus_lyn = {
+        name = "NDui_Plus: LynUI",
+        kind = "texture",
+        icons = { TANK = ROLE_ICON_MEDIA .. "LynUI\\Tank", HEALER = ROLE_ICON_MEDIA .. "LynUI\\Healer", DAMAGER = ROLE_ICON_MEDIA .. "LynUI\\DPS" },
+    },
+    nduiplus_elv = {
+        name = "NDui_Plus: ElvUI",
+        kind = "texture",
+        icons = { TANK = ROLE_ICON_MEDIA .. "ElvUI\\Tank", HEALER = ROLE_ICON_MEDIA .. "ElvUI\\Healer", DAMAGER = ROLE_ICON_MEDIA .. "ElvUI\\DPS" },
+    },
+    nduiplus_toxiwhite = {
+        name = "NDui_Plus: ToxiUI White",
+        kind = "texture",
+        icons = { TANK = ROLE_ICON_MEDIA .. "ToxiUI\\WhiteTank", HEALER = ROLE_ICON_MEDIA .. "ToxiUI\\WhiteHeal", DAMAGER = ROLE_ICON_MEDIA .. "ToxiUI\\WhiteDPS" },
+    },
+    nduiplus_toxinew = {
+        name = "NDui_Plus: ToxiUI New",
+        kind = "texture",
+        icons = { TANK = ROLE_ICON_MEDIA .. "ToxiUI\\NewTank", HEALER = ROLE_ICON_MEDIA .. "ToxiUI\\NewHeal", DAMAGER = ROLE_ICON_MEDIA .. "ToxiUI\\NewDPS" },
     },
 }
 
-local ICON_STYLE_ORDER = { "moderncircle", "styled", "classiccircle", "classic", "blizzdefault" }
+local ICON_STYLE_ORDER = {
+    "moderncircle", "styled", "classiccircle", "classic", "blizzdefault", "ndui",
+    "nduiplus_lyn", "nduiplus_elv", "nduiplus_toxiwhite", "nduiplus_toxinew",
+}
 
 local function GetIconStyle()
     local key = ModuleDB().iconStyle
@@ -138,93 +223,72 @@ local function GetIconStyle()
     return "moderncircle"
 end
 
--- Applies a style to an existing icon texture object -- used both when a
--- role icon is first created and to live-restyle it when the option changes.
-local function ApplyRoleIcon(icon, role, styleKey)
-    local style = ICON_STYLES[styleKey] or ICON_STYLES.moderncircle
-    icon:SetAtlas(style.atlas[role])
-end
-
 -- ---------------------------------------------------------------------------
--- Displays: a standalone bar (fallback), a badge docked to EUI's icon, and a
--- LibDataBroker data source (pick it as a widget in EllesmereUIDataBars, or
--- any other LDB-consuming data bar)
+-- Displays: a badge docked to EUI's icon, and a LibDataBroker data source
+-- (pick it as a widget in EllesmereUIDataBars, or any other LDB-consuming
+-- data bar)
 -- ---------------------------------------------------------------------------
 
-local frame          -- standalone bar (built always; fallback display)
-local dockedBadge     -- compact badge anchored to EllesmereUIRaidToolsIcon
-local dockedIconBtn   -- the EllesmereUIRaidToolsIcon frame itself, once found
-local usingDockedMode = false
-local ldbObject       -- LibDataBroker data source, if LDB is available
+local Broker = AniMods.Broker
 
--- EllesmereUI ships LibStub + LibDataBroker-1.1 itself (EllesmereUI/Libs/),
--- and EllesmereUIDataBars depends on EllesmereUI, so LibStub is guaranteed
--- present whenever this module's own condition (EllesmereUIQoL loaded) holds.
--- Guarded anyway, silently: GetLibrary(..., true) never errors on a miss.
+local dockedBadge  -- compact badge anchored to EllesmereUIRaidToolsIcon
+local docked = false -- true once EUI's icon has been found and the badge wired to it
+local ldbObject    -- LibDataBroker data source, if LDB is available
+
 local function InitLDB()
-    local libStub = _G.LibStub
-    local ldb = libStub and libStub:GetLibrary("LibDataBroker-1.1", true)
-    if not ldb then return end
-
-    ldbObject = ldb:NewDataObject("AniModsRaidComposition", {
-        type = "data source",
+    ldbObject = Broker.Register("AniModsRaidComposition", {
         label = "AniMods: Raid Composition",
-        text = "",
-        OnClick = function() if AniMods.ToggleUI then AniMods.ToggleUI() end end,
-        -- No self-titled header line -- the tooltip already only ever shows
-        -- up when hovering this exact plugin, so "AniMods: Raid Composition"
-        -- was just noise. One row per role, each a run of class-colored
-        -- squares (one per member in that role) rather than a bare count --
-        -- glanceable roster shape, not just a number.
-        OnTooltipShow = function(tt)
-            if not IsInGroup() then
-                tt:AddLine("Not in a group", 0.6, 0.6, 0.6)
-                return
-            end
-            tt:AddLine(IsInRaid() and "Raid" or "Party", 0.6, 0.6, 0.6)
-            local byRole = CollectRoleClasses()
-            local ROLE_LABEL = { TANK = "Tank", HEALER = "Healer", DAMAGER = "DPS" }
-            for _, role in ipairs(ROLES) do
-                local squares = {}
-                for _, class in ipairs(byRole[role]) do
-                    local c = RAID_CLASS_COLORS and RAID_CLASS_COLORS[class]
-                    squares[#squares + 1] = "|c" .. (c and c.colorStr or "ffffffff") .. "\226\150\160|r"
+        -- Left click: Blizzard's own raid roster/role/ready-check frame --
+        -- the actual raid-management UI, not this module's settings.
+        -- ToggleRaidFrame is the standard global for it (same one
+        -- SavedInstances uses), lazy-loading Blizzard_RaidUI on first call;
+        -- guarded against combat lockdown the same way that addon does,
+        -- since it can touch protected frames. Right (or middle) click:
+        -- straight to this module's own tab in the AniMods panel.
+        OnClick = function(frame, button)
+            if button == "LeftButton" then
+                if ToggleRaidFrame and not InCombatLockdown() then
+                    ToggleRaidFrame()
                 end
-                tt:AddDoubleLine(ROLE_LABEL[role], #squares > 0 and table.concat(squares, " ") or "-",
-                    1, 1, 1, 1, 1, 1)
+            elseif AniMods.OpenModuleTab then
+                AniMods.OpenModuleTab("RaidComposition")
             end
         end,
+        -- No self-titled header line -- the tooltip already only ever shows
+        -- up when hovering this exact plugin, so "AniMods: Raid Composition"
+        -- was just noise.
+        OnTooltipShow = ShowCompositionTooltip,
     })
 end
 
--- Inline-atlas escape sequence (|A:name:height:width|a) embeds a Blizzard
--- atlas directly inside a FontString-rendered string -- lets the broker's
--- single `text` field carry all three role icons plus their counts, styled
--- to match whichever icon style is currently selected.
+-- The shared builder (AniMods.Broker) owns the icon/text formatting and the
+-- display-mode setting; this only has to say what the parts ARE -- one per
+-- role, carrying its count, its color, and its icon from whichever style is
+-- currently selected (an atlas name or a bundled texture path, depending on
+-- that style's `kind`).
 local function BuildBrokerText(counts)
     local style = ICON_STYLES[GetIconStyle()] or ICON_STYLES.moderncircle
-    local function iconAndCount(role, n)
-        return ("|A:%s:14:14|a %d"):format(style.atlas[role], n)
+    local parts = {}
+    for i, role in ipairs(ROLES) do
+        local part = { count = counts[role], color = ROLE_COLOR[role] }
+        if style.kind == "atlas" then
+            part.atlas = style.icons[role]
+        else
+            part.texture = style.icons[role]
+        end
+        parts[i] = part
     end
-    return ("%s  %s  %s"):format(
-        iconAndCount("TANK", counts.TANK),
-        iconAndCount("HEALER", counts.HEALER),
-        iconAndCount("DAMAGER", counts.DAMAGER))
+    return Broker.BuildText(ModuleDB, parts)
 end
 
 local function UpdateCounts()
     local counts = CountRoles()
     local inGroup = IsInGroup()
 
-    if frame and frame.counts then
-        for _, role in ipairs(ROLES) do
-            frame.counts[role]:SetText(counts[role])
-        end
-    end
-
     if dockedBadge then
         dockedBadge.text:SetFormattedText(
-            "|cff59c0ff%d|r/|cff2ecc71%d|r/|cffff5555%d|r", counts.TANK, counts.HEALER, counts.DAMAGER)
+            "|cff%s%d|r/|cff%s%d|r/|cff%s%d|r",
+            ROLE_COLOR.TANK, counts.TANK, ROLE_COLOR.HEALER, counts.HEALER, ROLE_COLOR.DAMAGER, counts.DAMAGER)
     end
 
     if ldbObject then
@@ -237,89 +301,34 @@ end
 
 local function SetIconStyle(key)
     ModuleDB().iconStyle = key
-    if frame and frame.icons then
-        for role, icon in pairs(frame.icons) do
-            ApplyRoleIcon(icon, role, key)
-        end
-    end
     UpdateCounts() -- broker text embeds the icon style too
 end
 
-local function UpdateVisibility()
-    if not frame then return end
-    -- Once docked, the standalone bar retires -- the icon's own Show/Hide
-    -- drives the docked badge instead (see TryDockToEUIIcon).
-    frame:SetShown(IsInGroup() and not usingDockedMode)
-end
+-- The 8 standard GameTooltip anchor points -- badge is tiny (36x12) and sits
+-- right below EUI's own Raid Tools icon, so where the tooltip pops out
+-- relative to it matters (e.g. straight up overlaps the icon above it);
+-- letting it be picked beats guessing one default that won't suit every
+-- setup.
+local TOOLTIP_ANCHOR_LABEL = {
+    TOP = "Top", BOTTOM = "Bottom", LEFT = "Left", RIGHT = "Right",
+    TOPLEFT = "Top Left", TOPRIGHT = "Top Right", BOTTOMLEFT = "Bottom Left", BOTTOMRIGHT = "Bottom Right",
+}
+local TOOLTIP_ANCHOR_ORDER = { "TOP", "BOTTOM", "LEFT", "RIGHT", "TOPLEFT", "TOPRIGHT", "BOTTOMLEFT", "BOTTOMRIGHT" }
 
-local function SavePosition(self)
-    local point, _, relPoint, x, y = self:GetPoint()
-    local db = ModuleDB()
-    db.point, db.relPoint, db.x, db.y = point, relPoint, x, y
-end
-
-local function CreateRoleIcon(parent, role)
-    local icon = parent:CreateTexture(nil, "ARTWORK")
-    icon:SetSize(16, 16)
-    ApplyRoleIcon(icon, role, GetIconStyle())
-    return icon
-end
-
-local function BuildFrame()
-    local f = CreateFrame("Frame", "AniModsRaidComposition", UIParent, "BackdropTemplate")
-    f:SetSize(118, 24)
-    f:SetClampedToScreen(true)
-    f:SetBackdrop({
-        bgFile = "Interface\\Buttons\\WHITE8x8",
-        edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = 1,
-    })
-    f:SetBackdropColor(0.05, 0.05, 0.05, 0.75)
-    f:SetBackdropBorderColor(0, 0, 0, 0.8)
-    f:SetMovable(true)
-    f:EnableMouse(true)
-    f:RegisterForDrag("LeftButton")
-    f:SetScript("OnDragStart", f.StartMoving)
-    f:SetScript("OnDragStop", function(self)
-        self:StopMovingOrSizing()
-        SavePosition(self)
-    end)
-    f:SetScript("OnEnter", function(self)
-        GameTooltip:SetOwner(self, "ANCHOR_TOP")
-        GameTooltip:SetText("AniMods: Raid Composition")
-        GameTooltip:AddLine("Drag to move.", 0.6, 0.6, 0.6)
-        GameTooltip:Show()
-    end)
-    f:SetScript("OnLeave", function() GameTooltip:Hide() end)
-
-    f.counts = {}
-    f.icons = {}
-    for i, role in ipairs(ROLES) do
-        local icon = CreateRoleIcon(f, role)
-        icon:SetPoint("LEFT", 4 + (i - 1) * 38, 0)
-        f.icons[role] = icon
-
-        local text = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-        text:SetPoint("LEFT", icon, "RIGHT", 4, 0)
-        text:SetText("0")
-        f.counts[role] = text
-    end
-
-    local db = ModuleDB()
-    if db.point then
-        f:SetPoint(db.point, UIParent, db.relPoint or db.point, db.x or 0, db.y or 0)
-    else
-        f:SetPoint("TOPLEFT", UIParent, "TOPLEFT", 250, -250)
-    end
-
-    return f
+local function GetTooltipAnchor()
+    local key = ModuleDB().dockedTooltipAnchor
+    if key and TOOLTIP_ANCHOR_LABEL[key] then return key end
+    return "RIGHT" -- doesn't overlap the EUI icon sitting directly above the badge
 end
 
 -- Small text-only badge (an icon row doesn't fit under a 30x30 button) docked
--- just below EUI's collapsed Raid Tools icon. Deliberately no tooltip here --
--- it's sitting right on top of EUI's own Raid Tools UI, and a second popup
--- fighting for the same screen space is more annoying than useful. The
--- broker (LDB) plugin's tooltip is the place for the detailed breakdown.
+-- just below EUI's collapsed Raid Tools icon. No tooltip by default -- it's
+-- sitting right on top of EUI's own Raid Tools UI, and a second popup
+-- fighting for the same screen space can be more annoying than useful -- but
+-- opt-in via "Show tooltip on docked badge" in GetInfoRows for anyone who
+-- wants the same per-role breakdown here that the broker (LDB) plugin always
+-- shows. Checked live inside OnEnter rather than toggling EnableMouse/the
+-- scripts themselves, so flipping the option takes effect immediately.
 local function BuildDockedBadge(iconBtn)
     local badge = CreateFrame("Frame", "AniModsRaidCompositionDocked", UIParent)
     badge:SetSize(36, 12)
@@ -333,6 +342,15 @@ local function BuildDockedBadge(iconBtn)
     badge.text:SetJustifyH("CENTER")
     local fontPath = badge.text:GetFont()
     badge.text:SetFont(fontPath, 9, "OUTLINE")
+
+    badge:EnableMouse(true)
+    badge:SetScript("OnEnter", function(self)
+        if not ModuleDB().dockedTooltip then return end
+        GameTooltip:SetOwner(self, "ANCHOR_" .. GetTooltipAnchor())
+        ShowCompositionTooltip(GameTooltip)
+        GameTooltip:Show()
+    end)
+    badge:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
     return badge
 end
@@ -350,46 +368,57 @@ local function GetEUIRaidToolsMode()
     return db and db.profile and db.profile.raidTools and db.profile.raidTools.mode
 end
 
-local function DockingEnabled()
-    return ModuleDB().dockToIcon ~= false -- default: on
+-- Whether the docked badge should actually be visible -- distinct from
+-- `docked` (which just means "hooked up and tracking"). Off is useful
+-- together with the broker (LDB) plugin: same counts shown twice (once
+-- docked under the icon, once in a databar) can be redundant, so this lets
+-- the docked badge stay hooked (still cheap to keep resyncing) but hidden.
+local function ShowDockedBadge()
+    return ModuleDB().showDockedBadge ~= false -- default: on
 end
 
--- dockInitialized is separate from (and permanent, unlike) usingDockedMode:
--- the badge/hooks/ticker are built at most ONCE ever, the first time the
--- icon is found while docking is enabled. Toggling the "dock to icon" option
--- off and back on afterward must NOT re-run this setup -- hooksecurefunc
--- can't be un-hooked, so doing so would stack a second Show/Hide hook and a
--- second ticker every time. usingDockedMode is the freely-toggleable "is it
--- currently showing docked" flag that both the option and EUI's own icon
--- visibility drive.
-local dockInitialized = false
+-- Set inside TryDockToEUIIcon once the badge/icon are known; re-invoked by
+-- the "Show docked badge" toggle so flipping it applies immediately without
+-- waiting for the icon's own Show/Hide/OnClick/ticker triggers.
+local resyncDockedBadge
 
 -- EllesmereUIQoL only builds its Raid Tools frames (including the collapsed
--- icon) on first Apply with a non-"never" mode -- in other words, we only
+-- icon) on first Apply with a non-"never" mode -- in other words, we can only
 -- ever dock while GetEUIRaidToolsMode() ~= "never". "never" is QoL's own
 -- default, meaning the icon frame may not exist yet (or ever) at our own
 -- Enable() time. Called from Enable() and re-checked on a few login-delay
 -- timers plus GROUP_ROSTER_UPDATE so we still dock if it appears later.
+-- Docking is the only display mode -- once found, this runs at most once
+-- ever (hooksecurefunc can't be un-hooked, so there's nothing to undo).
 local function TryDockToEUIIcon()
-    if dockInitialized then return end
-    if not DockingEnabled() then return end
+    if docked then return end
     local iconBtn = _G.EllesmereUIRaidToolsIcon
     if not iconBtn then return end
 
-    dockInitialized = true
-    dockedIconBtn = iconBtn
-    usingDockedMode = true
-    UpdateVisibility() -- retires the standalone bar
-
+    docked = true
     dockedBadge = BuildDockedBadge(iconBtn)
 
-    local function ResyncBadge()
-        dockedBadge:SetShown(DockingEnabled() and dockedIconBtn:IsShown())
+    -- Split on purpose: visibility sync (cheap -- one IsShown() check) vs.
+    -- a full resync (also recomputes counts -- a roster walk + broker text
+    -- rebuild, not free). Real state-change moments (Show/Hide/OnClick, the
+    -- "Show docked badge" toggle) get the full resync; the backstop ticker
+    -- below gets only the cheap half. Bundling both into one function that
+    -- a 0.15s ticker called forever -- the original shape here -- meant
+    -- redoing the roster walk ~7 times a second for the entire session
+    -- regardless of whether anything changed, the same category of mistake
+    -- as the AniMods panel's old rebuild-every-second ticker (see UI.lua's
+    -- history): a timer standing in for real event coverage.
+    local function ResyncVisibility()
+        dockedBadge:SetShown(ShowDockedBadge() and iconBtn:IsShown())
+    end
+
+    resyncDockedBadge = function()
+        ResyncVisibility()
         UpdateCounts()
     end
 
-    hooksecurefunc(iconBtn, "Show", ResyncBadge)
-    hooksecurefunc(iconBtn, "Hide", ResyncBadge)
+    hooksecurefunc(iconBtn, "Show", resyncDockedBadge)
+    hooksecurefunc(iconBtn, "Hide", resyncDockedBadge)
     -- Clicking the icon expands it (collapsed -> windows) via EUI's secure
     -- "_onclick" attribute snippet, a separate execution path from the
     -- button's ordinary OnClick script -- but the button still fires its
@@ -397,40 +426,22 @@ local function TryDockToEUIIcon()
     -- it doesn't remove the standard one), so this observes the click
     -- itself rather than waiting on Show/Hide to have actually propagated
     -- yet, for zero added latency on this specific transition.
-    iconBtn:HookScript("OnClick", ResyncBadge)
-    ResyncBadge()
+    iconBtn:HookScript("OnClick", resyncDockedBadge)
+    resyncDockedBadge()
 
     -- Belt-and-suspenders for every OTHER path that hides/shows the icon
     -- (driver transitions, the toggle keybind, a shell's own collapse
     -- button -- none of which we have a direct handle on to hook their
-    -- click): a fast poll costs nothing (one IsShown() check) and guarantees
-    -- the badge can't drift noticeably out of sync with the icon it mirrors,
-    -- even if some path doesn't route through Show/Hide the way the rest do.
-    C_Timer.NewTicker(0.15, ResyncBadge)
-end
-
--- Freely reversible: if the badge/hooks already exist (dockInitialized),
--- toggling just flips usingDockedMode and resyncs visibility -- no re-init.
--- If the icon hasn't been found yet, enabling just lets the next
--- TryDockToEUIIcon() call (already wired to fire regularly) pick it up.
-local function SetDockingEnabled(enabled)
-    ModuleDB().dockToIcon = enabled
-    if enabled then
-        TryDockToEUIIcon()
-        if dockInitialized then
-            usingDockedMode = true
-            if dockedIconBtn then dockedBadge:SetShown(dockedIconBtn:IsShown()) end
-        end
-    else
-        usingDockedMode = false
-        if dockedBadge then dockedBadge:Hide() end
-    end
-    UpdateVisibility()
-    UpdateCounts()
+    -- click, and none of which route through iconBtn's own Show/Hide if
+    -- what actually changed was a PARENT frame's visibility): genuinely
+    -- cheap now that it's just the IsShown() check, not a roster walk.
+    -- GROUP_ROSTER_UPDATE/UNIT_FLAGS/PLAYER_ENTERING_WORLD (see Enable())
+    -- are what actually drive count freshness.
+    C_Timer.NewTicker(0.15, ResyncVisibility)
 end
 
 -- ---------------------------------------------------------------------------
--- Status panel: live composition + icon style picker
+-- Status panel: live composition + display options
 -- ---------------------------------------------------------------------------
 
 function RaidComposition:GetInfoRows()
@@ -448,47 +459,73 @@ function RaidComposition:GetInfoRows()
     end
 
     rows[#rows + 1] = { section = "Integration" }
-    local mode = GetEUIRaidToolsMode()
-    if not mode then
-        rows[#rows + 1] = { label = "EllesmereUI Raid Tools", value = "Unknown (not configured yet this session)" }
-    elseif mode == "never" then
-        rows[#rows + 1] = { label = "EllesmereUI Raid Tools", value = "Disabled (mode: never)" }
+    local dockStatus
+    if docked then
+        dockStatus = "Yes"
     else
-        rows[#rows + 1] = { label = "EllesmereUI Raid Tools", value = "Enabled (mode: " .. mode .. ")" }
+        local mode = GetEUIRaidToolsMode()
+        if mode == "never" then
+            dockStatus = "No (Raid Tools disabled, mode: never)"
+        elseif not mode then
+            dockStatus = "No (Raid Tools not configured yet)"
+        else
+            dockStatus = "No (waiting for its icon to appear)"
+        end
     end
+    rows[#rows + 1] = { label = "Docked to EllesmereUI icon", value = dockStatus }
     rows[#rows + 1] = {
-        label = "Dock to its icon",
-        get   = DockingEnabled,
-        set   = SetDockingEnabled,
+        label = "Show docked badge",
+        get   = ShowDockedBadge,
+        set   = function(v)
+            ModuleDB().showDockedBadge = v
+            if resyncDockedBadge then resyncDockedBadge() end
+        end,
     }
     rows[#rows + 1] = {
-        label = "Docked right now",
-        value = usingDockedMode and "Yes" or "No (standalone bar instead)",
+        label = "Show tooltip on docked badge",
+        get   = function() return ModuleDB().dockedTooltip == true end,
+        set   = function(v) ModuleDB().dockedTooltip = v end,
     }
     rows[#rows + 1] = {
-        label = "Broker (LDB) plugin",
-        value = ldbObject and "Registered as \"AniMods: Raid Composition\" -- pick it in a databar"
-            or "Not registered (LibDataBroker-1.1 not found)",
+        label   = "Tooltip anchor",
+        options = TOOLTIP_ANCHOR_LABEL,
+        order   = TOOLTIP_ANCHOR_ORDER,
+        get     = GetTooltipAnchor,
+        set     = function(v) ModuleDB().dockedTooltipAnchor = v end,
     }
+    rows[#rows + 1] = { label = "Broker (LDB) plugin", value = ldbObject and "Registered" or "Not available" }
+
+    for _, row in ipairs(Broker.DisplayRows(ModuleDB, UpdateCounts)) do
+        rows[#rows + 1] = row
+    end
 
     rows[#rows + 1] = { section = "Icon Style" }
-    local currentStyle = GetIconStyle()
+    local styleOptions, styleOrder = {}, {}
     for _, key in ipairs(ICON_STYLE_ORDER) do
-        rows[#rows + 1] = {
-            label = ICON_STYLES[key].name,
-            get   = function() return GetIconStyle() == key end,
-            set   = function(v) if v then SetIconStyle(key) end end,
-            note  = (currentStyle == key) and "selected" or nil,
-        }
+        styleOptions[key] = ICON_STYLES[key].name
+        styleOrder[#styleOrder + 1] = key
     end
+    local currentStyle = ICON_STYLES[GetIconStyle()]
+    local previewIcons = { currentStyle.icons.TANK, currentStyle.icons.HEALER, currentStyle.icons.DAMAGER }
+    local styleRow = {
+        label   = "Style",
+        options = styleOptions,
+        order   = styleOrder,
+        get     = GetIconStyle,
+        set     = SetIconStyle,
+    }
+    if currentStyle.kind == "atlas" then
+        styleRow.atlas = previewIcons
+    else
+        styleRow.texture = previewIcons
+    end
+    rows[#rows + 1] = styleRow
 
     return rows
 end
 
 function RaidComposition:Enable()
-    frame = BuildFrame()
     InitLDB()
-    UpdateVisibility()
     UpdateCounts()
 
     local eventFrame = CreateFrame("Frame")
@@ -497,8 +534,11 @@ function RaidComposition:Enable()
     eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
     eventFrame:SetScript("OnEvent", function()
         TryDockToEUIIcon()
-        UpdateVisibility()
         UpdateCounts()
+        -- Nudge the AniMods panel too, if it's open on this tab -- the
+        -- "Status" section's live Tanks/Healers/DPS counts have no other way
+        -- to notice a roster change (the panel no longer polls; see UI.lua).
+        if AniMods.RefreshUI then AniMods.RefreshUI() end
     end)
 
     TryDockToEUIIcon()

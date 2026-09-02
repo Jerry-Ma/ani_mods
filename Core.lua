@@ -132,7 +132,17 @@ AniMods.EvaluateCondition = EvaluateCondition
 -- ── Module lifecycle ──────────────────────────────────────────────────────────
 
 local function InitModules()
-    for name, module in pairs(modules) do
+    -- Sorted, not pairs(): module Enable() order should be deterministic.
+    -- Nothing here depends on another module today, but if that ever changes
+    -- (or two modules ever touch the same Blizzard frame), a hash-order init
+    -- would make the resulting bug intermittent and near-impossible to
+    -- reproduce.
+    local names = {}
+    for name in pairs(modules) do names[#names + 1] = name end
+    table.sort(names)
+
+    for _, name in ipairs(names) do
+        local module = modules[name]
         local conditionMet, reason = EvaluateCondition(module.condition)
 
         local userEnabled = db.modules[name]
@@ -143,7 +153,12 @@ local function InitModules()
 
         local active = false
         local errorTrace
-        if conditionMet and userEnabled and module.Enable then
+        if conditionMet and userEnabled and not module.Enable then
+            -- A module with nothing to run at login (registration alone is
+            -- its whole job) is active, not failed -- without this it would
+            -- fall through to the UI's "Failed" state with no error to show.
+            active = true
+        elseif conditionMet and userEnabled then
             -- xpcall (not pcall) so ErrorHandler runs while the stack is
             -- still live: that's what makes debugstack() useful here, rather
             -- than just the "file:line: message" a caught pcall error gives
@@ -166,7 +181,7 @@ local function InitModules()
             module          = module, -- reference for any future per-module UI needs
             title           = module.title or name,
             description     = module.description,
-            dependencies    = module.dependencies, -- always-visible "depends on" line, distinct from conditionReason (which only shows on failure)
+            dependencies    = module.dependencies, -- always-visible "Depends on" checklist ({ text, met } entries), distinct from conditionReason (which only shows on failure)
             conditionMet    = conditionMet,
             conditionReason = reason,
             errorTrace      = errorTrace,
@@ -212,18 +227,40 @@ end)
 
 -- ── Slash commands ────────────────────────────────────────────────────────────
 
+-- Module names are registered CamelCase ("RaidComposition"), but nobody
+-- wants to have to type them that way -- resolve case-insensitively, and
+-- return the real registered name so messages echo it back properly.
+local function ResolveModuleName(input)
+    if input == "" then return nil end
+    if modules[input] then return input end
+    local wanted = input:lower()
+    for moduleName in pairs(modules) do
+        if moduleName:lower() == wanted then return moduleName end
+    end
+    return nil
+end
+
 _G.SLASH_ANIMODS1 = "/animods"
 _G.SLASH_ANIMODS2 = "/ani"
 _G.SlashCmdList["ANIMODS"] = function(msg)
-    msg = strtrim((msg or ""):lower())
-    local cmd, name = msg:match("^(%S*)%s*(.-)$")
+    -- Only the command word is lowercased -- lowercasing the whole message
+    -- (as this used to) also mangled the module name, so `/ani enable
+    -- RaidComposition` looked up "raidcomposition" and always reported
+    -- "Unknown module".
+    local cmd, name = strtrim(msg or ""):match("^(%S*)%s*(.-)$")
+    cmd = (cmd or ""):lower()
+    name = strtrim(name or "")
 
     if cmd == "" then
         if AniMods.ToggleUI then AniMods.ToggleUI() end
 
     elseif cmd == "list" then
         print("|cffffff00AniMods|r modules:")
-        for moduleName, entry in pairs(status) do
+        local names = {}
+        for moduleName in pairs(status) do names[#names + 1] = moduleName end
+        table.sort(names)
+        for _, moduleName in ipairs(names) do
+            local entry = status[moduleName]
             local state
             if entry.active then
                 state = "|cff44ff44active|r"
@@ -237,13 +274,14 @@ _G.SlashCmdList["ANIMODS"] = function(msg)
         end
 
     elseif cmd == "enable" or cmd == "disable" then
-        if not modules[name] then
+        local resolved = ResolveModuleName(name)
+        if not resolved then
             print("|cffff4444AniMods:|r Unknown module: " .. tostring(name))
             return
         end
-        AniMods.SetModuleEnabled(name, cmd == "enable")
+        AniMods.SetModuleEnabled(resolved, cmd == "enable")
         print(("|cffffff00AniMods:|r %s %s. |cff888888/reload|r to apply.")
-            :format(name, cmd == "enable" and "enabled" or "disabled"))
+            :format(resolved, cmd == "enable" and "enabled" or "disabled"))
 
     else
         print("|cffffff00AniMods|r commands: |cffffd700/animods|r (status panel), |cffffd700list|r, |cffffd700enable <name>|r, |cffffd700disable <name>|r")

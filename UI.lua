@@ -1,32 +1,45 @@
 -- AniMods status/config panel. `/animods` (or `/ani`) toggles it.
 --
--- Built on AceGUI-3.0 (Frame + TabGroup + ScrollFrame/List, Heading/CheckBox/
--- Label/Button widgets) rather than a hand-rolled Blizzard-frame UI or
--- DetailsFramework -- both were tried first. DF gave a much fancier-looking
--- result on paper, but its declarative BuildMenu API has real undocumented
--- (to us) sharp edges -- e.g. a nil switch template silently aborts
--- BuildMenuVolatile partway through with no error visible until a widget
--- type is actually used, discovered only via live in-game testing, not code
--- review. AceGUI is the most mature, most thoroughly documented WoW UI
--- toolkit there is (unchanged for a decade-plus, embedded in dozens of
--- addons already in this folder), with a small, predictable widget-tree API
--- that's reliable to reason about correctly without a live client to test
--- against every change.
+-- Drawn with AniMods.W (Widgets.lua) -- hand-rolled chrome matching
+-- EllesmereUI's look, using EUI's own public primitives when it's loaded.
+-- See Widgets.lua's header for why hand-rolled rather than a widget library.
 --
--- AceGUI-3.0 is bundled in Libs\AceGUI-3.0 (copied from HandyNotes' embed,
--- itself the standard Ace3 distribution, BSD-licensed) plus Libs\LibStub,
--- loaded via the .toc before Core.lua/UI.lua -- not relied on any other
--- addon's copy being installed/loaded.
+-- The refresh model is the important part here, and it survived the switch
+-- from AceGUI unchanged:
+--   * Live data updates the TEXT of existing widgets in place. Nothing is
+--     destroyed, so an open dropdown and the scroll position are never
+--     disturbed by a counter ticking over.
+--   * Each `{section=...}` block owns its own container. When a section's
+--     row SHAPE changes (a row appearing/disappearing -- e.g.
+--     RaidComposition's Status block going 1 row solo to 4 rows grouped)
+--     only that section is rebuilt; other sections, and any dropdown in
+--     them, are untouched.
+--   * Nothing polls. Modules push AniMods.RefreshUI() when their data
+--     actually changes.
 
 local ADDON_NAME = "AniMods"
 local AniMods = _G.AniMods
-local AceGUI = LibStub("AceGUI-3.0")
+local W = AniMods.W
 
-local ACCENT_HEX = "ffd700" -- gold accent, matches the rest of the workspace's addon titles
+local DOT = "\226\151\143" -- U+25CF, tab status glyph and dependency bullets
+
+local PAD = 12            -- content inset
+local ROW_GAP = 2
+local BLOCK_GAP = 6
+local CONTROL_WIDTH = 220 -- dropdowns/sliders: fixed, never full-width
 
 local frame
-local tabGroup
+local tabStrip
+local tabButtons = {}
+local scrollArea
+local content
 local currentTabName
+
+-- Set while a dropdown's menu is open, to the index of the section holding
+-- it. Only matters for the rare full-rebuild path -- in-place text updates
+-- never disturb a dropdown, so they don't consult it.
+local openDropdownSection = nil
+local refreshPending = false
 
 local function ColorHex(r, g, b)
     return ("%02x%02x%02x"):format((r or 1) * 255, (g or 1) * 255, (b or 1) * 255)
@@ -45,6 +58,15 @@ local function GetStateInfo(entry)
     end
 end
 
+-- Whether entry has an error block, a plain reason block, or neither --
+-- shared between BuildTabContent (which creates the block) and
+-- TryRefreshTabInPlace (a change in which is structural, not a text update).
+local function ClassifyReason(entry)
+    local hasError = entry.errorTrace and true or false
+    local hasReason = (not hasError) and entry.conditionReason and true or false
+    return hasError, hasReason
+end
+
 local function SortedModuleNames()
     local names = {}
     for name in pairs(AniMods.status) do tinsert(names, name) end
@@ -56,219 +78,700 @@ end
 
 local errorPopup
 
-local function ShowCopyPopup(title, text)
+local function ShowCopyPopup(titleText, text)
     if not errorPopup then
-        errorPopup = AceGUI:Create("Frame")
-        errorPopup:SetLayout("Fill")
-        errorPopup:SetWidth(560)
-        errorPopup:SetHeight(340)
-        errorPopup:EnableResize(false)
-        errorPopup:SetCallback("OnClose", function(widget) widget:Hide() end)
+        errorPopup = W.Window("AniModsErrorPopup", "AniMods — Error", 560, 340)
+        errorPopup:SetFrameStrata("FULLSCREEN_DIALOG")
 
-        errorPopup.editBox = AceGUI:Create("MultiLineEditBox")
-        errorPopup.editBox:SetLabel("Ctrl+A, Ctrl+C to copy")
-        errorPopup.editBox:DisableButton(true)
-        errorPopup.editBox:SetFullWidth(true)
-        errorPopup.editBox:SetFullHeight(true)
-        errorPopup:AddChild(errorPopup.editBox)
+        local hint = W.Font(errorPopup, 11, nil, W.TEXT_DIM_A)
+        hint:SetPoint("TOPLEFT", errorPopup, "TOPLEFT", PAD, -36)
+        hint:SetText("Ctrl+A, Ctrl+C to copy")
+
+        local box = W.Panel(errorPopup, W.INPUT_BG, W.BORDER_A)
+        box:SetPoint("TOPLEFT", errorPopup, "TOPLEFT", PAD, -56)
+        box:SetPoint("BOTTOMRIGHT", errorPopup, "BOTTOMRIGHT", -PAD, PAD)
+
+        local scroll = CreateFrame("ScrollFrame", nil, box)
+        scroll:SetPoint("TOPLEFT", 6, -6)
+        scroll:SetPoint("BOTTOMRIGHT", -6, 6)
+        scroll:EnableMouseWheel(true)
+        scroll:SetScript("OnMouseWheel", function(self, delta)
+            self:SetVerticalScroll(math.max(0, self:GetVerticalScroll() - delta * 24))
+        end)
+
+        local edit = CreateFrame("EditBox", nil, scroll)
+        edit:SetMultiLine(true)
+        edit:SetAutoFocus(false)
+        edit:SetFontObject(ChatFontNormal)
+        edit:SetWidth(500)
+        edit:SetScript("OnEscapePressed", function() errorPopup:Hide() end)
+        scroll:SetScrollChild(edit)
+
+        errorPopup.editBox = edit
     end
 
-    errorPopup:SetTitle(title)
     errorPopup.editBox:SetText(text or "")
     errorPopup:Show()
     errorPopup.editBox:SetFocus()
+    errorPopup.editBox:HighlightText()
 end
 
--- ── Info rows: each module's live "debug + options" readout ──────────────────
+-- ── Info rows ────────────────────────────────────────────────────────────────
 -- A module's GetInfoRows() (optional) returns an ordered list of rows:
---   { section = "Status" }                                            -- header
---   { label = "Tanks", value = "2" }                                  -- status
---   { label = "Party", get = fn, set = fn, note = "active now" }      -- toggle
--- A `section` becomes an AceGUI Heading (a real labeled divider widget);
--- anything with `get` becomes a CheckBox; everything else a plain Label.
+--   { section = "Status" }                                                -- header, starts a new section
+--   { label = "Tanks", value = "2" }                                      -- status
+--   { label = "Party", get = fn, set = fn, note = "active now" }          -- toggle
+--   { label = "Style", options = {k="Name",...}, order = {...},
+--     get = fn, set = fn, atlas = "some-atlas" }                          -- dropdown, w/ optional icon preview
+--   { label = "Style", ..., texture = "Interface\\...\\Some" }            -- dropdown, w/ texture-file preview
+--   { label = "Spacing", min = 0, max = 4, step = 1, get = fn, set = fn } -- slider
 
-local function AddInfoRows(container, rows)
-    for _, descriptor in ipairs(rows or {}) do
-        if descriptor.section then
-            local heading = AceGUI:Create("Heading")
-            heading:SetText(descriptor.section)
-            heading:SetFullWidth(true)
-            container:AddChild(heading)
-        elseif descriptor.get then
-            local label = descriptor.label
-            if descriptor.note then
-                label = label .. "  |cff59ff59" .. descriptor.note .. "|r"
+local function RowKind(descriptor)
+    if descriptor.section then return "section" end
+    if descriptor.options then return "options" end
+    if descriptor.min then return "min" end
+    if descriptor.get then return "checkbox" end
+    return "value"
+end
+
+-- Structural signature: row count + kind + label at each position. Rows are
+-- built the same declarative way every time a code path runs, so these only
+-- differ when a row genuinely appeared, disappeared or was replaced -- never
+-- because a value changed.
+local function BuildShape(rows)
+    local shape = {}
+    for i, d in ipairs(rows or {}) do
+        local sig = RowKind(d) .. ":" .. tostring(d.section or d.label)
+        -- How MANY preview icons a dropdown row has is structural (there's
+        -- one widget each), so a change in count has to rebuild the section.
+        -- Whether they're atlases or texture files is NOT: swapping between
+        -- an atlas style and a bundled-texture one retargets the same
+        -- widgets in place, which is the common case and mustn't close an
+        -- open dropdown to do it.
+        local previews = d.atlas or d.texture
+        if previews then
+            sig = sig .. ":" .. (type(previews) == "table" and #previews or 1)
+        end
+        shape[i] = sig
+    end
+    return shape
+end
+
+local function ShapesMatch(a, b)
+    if not a or not b or #a ~= #b then return false end
+    for i = 1, #a do
+        if a[i] ~= b[i] then return false end
+    end
+    return true
+end
+
+-- Splits a flat row list into one slice per {section=...} marker, each slice
+-- starting with its own section row (rows before the first marker form a
+-- leading unnamed slice). Each slice gets its own container frame, which is
+-- what keeps a shape change in one section from touching any other.
+local function SplitIntoSections(rows)
+    local groups, current = {}, nil
+    for _, d in ipairs(rows or {}) do
+        if d.section or not current then
+            current = {}
+            groups[#groups + 1] = current
+        end
+        current[#current + 1] = d
+    end
+    return groups
+end
+
+local function CheckboxLabel(descriptor)
+    local label = descriptor.label
+    if descriptor.note then
+        label = label .. "  |cff59ff59" .. descriptor.note .. "|r"
+    end
+    return label
+end
+
+-- Builds one row into `parent`, returning { kind, widget } for later in-place
+-- updates. `sectionIndex` tags a dropdown's open/close so a rebuild knows
+-- whether it owns the currently-open menu.
+local function BuildRow(parent, descriptor, sectionIndex, stripeIndex)
+    local kind = RowKind(descriptor)
+
+    if kind == "section" then
+        local heading = W.Heading(parent)
+        heading:SetText(descriptor.section)
+        return { kind = kind, widget = heading }, heading.frame, 4
+
+    elseif kind == "options" then
+        local row = CreateFrame("Frame", nil, parent)
+        row:SetHeight(26)
+
+        local label = W.Font(row, 12, nil, W.TEXT_DIM_A)
+        label:SetPoint("LEFT", row, "LEFT", 8, 0)
+        label:SetText(descriptor.label or "")
+
+        local dd = W.Dropdown(row, CONTROL_WIDTH)
+        dd.frame:SetPoint("LEFT", row, "LEFT", 150, 0)
+        dd:SetList(descriptor.options, descriptor.order)
+        dd:SetValue(descriptor.get())
+        dd:SetOnChange(function(value)
+            descriptor.set(value)
+            if AniMods.RefreshUI then AniMods.RefreshUI() end
+        end)
+        dd:SetOnOpened(function() openDropdownSection = sectionIndex end)
+        dd:SetOnClosed(function()
+            openDropdownSection = nil
+            if refreshPending then
+                refreshPending = false
+                -- Next frame, not inline: closing one dropdown to open
+                -- another runs this mid-open, and a deferred rebuild firing
+                -- synchronously there could tear down the dropdown that's in
+                -- the middle of opening. One-shot, not a poll.
+                C_Timer.After(0, function()
+                    if AniMods.RefreshUI then AniMods.RefreshUI() end
+                end)
             end
-            local check = AceGUI:Create("CheckBox")
-            check:SetLabel(label)
-            check:SetValue(descriptor.get() and true or false)
-            check:SetFullWidth(true)
-            check:SetCallback("OnValueChanged", function(widget, event, value)
-                descriptor.set(value)
-                -- Rows can be part of a radio-style group (e.g. an icon
-                -- style picker: many get/set pairs, only one true at a
-                -- time) -- one click can change what every other row's
-                -- get() now returns, so resync the whole tab immediately
-                -- rather than waiting for the periodic refresh.
-                if AniMods.RefreshUI then AniMods.RefreshUI() end
-            end)
-            container:AddChild(check)
-        else
-            local text = AceGUI:Create("Label")
-            text:SetText(("%s:  |cffaaaaaa%s|r"):format(descriptor.label, tostring(descriptor.value or "")))
-            text:SetFullWidth(true)
-            container:AddChild(text)
+        end)
+
+        -- Preview icons for the currently-selected option: one for a single
+        -- representative icon, several for a whole set (e.g. Tank/Healer/DPS)
+        -- so the choice is judged by the set rather than one member. Kept in
+        -- the row's cache entry so picking a different option can retarget
+        -- them in place -- they show the SELECTED style, so they're live
+        -- content, not fixed decoration.
+        local icons = {}
+        local previews = descriptor.atlas or descriptor.texture
+        if previews then
+            local isAtlas = descriptor.atlas ~= nil
+            local list = type(previews) == "table" and previews or { previews }
+            local anchor = dd.frame
+            for _, ref in ipairs(list) do
+                local icon = W.Icon(row, 20)
+                icon.frame:SetPoint("LEFT", anchor, "RIGHT", 6, 0)
+                if isAtlas then icon:SetAtlas(ref) else icon:SetTexture(ref) end
+                icons[#icons + 1] = icon
+                anchor = icon.frame
+            end
+        end
+
+        return { kind = kind, widget = dd, icons = icons }, row, ROW_GAP
+
+    elseif kind == "min" then
+        -- Wrapped in a full-width row so the slider itself keeps
+        -- CONTROL_WIDTH: stacking it directly would anchor it left AND
+        -- right, stretching the track across the whole panel.
+        local row = CreateFrame("Frame", nil, parent)
+        row:SetHeight(30)
+
+        local slider = W.Slider(row, CONTROL_WIDTH)
+        slider.frame:SetPoint("LEFT", row, "LEFT", 8, 0)
+        slider:SetLabel(descriptor.label)
+        slider:SetRange(descriptor.min, descriptor.max, descriptor.step)
+        slider:SetValue(descriptor.get())
+        slider:SetOnChange(function(value)
+            descriptor.set(value)
+            if AniMods.RefreshUI then AniMods.RefreshUI() end
+        end)
+        return { kind = kind, widget = slider }, row, ROW_GAP
+
+    elseif kind == "checkbox" then
+        local check = W.CheckBox(parent)
+        check:SetLabel(CheckboxLabel(descriptor))
+        check:SetChecked(descriptor.get())
+        check:SetOnClick(function(value)
+            descriptor.set(value)
+            if AniMods.RefreshUI then AniMods.RefreshUI() end
+        end)
+        return { kind = kind, widget = check }, check.frame, ROW_GAP
+
+    else
+        local row = W.ValueRow(parent)
+        row:Set(descriptor.label, tostring(descriptor.value or ""))
+        row:Stripe(stripeIndex or 1)
+        return { kind = kind, widget = row }, row.frame, 0
+    end
+end
+
+-- Updates only the live-changing text of already-built rows: a checkbox's
+-- label (its `note` suffix) or a value row's text. Never touches a
+-- Dropdown/Slider/Heading -- nothing about their display changes without the
+-- user acting on that exact widget, which already refreshes inline -- nor a
+-- checkbox's checked state, which no current module changes from outside.
+local function RefreshRowsInPlace(rows, cache)
+    for i, descriptor in ipairs(rows or {}) do
+        local c = cache[i]
+        if c and c.kind == "checkbox" then
+            c.widget:SetLabel(CheckboxLabel(descriptor))
+        elseif c and c.kind == "value" then
+            c.widget:Set(descriptor.label, tostring(descriptor.value or ""))
+        elseif c and c.kind == "options" then
+            -- The selection itself (in case something changed it from
+            -- outside this dropdown) and, more importantly, the preview
+            -- icons: those show the CURRENTLY SELECTED style, so they go
+            -- stale the moment a different one is picked.
+            c.widget:SetValue(descriptor.get())
+            local previews = descriptor.atlas or descriptor.texture
+            if previews and c.icons then
+                local isAtlas = descriptor.atlas ~= nil
+                local list = type(previews) == "table" and previews or { previews }
+                for n, icon in ipairs(c.icons) do
+                    local ref = list[n]
+                    if ref then
+                        if isAtlas then icon:SetAtlas(ref) else icon:SetTexture(ref) end
+                    end
+                end
+            end
         end
     end
 end
 
--- ── Per-module tab content ────────────────────────────────────────────────────
--- Rebuilt from scratch on every tab select and on the periodic refresh --
--- ReleaseChildren()+rebuild is AceGUI's own standard idiom for dynamic
--- content, cheap enough at this scale (a couple dozen widgets at most).
+-- Builds a section's rows into its container, stacking them and sizing the
+-- container to fit. Frames are pooled per (index, kind) so a section that
+-- flips between shapes -- 1 row solo, 4 rows grouped, back again -- reuses
+-- what it already made instead of leaking a new set every time.
+local function FillSection(section, slice, sectionIndex)
+    local container = section.container
+    W.ResetStack(container, 0)
 
-local function BuildTabContent(container, name)
-    container:ReleaseChildren()
-    container:SetLayout("Fill")
+    section.pool = section.pool or {}
+    local pool = section.pool
+    local cache = {}
+    local stripe = 0
 
-    local entry = AniMods.status[name]
-    if not entry then return end
+    for i, descriptor in ipairs(slice) do
+        local kind = RowKind(descriptor)
+        if kind == "value" then stripe = stripe + 1 end
 
-    local scroll = AceGUI:Create("ScrollFrame")
-    scroll:SetLayout("List")
-    container:AddChild(scroll)
+        local entry = pool[i]
+        if entry and entry.kind == kind then
+            -- Reuse: refresh its content, re-show, re-stack below.
+            if kind == "section" then
+                entry.built.widget:SetText(descriptor.section)
+            elseif kind == "value" then
+                entry.built.widget:Set(descriptor.label, tostring(descriptor.value or ""))
+                entry.built.widget:Stripe(stripe)
+            elseif kind == "checkbox" then
+                entry.built.widget:SetLabel(CheckboxLabel(descriptor))
+                entry.built.widget:SetChecked(descriptor.get())
+            else
+                -- Dropdown/slider carry live callbacks bound to this exact
+                -- descriptor; rebuild rather than risk a stale closure.
+                entry.frame:Hide()
+                entry = nil
+            end
+        elseif entry then
+            entry.frame:Hide()
+            entry = nil
+        end
 
-    local stateLabel, r, g, b = GetStateInfo(entry)
+        if not entry then
+            local built, rowFrame, gap = BuildRow(container, descriptor, sectionIndex, stripe)
+            entry = { kind = kind, built = built, frame = rowFrame, gap = gap }
+            pool[i] = entry
+        end
 
-    local titleLabel = AceGUI:Create("Label")
-    titleLabel:SetText(("|cff%s%s|r  |cff%s[%s]|r"):format(ACCENT_HEX, entry.title, ColorHex(r, g, b), stateLabel))
-    titleLabel:SetFontObject(GameFontNormalLarge)
-    titleLabel:SetFullWidth(true)
-    scroll:AddChild(titleLabel)
-
-    local descLabel = AceGUI:Create("Label")
-    descLabel:SetText(entry.description or "|cff888888(no description)|r")
-    descLabel:SetFullWidth(true)
-    scroll:AddChild(descLabel)
-
-    -- Always visible (unlike the reason below, which only shows when
-    -- something's wrong) -- what this module needs to even be considered,
-    -- independent of whether that's currently satisfied.
-    local depsLabel = AceGUI:Create("Label")
-    depsLabel:SetText("Depends on: " .. (entry.dependencies or "(not documented)"))
-    depsLabel:SetColor(0.6, 0.6, 0.6)
-    depsLabel:SetFullWidth(true)
-    scroll:AddChild(depsLabel)
-
-    if entry.errorTrace then
-        local reasonLabel = AceGUI:Create("Label")
-        reasonLabel:SetText("|cffff4444" .. (entry.conditionReason or "error") .. "|r")
-        reasonLabel:SetFullWidth(true)
-        scroll:AddChild(reasonLabel)
-
-        local errBtn = AceGUI:Create("Button")
-        errBtn:SetText("Show Error")
-        errBtn:SetWidth(140)
-        errBtn:SetCallback("OnClick", function()
-            ShowCopyPopup(entry.title .. " — Enable() error", entry.errorTrace)
-        end)
-        scroll:AddChild(errBtn)
-    elseif entry.conditionReason then
-        local reasonLabel = AceGUI:Create("Label")
-        reasonLabel:SetText("|cffff9933" .. entry.conditionReason .. "|r")
-        reasonLabel:SetFullWidth(true)
-        scroll:AddChild(reasonLabel)
+        entry.frame:Show()
+        W.Stack(container, entry.frame, nil, entry.gap)
+        cache[i] = entry.built
     end
 
-    -- Defensive: a module's GetInfoRows() runs on our UI thread on a timer
-    -- (see the periodic refresh in BuildUI) -- one buggy module's debug hook
-    -- must never be able to break the whole panel.
+    for i = #slice + 1, #pool do
+        if pool[i] then pool[i].frame:Hide() end
+    end
+
+    section.shape = BuildShape(slice)
+    section.cache = cache
+end
+
+-- ── Per-module tab content ───────────────────────────────────────────────────
+
+-- name -> { blocks, sections, titleFS, depRows, reasonText, enabledCheck, ... }
+local tabCache = {}
+local scrollPos = {}   -- name -> saved scroll offset
+
+local function RefreshDepRows(entry, cache)
+    local deps = entry.dependencies
+    if type(deps) ~= "table" or not deps[1] then return end
+    for i, dep in ipairs(deps) do
+        local line = cache.depRows[i]
+        if line then
+            local dotColor
+            if dep.met then
+                local ok, result = pcall(dep.met)
+                dotColor = (ok and result) and "59ff59" or "ff5555"
+            else
+                dotColor = "888888"
+            end
+            line:SetText(("  |cff%s%s|r %s"):format(dotColor, DOT, dep.text))
+        end
+    end
+end
+
+-- Everything above the info-row sections whose content is live: the title's
+-- state badge, the dependency checklist's dots, the reason line, and the
+-- Enabled checkbox (which `/ani enable` can change from outside the panel).
+-- Shared by both paths on purpose -- when only the refresh path applied
+-- these, a freshly built tab showed an empty title and blank dependency
+-- lines until something happened to trigger a refresh.
+local function ApplyLiveValues(entry, cache)
+    local stateLabel, r, g, b = GetStateInfo(entry)
+    cache.titleFS:SetText(("%s  |cff%s[%s]|r"):format(entry.title, ColorHex(r, g, b), stateLabel))
+
+    RefreshDepRows(entry, cache)
+
+    if cache.reasonText then
+        if cache.hasError then
+            cache.reasonText:SetText("|cffff4444" .. (entry.conditionReason or "error") .. "|r")
+        elseif cache.hasReason then
+            cache.reasonText:SetText("|cffff9933" .. entry.conditionReason .. "|r")
+        end
+    end
+
+    cache.enabledCheck:SetChecked(entry.userEnabled)
+end
+
+-- Re-anchors every top-level block in the content frame and resizes the
+-- scroll child. Cheap (a dozen frames) and the only thing that has to run
+-- when a section's height changes. Wrapped-text blocks are re-measured first
+-- against the width actually available, since their height depends on it.
+local function RelayoutContent(cache)
+    if not cache then return end
+
+    local avail = (scrollArea.scroll:GetWidth() or 0) - PAD * 2
+    for _, block in ipairs(cache.blocks) do
+        if block.text then block.text:Resize(avail) end
+    end
+
+    W.ResetStack(content, PAD)
+    for _, block in ipairs(cache.blocks) do
+        if block.frame:IsShown() then
+            W.Stack(content, block.frame, nil, block.gap or BLOCK_GAP, PAD)
+        end
+    end
+    content:SetHeight(content._cursor + PAD)
+    scrollArea:Update()
+end
+
+local function BuildTabContent(name)
+    -- Everything is about to be re-anchored (and any open dropdown belongs
+    -- to widgets that are going away), so the open-menu marker can't survive.
+    openDropdownSection = nil
+    W.CloseDropdownMenu()
+
+    local old = tabCache[name]
+    if old then
+        for _, block in ipairs(old.blocks) do block.frame:Hide() end
+    end
+
+    local entry = AniMods.status[name]
+    if not entry then
+        tabCache[name] = nil
+        return
+    end
+
+    local cache = { blocks = {}, sections = {}, depRows = {} }
+    tabCache[name] = cache
+
+    -- Title + state badge.
+    local titleFrame = CreateFrame("Frame", nil, content)
+    titleFrame:SetHeight(22)
+    local titleFS = W.Font(titleFrame, 15, nil, 1)
+    titleFS:SetPoint("LEFT")
+    cache.titleFS = titleFS
+    cache.blocks[#cache.blocks + 1] = { frame = titleFrame, gap = 2 }
+
+    -- Description.
+    local desc = W.Text(content, 12, W.TEXT_DIM_A)
+    desc:SetText(entry.description or "|cff888888(no description)|r")
+    cache.blocks[#cache.blocks + 1] = { frame = desc.frame, text = desc, gap = BLOCK_GAP }
+
+    -- "Depends on:" checklist.
+    local depHeader = W.Text(content, 12, W.TEXT_SECTION_A)
+    depHeader:SetText("Depends on:")
+    cache.blocks[#cache.blocks + 1] = { frame = depHeader.frame, text = depHeader, gap = 1 }
+
+    local deps = entry.dependencies
+    if type(deps) == "table" and deps[1] then
+        for i in ipairs(deps) do
+            local line = W.Text(content, 12, W.TEXT_DIM_A)
+            cache.depRows[i] = line
+            cache.blocks[#cache.blocks + 1] = { frame = line.frame, text = line, gap = 1 }
+        end
+    else
+        local line = W.Text(content, 12, W.TEXT_DIM_A)
+        line:SetText("  |cff888888(not documented)|r")
+        cache.blocks[#cache.blocks + 1] = { frame = line.frame, text = line, gap = BLOCK_GAP }
+    end
+
+    -- Error / reason block.
+    local hasError, hasReason = ClassifyReason(entry)
+    cache.hasError, cache.hasReason = hasError, hasReason
+    if hasError or hasReason then
+        local reason = W.Text(content, 12, 1)
+        cache.reasonText = reason
+        cache.blocks[#cache.blocks + 1] = { frame = reason.frame, text = reason, gap = BLOCK_GAP }
+
+        if hasError then
+            local btn = W.Button(content, 140, 22)
+            btn:SetText("Show Error")
+            btn:SetOnClick(function()
+                ShowCopyPopup(entry.title, entry.errorTrace)
+            end)
+            cache.blocks[#cache.blocks + 1] = { frame = btn.frame, gap = BLOCK_GAP }
+        end
+    end
+
+    -- Defensive: a module's GetInfoRows() can run from that module's own
+    -- event handlers, not just clicks in this panel -- one buggy module's
+    -- debug hook must never break the whole panel.
     local rows
     if entry.module and entry.module.GetInfoRows then
         local ok, result = pcall(entry.module.GetInfoRows, entry.module)
         if ok then rows = result end
     end
-    AddInfoRows(scroll, rows)
 
-    local enabledCheck = AceGUI:Create("CheckBox")
+    local groups = SplitIntoSections(rows)
+    cache.groupCount = #groups
+    for gi, slice in ipairs(groups) do
+        local container = CreateFrame("Frame", nil, content)
+        local section = { container = container }
+        cache.sections[gi] = section
+        FillSection(section, slice, gi)
+        cache.blocks[#cache.blocks + 1] = { frame = container, gap = BLOCK_GAP }
+    end
+
+    -- Enabled toggle.
+    local enabledCheck = W.CheckBox(content)
     enabledCheck:SetLabel("Enabled  |cff888888(/reload to apply)|r")
-    enabledCheck:SetValue(entry.userEnabled and true or false)
-    enabledCheck:SetFullWidth(true)
-    enabledCheck:SetCallback("OnValueChanged", function(widget, event, value)
+    enabledCheck:SetChecked(entry.userEnabled)
+    enabledCheck:SetOnClick(function(value)
         AniMods.SetModuleEnabled(name, value)
     end)
-    scroll:AddChild(enabledCheck)
+    cache.enabledCheck = enabledCheck
+    cache.blocks[#cache.blocks + 1] = { frame = enabledCheck.frame, gap = BLOCK_GAP }
 
-    local keyLabel = AceGUI:Create("Label")
-    keyLabel:SetText("|cff555555" .. name .. "|r")
-    keyLabel:SetFullWidth(true)
-    scroll:AddChild(keyLabel)
+    ApplyLiveValues(entry, cache)
+    RelayoutContent(cache)
+end
+
+-- Brings a tab's existing widgets up to date without destroying anything.
+-- Returns false only when nothing is built yet, the error/reason block's
+-- presence changed, or the module's section COUNT changed -- all of which
+-- need a full rebuild.
+local function TryRefreshTabInPlace(name)
+    local cache = tabCache[name]
+    if not cache then return false end
+
+    local entry = AniMods.status[name]
+    if not entry then return false end
+
+    local rows
+    if entry.module and entry.module.GetInfoRows then
+        local ok, result = pcall(entry.module.GetInfoRows, entry.module)
+        if ok then rows = result end
+    end
+
+    local hasError, hasReason = ClassifyReason(entry)
+    if cache.hasError ~= hasError or cache.hasReason ~= hasReason then
+        return false
+    end
+
+    local groups = SplitIntoSections(rows)
+    if #groups ~= cache.groupCount then return false end
+
+    ApplyLiveValues(entry, cache)
+
+    -- Per section: update text in place where the shape is unchanged, rebuild
+    -- only the section(s) that aren't. A section is skipped (left stale until
+    -- its menu closes) only if it's the exact one holding the open dropdown.
+    local rebuilt = false
+    for gi, slice in ipairs(groups) do
+        local section = cache.sections[gi]
+        if ShapesMatch(section.shape, BuildShape(slice)) then
+            RefreshRowsInPlace(slice, section.cache)
+        elseif openDropdownSection == gi then
+            refreshPending = true
+        else
+            FillSection(section, slice, gi)
+            rebuilt = true
+        end
+    end
+
+    -- A rebuilt section can be a different height, so everything below it has
+    -- to be re-anchored. Plain text updates never change layout.
+    if rebuilt then RelayoutContent(cache) end
+
+    return true
 end
 
 local function RefreshCurrentTab()
-    if not tabGroup or not currentTabName then return end
-    BuildTabContent(tabGroup, currentTabName)
+    if not currentTabName or not content then return end
+    if TryRefreshTabInPlace(currentTabName) then return end
+    if openDropdownSection then
+        refreshPending = true
+        return
+    end
+    BuildTabContent(currentTabName)
 end
 
--- Called by Core.lua whenever module state changes (e.g. a toggle) so the
--- currently-open tab resyncs without waiting for the periodic refresh.
+-- ── Tabs ─────────────────────────────────────────────────────────────────────
+
+local function SelectTab(name)
+    if currentTabName and scrollArea then
+        scrollPos[currentTabName] = scrollArea:GetScroll()
+    end
+
+    -- Each tab keeps its own widgets alive and just hides them when it isn't
+    -- the active one. Rebuilding on every switch would instead create a whole
+    -- fresh set of frames each time (nothing here is pooled the way AceGUI's
+    -- widget registry was), so switching back and forth would leak steadily.
+    local prev = currentTabName and tabCache[currentTabName]
+    if prev and currentTabName ~= name then
+        for _, block in ipairs(prev.blocks) do block.frame:Hide() end
+    end
+
+    currentTabName = name
+
+    local cache = tabCache[name]
+    if cache then
+        for _, block in ipairs(cache.blocks) do block.frame:Show() end
+        -- Pick up anything that changed while this tab was hidden.
+        RefreshCurrentTab()
+        RelayoutContent(tabCache[name])
+    else
+        BuildTabContent(name)
+    end
+
+    scrollArea:SetScroll(scrollPos[name] or 0)
+
+    for _, tab in ipairs(tabButtons) do
+        tab:SetSelected(tab.moduleName == name)
+    end
+end
+
+-- A tab: status dot + module title, with an accent underline when selected.
+local function CreateTabButton(parent)
+    local f = CreateFrame("Button", nil, parent)
+    f:SetHeight(24)
+    f:RegisterForClicks("AnyUp")
+
+    local fs = W.Font(f, 12, nil, W.TEXT_DIM_A)
+    fs:SetPoint("LEFT", f, "LEFT", 8, 0)
+    fs:SetPoint("RIGHT", f, "RIGHT", -8, 0)
+    fs:SetJustifyH("CENTER")
+
+    local underline = W.Tex(f, "ARTWORK", W.Accent())
+    underline:SetHeight(2)
+    underline:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 6, 0)
+    underline:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -6, 0)
+    underline:Hide()
+    W.RegisterAccent(underline, "vertex")
+
+    local tab = { frame = f, fs = fs }
+
+    function tab:SetSelected(on)
+        tab.selected = on
+        underline:SetShown(on)
+        fs:SetTextColor(1, 1, 1, on and 1 or W.TEXT_DIM_A)
+    end
+    function tab:SetText(text)
+        fs:SetText(text)
+        f:SetWidth((fs:GetStringWidth() or 60) + 24)
+    end
+
+    f:SetScript("OnEnter", function()
+        if not tab.selected then fs:SetTextColor(1, 1, 1, 0.8) end
+    end)
+    f:SetScript("OnLeave", function()
+        if not tab.selected then fs:SetTextColor(1, 1, 1, W.TEXT_DIM_A) end
+    end)
+    f:SetScript("OnClick", function() SelectTab(tab.moduleName) end)
+
+    return tab
+end
+
+-- Rebuilds the tab strip: one tab per module, title prefixed with a status
+-- dot so load state is visible without opening the tab. Safe to call any
+-- time -- it only touches the strip, never tab content.
+local function RefreshTabs()
+    local names = SortedModuleNames()
+
+    local x = 0
+    for i, name in ipairs(names) do
+        local tab = tabButtons[i]
+        if not tab then
+            tab = CreateTabButton(tabStrip)
+            tabButtons[i] = tab
+        end
+        tab.moduleName = name
+
+        local _, r, g, b = GetStateInfo(AniMods.status[name])
+        tab:SetText(("|cff%s%s|r %s"):format(ColorHex(r, g, b), DOT, AniMods.status[name].title))
+        tab:SetSelected(name == currentTabName)
+
+        tab.frame:ClearAllPoints()
+        tab.frame:SetPoint("BOTTOMLEFT", tabStrip, "BOTTOMLEFT", x, 0)
+        tab.frame:Show()
+        x = x + tab.frame:GetWidth()
+    end
+
+    for i = #names + 1, #tabButtons do
+        tabButtons[i].frame:Hide()
+    end
+
+    return names
+end
+
+-- Called whenever module state changes -- a toggle, or a module's own event
+-- handler noticing its live data changed. Safe to call from anywhere.
 function AniMods.RefreshUI()
+    -- Nothing to do while the panel doesn't exist yet or is closed: module
+    -- events fire far more often than the panel is open, and OnShow resyncs
+    -- whatever was missed.
+    if not frame or not frame:IsShown() then return end
+    RefreshTabs()
     RefreshCurrentTab()
 end
 
--- ── Frame construction ────────────────────────────────────────────────────────
+-- ── Frame construction ───────────────────────────────────────────────────────
 
 local function BuildUI()
     if frame then return end
 
-    frame = AceGUI:Create("Frame")
-    frame:SetTitle("AniMods")
-    frame:SetLayout("Fill")
-    frame:SetWidth(700)
-    frame:SetHeight(500)
-    frame:EnableResize(false)
-    -- AceGUI Frame widgets auto-register for Esc-to-close; the close button
-    -- just hides by default too, but explicit here so it's not left to
-    -- chance if that default ever changes.
-    frame:SetCallback("OnClose", function(widget) widget:Hide() end)
+    frame = W.Window("AniModsPanel", "AniMods", 700, 500)
 
-    tabGroup = AceGUI:Create("TabGroup")
-    tabGroup:SetLayout("Fill")
+    tabStrip = CreateFrame("Frame", nil, frame)
+    tabStrip:SetHeight(24)
+    tabStrip:SetPoint("TOPLEFT", frame, "TOPLEFT", PAD, -34)
+    tabStrip:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -PAD, -34)
 
-    local names = SortedModuleNames()
-    local tabs = {}
-    for _, name in ipairs(names) do
-        tabs[#tabs + 1] = { text = AniMods.status[name].title, value = name }
-    end
-    tabGroup:SetTabs(tabs)
-    tabGroup:SetCallback("OnGroupSelected", function(container, event, name)
-        currentTabName = name
-        BuildTabContent(container, name)
+    local rule = W.Tex(frame, "ARTWORK", 1, 1, 1, W.BORDER_A)
+    rule:SetHeight(1)
+    rule:SetPoint("TOPLEFT", tabStrip, "BOTTOMLEFT")
+    rule:SetPoint("TOPRIGHT", tabStrip, "BOTTOMRIGHT")
+
+    scrollArea = W.ScrollArea(frame)
+    scrollArea.frame:SetPoint("TOPLEFT", rule, "BOTTOMLEFT", 0, -4)
+    scrollArea.frame:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -PAD, PAD)
+    content = scrollArea.content
+
+    local names = RefreshTabs()
+    if names[1] then SelectTab(names[1]) end
+
+    -- Resync once whenever the panel is (re)shown, covering anything that
+    -- changed while it was closed. The relayout matters on the FIRST show in
+    -- particular: content built while the panel was hidden measured its
+    -- wrapped text against a width that hadn't resolved yet, and only a
+    -- relayout (not an in-place text update) re-measures it.
+    frame:HookScript("OnShow", function()
+        RefreshTabs()
+        RefreshCurrentTab()
+        RelayoutContent(tabCache[currentTabName])
     end)
-
-    frame:AddChild(tabGroup)
-
-    if names[1] then
-        tabGroup:SelectTab(names[1])
-    end
-
-    frame:Hide()
-
-    -- Keep the currently-open tab's info rows (live status/eligibility) fresh
-    -- while the panel is open. OnUpdate doesn't fire on hidden frames, so
-    -- this naturally stops costing anything once the panel is closed.
-    local ticker = CreateFrame("Frame")
-    ticker.elapsed = 0
-    frame.frame:HookScript("OnHide", function() ticker:Hide() end)
-    frame.frame:HookScript("OnShow", function() ticker:Show() end)
-    ticker:SetScript("OnUpdate", function(self, elapsed)
-        self.elapsed = self.elapsed + elapsed
-        if self.elapsed >= 1.0 then
-            self.elapsed = 0
-            RefreshCurrentTab()
+    frame:HookScript("OnHide", function()
+        W.CloseDropdownMenu()
+        if currentTabName and scrollArea then
+            scrollPos[currentTabName] = scrollArea:GetScroll()
         end
     end)
-    ticker:Hide()
 end
 
 function AniMods.ToggleUI()
@@ -278,4 +781,18 @@ function AniMods.ToggleUI()
     else
         frame:Show()
     end
+end
+
+-- Opens the panel already switched to a specific module's tab (e.g. a broker
+-- plugin's right-click going straight to its own settings). Toggles closed on
+-- a second call only if already open on that exact tab -- otherwise it
+-- (re)shows and switches, so it reliably lands you there.
+function AniMods.OpenModuleTab(name)
+    BuildUI()
+    if frame:IsShown() and currentTabName == name then
+        frame:Hide()
+        return
+    end
+    frame:Show()
+    if AniMods.status[name] then SelectTab(name) end
 end

@@ -24,8 +24,7 @@
 
 local ChatContextSwitch = {
     title = "Chat Context Switch",
-    description = "Tab/Shift+Tab cycles the chat channel (SAY/PARTY/RAID/.../world CHANNEL).",
-    dependencies = "None. Only checks whether NDui's Chat module is disabled -- if NDui isn't even loaded, that check just passes.",
+    description = "Tab/Shift+Tab cycles the chat channel.",
 }
 
 -- ---------------------------------------------------------------------------
@@ -58,6 +57,10 @@ ChatContextSwitch.condition = {
         end
         return true
     end,
+}
+
+ChatContextSwitch.dependencies = {
+    { text = "NDui's Chat module not active", met = function() return not NDuiChatModuleActive() end },
 }
 
 -- ---------------------------------------------------------------------------
@@ -198,16 +201,24 @@ local function OnCustomTabPressed(self)
     local numCycles = #cycles
     for i = 1, numCycles do
         if currentType == cycles[i].chatType then
-            local from, to, step
+            -- Forward wraps via the trailing SAY sentinel BuildCycles adds.
+            -- Backward has no such sentinel, so it wraps explicitly: without
+            -- the second pass, Shift+Tab from SAY (i == 1) ran `for j = 0, 1,
+            -- -1`, which is zero iterations -- it silently did nothing
+            -- instead of going to the last enabled channel.
+            local order = {}
             if isShift then
-                from, to, step = i - 1, 1, -1
+                for j = i - 1, 1, -1 do order[#order + 1] = j end
+                for j = numCycles, i + 1, -1 do order[#order + 1] = j end
             else
-                from, to, step = i + 1, numCycles, 1
+                for j = i + 1, numCycles do order[#order + 1] = j end
+                for j = 1, i - 1 do order[#order + 1] = j end
             end
-            for j = from, to, step do
-                local next = cycles[j]
-                if next:IsActive(self) then
-                    SwitchToChannel(self, next.chatType)
+
+            for _, j in ipairs(order) do
+                local candidate = cycles[j]
+                if candidate:IsActive(self) then
+                    SwitchToChannel(self, candidate.chatType)
                     return
                 end
             end
@@ -227,8 +238,7 @@ function ChatContextSwitch:GetInfoRows()
     local ns = _G.NDui
     rows[#rows + 1] = {
         label = "NDui chat module",
-        value = not ns and "not loaded"
-            or (NDuiChatModuleActive() and "enabled (NDui handles this)" or "disabled (we take over)"),
+        value = not ns and "Not loaded" or (NDuiChatModuleActive() and "Active" or "Inactive"),
     }
 
     rows[#rows + 1] = { section = "Channels in the cycle" }
@@ -249,17 +259,31 @@ end
 -- ---------------------------------------------------------------------------
 
 function ChatContextSwitch:Enable()
-    -- Detect CN portal for world-channel support
-    if GetCVar("portal") == "CN" then
+    -- Detect CN portal for world-channel support. Everything below is only
+    -- wired up on that portal: off it, worldChannelName stays nil,
+    -- UpdateWorldChannelInfo returns immediately, and the CHANNEL_UI_UPDATE
+    -- handler would just be spawning a 0.2s timer per event to call a
+    -- guaranteed no-op, forever.
+    local getCVar = (C_CVar and C_CVar.GetCVar) or GetCVar
+    if getCVar and getCVar("portal") == "CN" then
         worldChannelName = "大脚世界频道"
         C_Timer.After(0.2, UpdateWorldChannelInfo)
-    end
 
-    local channelFrame = CreateFrame("Frame")
-    channelFrame:RegisterEvent("CHANNEL_UI_UPDATE")
-    channelFrame:SetScript("OnEvent", function()
-        C_Timer.After(0.2, UpdateWorldChannelInfo)
-    end)
+        -- CHANNEL_UI_UPDATE arrives in bursts (joining/leaving channels,
+        -- zone changes); debounced so a burst schedules one refresh rather
+        -- than one timer per event.
+        local pending = false
+        local channelFrame = CreateFrame("Frame")
+        channelFrame:RegisterEvent("CHANNEL_UI_UPDATE")
+        channelFrame:SetScript("OnEvent", function()
+            if pending then return end
+            pending = true
+            C_Timer.After(0.2, function()
+                pending = false
+                UpdateWorldChannelInfo()
+            end)
+        end)
+    end
 
     -- The hook must be installed exactly once. hooksecurefunc appends to the
     -- secure call chain, so it is safe with both stock Blizzard chat frames
