@@ -163,11 +163,14 @@ end
 local FTT_PAD, FTT_ROW_H, FTT_HDR_H, FTT_GAP, FTT_DIV_PAD = 8, 14, 16, 2, 5
 local MAX_ROWS_PER_SECTION = 30 -- EUI's own hard cap; its user-configurable friendsMaxRows setting isn't reachable from here
 
+-- Every bridge into EllesmereUI goes through AniMods.W: it's the one place
+-- that knows which members are actually exported and what to fall back to.
+-- Duplicating those lookups here is how this module ended up reading .r off
+-- RegAccent (a function) in a sibling module and crashing on login.
 local function TTFont()
-    local eui = _G.EllesmereUI
-    return (eui and eui.GetFontPath and eui.GetFontPath("minimap"))
-        or (eui and eui.EXPRESSWAY)
-        or "Fonts\\FRIZQT__.TTF"
+    -- "minimap": this popup mirrors EllesmereUIMinimap's own, so it should
+    -- use whatever font that module is configured with, not the global one.
+    return AniMods.W.FontPath("minimap")
 end
 
 local socialTT
@@ -175,24 +178,11 @@ local ttRows, ttHeaders, ttDividers = {}, {}, {}
 
 local function GetSocialTT()
     if socialTT then return socialTT end
-    local f = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
+    local f = AniMods.W.Panel(UIParent, { 0.067, 0.067, 0.067, 0.92 }, 0.15)
     f:SetFrameStrata("TOOLTIP")
     f:SetFrameLevel(200)
     f:SetClampedToScreen(true)
     f:Hide()
-
-    local bg = f:CreateTexture(nil, "BACKGROUND")
-    bg:SetAllPoints()
-    bg:SetColorTexture(0.067, 0.067, 0.067, 0.92)
-
-    local eui = _G.EllesmereUI
-    if eui and eui.MakeBorder then
-        eui.MakeBorder(f, 1, 1, 1, 0.15, eui.PanelPP)
-    else
-        f:SetBackdrop({ edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1 })
-        f:SetBackdropBorderColor(1, 1, 1, 0.15)
-    end
-
     socialTT = f
     return f
 end
@@ -273,9 +263,12 @@ local function ShowSocialTooltip(anchor)
     local maxNameW, maxZoneW = 0, 0
     local curY = -FTT_PAD
 
-    local eui = _G.EllesmereUI
-    local ac = eui and (eui.ELLESMERE_GREEN or eui._accentColor)
-    local acHex = ac and ("%02x%02x%02x"):format((ac.r or 0.05) * 255, (ac.g or 0.82) * 255, (ac.b or 0.62) * 255) or "0cd29f"
+    -- AniMods.W.Accent() rather than reading a color table off EllesmereUI
+    -- directly: it goes through GetAccentColor(), which resolves the ACTIVE
+    -- theme (class-colored, custom, faction) instead of just the default
+    -- green, and it's the single place that knows the fallback.
+    local ar, ag, ab = AniMods.W.Accent()
+    local acHex = ("%02x%02x%02x"):format(ar * 255, ag * 255, ab * 255)
 
     for si, sec in ipairs(sections) do
         if si > 1 then

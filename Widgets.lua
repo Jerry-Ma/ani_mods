@@ -71,28 +71,44 @@ function W.Accent()
     return 0.05, 0.82, 0.62
 end
 
--- Registers a region for live accent recoloring when EUI supports it, so
--- this panel follows a theme change without a reload. `kind` is EUI's own
--- entry type ("vertex" for textures, "text" for FontStrings).
+-- Registers a region for live accent recoloring, so this panel follows a
+-- theme change without a reload. `kind` is "vertex" for a Texture or "text"
+-- for a FontString.
+--
+-- EUI's UpdateAccentElements only handles obj-based entries of type solid /
+-- gradient / vertex, plus a `callback` type -- there is no font branch, so a
+-- FontString has to go through a callback that sets its text color itself.
+-- (Registering one as a text/font type instead fails silently: the entry
+-- just never matches a branch, and the color quietly stops tracking the
+-- theme.)
 function W.RegisterAccent(region, kind)
     local eui = EUI()
-    if eui and eui.RegAccent then
-        pcall(eui.RegAccent, { obj = region, type = kind or "vertex" })
+    if not (eui and eui.RegAccent) then return end
+
+    if kind == "text" then
+        pcall(eui.RegAccent, {
+            type = "callback",
+            fn = function(r, g, b) region:SetTextColor(r, g, b, 1) end,
+        })
+    else
+        pcall(eui.RegAccent, { obj = region, type = "vertex" })
     end
 end
 
-function W.FontPath()
+-- `addonKey` picks a specific EUI module's configured font (e.g. "minimap"),
+-- matching what that part of EUI draws with; omit it for the global one.
+function W.FontPath(addonKey)
     local eui = EUI()
     if eui and eui.GetFontPath then
-        local ok, path = pcall(eui.GetFontPath)
+        local ok, path = pcall(eui.GetFontPath, addonKey)
         if ok and path then return path end
     end
     return (eui and eui.EXPRESSWAY) or "Fonts\\FRIZQT__.TTF"
 end
 
-function W.Font(parent, size, flags, alpha)
+function W.Font(parent, size, flags, alpha, addonKey)
     local fs = parent:CreateFontString(nil, "OVERLAY")
-    fs:SetFont(W.FontPath(), size or 12, flags or "")
+    fs:SetFont(W.FontPath(addonKey), size or 12, flags or "")
     fs:SetTextColor(1, 1, 1, alpha or W.TEXT_A)
     return fs
 end

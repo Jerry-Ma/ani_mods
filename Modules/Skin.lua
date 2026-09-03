@@ -272,21 +272,16 @@ local function GetCompartmentIconRegion(real)
     return nil
 end
 
--- EllesmereUIMinimap's own icons tint with the user's live EUI accent color
--- (EllesmereUI.RegAccent) -- matched here too when available; a plain light
--- gray otherwise so this still looks "flat", just not accent-colored.
-local function GetFlatTint()
-    local accent = _G.EllesmereUI and _G.EllesmereUI.RegAccent
-    if accent and accent.r then return accent.r, accent.g, accent.b end
-    return 0.9, 0.9, 0.9
-end
-
 -- Re-read the accent each time rather than caching it: EUI's accent color is
 -- user-configurable and this runs again on every re-assert anyway.
+-- AniMods.W.Accent() is the one place that knows how to ask for it
+-- (EllesmereUI.GetAccentColor(), which returns r, g, b) and what to fall back
+-- to. Note RegAccent is NOT that: it's the function for registering a region
+-- for live recolor, and reading .r off it is what crashed this on login.
 local function ApplyCompartmentTint()
     if not compartmentIcon then return end
     compartmentIcon:SetDesaturated(true)
-    local r, g, b = GetFlatTint()
+    local r, g, b = AniMods.W.Accent()
     compartmentIcon:SetVertexColor(r, g, b, 1)
 end
 
