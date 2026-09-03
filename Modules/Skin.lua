@@ -6,8 +6,9 @@
 --
 --   TTS Button -- Blizzard's chat "read aloud" toggle (TextToSpeechButton),
 --   re-homed into EllesmereUIChat's sidebar icon row.
---   Minimap Addon Button Icon -- AddonCompartmentFrame's icon, re-tinted to
---   match EllesmereUIMinimap's own flat/desaturated icon style.
+--   Minimap Group Button Icon -- the icon on EllesmereUIMinimap's own group
+--   button (the addon-icon flyout toggle in the row outside the minimap),
+--   swappable and re-tinted light rather than accent-green.
 --
 -- Both entries are cheap and genuinely reversible (unlike most of AniMods'
 -- other hooksecurefunc-based patches), so unlike the rest of the framework's
@@ -238,56 +239,110 @@ local TTSEntry = {
 }
 
 -- ---------------------------------------------------------------------------
--- Entry: Minimap Addon Button Icon
+-- Entry: Minimap Group Button Icon
 -- ---------------------------------------------------------------------------
--- Blizzard's addon-button collector (AddonCompartmentFrame, the button near
--- the minimap that groups addons with no dedicated minimap icon into a
--- dropdown) keeps its default raised/colorful icon look even under
--- EllesmereUIMinimap -- EllesmereUIMinimap.lua only repositions/reparents it
--- (see its "Addon Compartment" section: _ParkAddonCompartment/
--- _PositionAddonCompartment/_ApplyAddonCompartment), it never re-skins the
--- icon texture itself. This desaturates + tints it to match, using the same
--- treatment EllesmereUIMinimap's own neighboring addon-button-flyout toggle
--- already uses (CreateFlyoutToggle: SetDesaturated(true) +
--- SetVertexColor(accent)) -- the closest visual sibling, since it's
--- literally the other addon-button icon on the same minimap.
+-- EllesmereUIMinimap's "group button" -- the toggle in its extra-button row
+-- just outside the minimap that collapses addon minimap icons into a flyout
+-- (EllesmereUIMinimap.lua's CreateFlyoutToggle; its config key is literally
+-- `hideExtraBtns.groupButton`, commented there as "EUI group button for addon
+-- icons"). It draws with the `Map-Filter-Button` atlas -- a map FILTER funnel,
+-- which reads as borrowed rather than designed for this -- accent-tinted.
+--
+-- Not to be confused with Blizzard's AddonCompartmentFrame: that is the
+-- addon *collector* in MinimapCluster, and an earlier version of this entry
+-- skinned it by mistake. EllesmereUIMinimap only repositions that one; this
+-- is the button actually visible in the row outside the minimap.
+--
+-- The button is unnamed (`CreateFrame("Button", nil, Minimap)`) and its
+-- reference is a file-local, so it's found by structure instead: it's the
+-- only child of Minimap carrying all three of `_norm`/`_pushed`/`_hl` (the
+-- indicator buttons in the same row use `_icon`/`_upAtlas`/`_indicatorKey`).
 
-local compartmentIcon       -- the texture region we're tinting, once found
-local compartmentIconFound = false
-local compartmentTinted = false -- whether our skin is currently meant to be on
-local compartmentHooked = false -- one-shot guard: hooksecurefunc can't be undone
+local FLYOUT_ICON_LABEL = {
+    filter = "EllesmereUI default (filter)",
+    gear   = "Gear",
+    group  = "Group",
+    bag    = "Bag",
+}
+local FLYOUT_ICON_ORDER = { "filter", "gear", "group", "bag" }
+-- All verified present in DandersFrames_Options' atlas browser list.
+local FLYOUT_ICON_ATLAS = {
+    filter = "Map-Filter-Button",
+    gear   = "options-icon",
+    group  = "communities-icon-addgroupplus",
+    bag    = "bags-icon-addslots",
+}
+-- Only EUI's own icon ships a distinct pressed variant.
+local FLYOUT_PUSHED_ATLAS = { filter = "Map-Filter-Button-down" }
 
--- AddonCompartmentFrame.Icon is the well-established name for this button's
--- icon region across the addon community, but verified defensively anyway
--- (same lesson as the TTS icon above): fall back to scanning regions for a
--- plain Texture if that field isn't there.
-local function GetCompartmentIconRegion(real)
-    if real.Icon then return real.Icon end
-    for _, region in ipairs({ real:GetRegions() }) do
-        if region.GetObjectType and region:GetObjectType() == "Texture"
-            and (region:GetTexture() or (region.GetAtlas and region:GetAtlas())) then
-            return region
-        end
+local FLYOUT_TINT_LABEL = { light = "Light", accent = "EllesmereUI accent" }
+local FLYOUT_TINT_ORDER = { "light", "accent" }
+
+local function SkinDB()
+    AniModsDB.skin = AniModsDB.skin or {}
+    return AniModsDB.skin
+end
+
+local function GetFlyoutIcon()
+    local key = SkinDB().flyoutIcon
+    if key and FLYOUT_ICON_ATLAS[key] then return key end
+    return "gear"
+end
+
+local function GetFlyoutTint()
+    local key = SkinDB().flyoutTint
+    if key and FLYOUT_TINT_LABEL[key] then return key end
+    return "light"
+end
+
+local flyoutBtn            -- EUI's group button, once found
+local flyoutSkinned = false -- whether our skin is currently meant to be on
+local flyoutHooked = false  -- one-shot guard: hooksecurefunc can't be undone
+local applyingFlyout = false -- re-entrancy guard for the re-assert hooks
+
+local function FindFlyoutToggle()
+    local minimap = _G.Minimap
+    if not minimap then return nil end
+    for _, child in ipairs({ minimap:GetChildren() }) do
+        if child._norm and child._pushed and child._hl then return child end
     end
     return nil
 end
 
--- Re-read the accent each time rather than caching it: EUI's accent color is
--- user-configurable and this runs again on every re-assert anyway.
--- AniMods.W.Accent() is the one place that knows how to ask for it
--- (EllesmereUI.GetAccentColor(), which returns r, g, b) and what to fall back
--- to. Note RegAccent is NOT that: it's the function for registering a region
--- for live recolor, and reading .r off it is what crashed this on login.
-local function ApplyCompartmentTint()
-    if not compartmentIcon then return end
-    compartmentIcon:SetDesaturated(true)
-    local r, g, b = AniMods.W.Accent()
-    compartmentIcon:SetVertexColor(r, g, b, 1)
+local function FlyoutTextures()
+    if not flyoutBtn then return {} end
+    return { flyoutBtn._norm, flyoutBtn._pushed, flyoutBtn._hl }
 end
 
-local CompartmentEntry = {
-    key = "minimapCompartment",
-    name = "Minimap Addon Button Icon",
+local function ApplyFlyoutSkin()
+    if not flyoutBtn or applyingFlyout then return end
+    applyingFlyout = true
+
+    local iconKey = GetFlyoutIcon()
+    local normal = FLYOUT_ICON_ATLAS[iconKey]
+    local pushed = FLYOUT_PUSHED_ATLAS[iconKey] or normal
+
+    local r, g, b
+    if GetFlyoutTint() == "accent" then
+        r, g, b = AniMods.W.Accent()
+    else
+        r, g, b = 0.9, 0.9, 0.9
+    end
+
+    for i, tex in ipairs(FlyoutTextures()) do
+        if tex then
+            tex:SetAtlas(i == 2 and pushed or normal)
+            tex:SetDesaturated(true)
+            tex:SetVertexColor(r, g, b, 1)
+        end
+    end
+
+    applyingFlyout = false
+end
+
+local GroupButtonEntry = {
+    key = "minimapGroupButton",
+    name = "Minimap Group Button Icon",
     Available = function()
         if not AniMods.IsAddOnLoaded("EllesmereUIMinimap") then
             return false, "EllesmereUIMinimap not loaded"
@@ -295,47 +350,68 @@ local CompartmentEntry = {
         return true
     end,
     Apply = function()
-        local real = _G.AddonCompartmentFrame
-        if not real then return false end
-        local icon = GetCompartmentIconRegion(real)
-        if not icon then return false end
+        flyoutBtn = flyoutBtn or FindFlyoutToggle()
+        if not flyoutBtn then return false end
 
-        compartmentIcon = icon
-        compartmentIconFound = true
-        compartmentTinted = true
-        ApplyCompartmentTint()
+        flyoutSkinned = true
+        ApplyFlyoutSkin()
 
-        -- Something does re-touch this button: EllesmereUIMinimap hooks its
-        -- Show/SetParent/SetPoint/SetScale specifically to keep re-asserting
-        -- its position (_ApplyAddonCompartment). If anything likewise re-sets
-        -- the icon's art, a tint applied once would silently disappear. So
-        -- re-assert on the actual mutation -- a hook on the two methods that
-        -- can replace the art -- rather than polling for it on a timer.
-        -- SetDesaturated/SetVertexColor are different methods, so
-        -- re-applying from inside these hooks can't recurse.
-        if not compartmentHooked then
-            compartmentHooked = true
-            local function Reassert()
-                if compartmentTinted then ApplyCompartmentTint() end
+        -- EUI re-asserts this button's accent on its own (CreateFlyoutToggle
+        -- re-tints all three textures on a later ApplyAll, and each is in
+        -- EUI's RegAccent registry, so a theme change calls SetVertexColor on
+        -- them too). Re-assert on the actual mutation rather than polling;
+        -- applyingFlyout keeps our own writes from re-entering the hook.
+        if not flyoutHooked then
+            flyoutHooked = true
+            for _, tex in ipairs(FlyoutTextures()) do
+                if tex then
+                    local function Reassert()
+                        if flyoutSkinned then ApplyFlyoutSkin() end
+                    end
+                    hooksecurefunc(tex, "SetAtlas", Reassert)
+                    hooksecurefunc(tex, "SetVertexColor", Reassert)
+                end
             end
-            hooksecurefunc(icon, "SetAtlas", Reassert)
-            hooksecurefunc(icon, "SetTexture", Reassert)
         end
 
         return true
     end,
     Revert = function()
-        compartmentTinted = false
-        if compartmentIcon then
-            compartmentIcon:SetDesaturated(false)
-            compartmentIcon:SetVertexColor(1, 1, 1, 1)
+        flyoutSkinned = false
+        if not flyoutBtn then return end
+        applyingFlyout = true
+        local r, g, b = AniMods.W.Accent()
+        for i, tex in ipairs(FlyoutTextures()) do
+            if tex then
+                tex:SetAtlas(i == 2 and "Map-Filter-Button-down" or "Map-Filter-Button")
+                tex:SetDesaturated(true)
+                tex:SetVertexColor(r, g, b, 1)
+            end
         end
+        applyingFlyout = false
     end,
     GetInfoRows = function()
-        return {
-            { label = "Blizzard AddonCompartmentFrame", value = _G.AddonCompartmentFrame and "Found" or "Not found" },
-            { label = "Icon region found", value = compartmentIconFound and "Yes" or "No" },
+        local rows = {
+            { label = "EllesmereUI group button", value = flyoutBtn and "Found" or "Not found yet" },
         }
+        if not flyoutBtn then return rows end
+
+        rows[#rows + 1] = {
+            label   = "Icon",
+            options = FLYOUT_ICON_LABEL,
+            order   = FLYOUT_ICON_ORDER,
+            get     = GetFlyoutIcon,
+            set     = function(v) SkinDB().flyoutIcon = v; ApplyFlyoutSkin() end,
+            atlas   = FLYOUT_ICON_ATLAS[GetFlyoutIcon()],
+        }
+        rows[#rows + 1] = {
+            label   = "Tint",
+            options = FLYOUT_TINT_LABEL,
+            order   = FLYOUT_TINT_ORDER,
+            get     = GetFlyoutTint,
+            set     = function(v) SkinDB().flyoutTint = v; ApplyFlyoutSkin() end,
+        }
+        return rows
     end,
 }
 
@@ -343,7 +419,7 @@ local CompartmentEntry = {
 -- Entry framework
 -- ---------------------------------------------------------------------------
 
-local ENTRIES = { TTSEntry, CompartmentEntry }
+local ENTRIES = { TTSEntry, GroupButtonEntry }
 local entryApplied = {} -- key -> true once Apply() has actually succeeded
 
 local function PollEntry(entry)
