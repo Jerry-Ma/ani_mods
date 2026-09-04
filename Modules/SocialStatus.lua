@@ -392,11 +392,43 @@ local Broker = AniMods.Broker
 
 local ldbObject
 local CATEGORY_COLOR = { GUILD = "ffd700", FRIENDS = "59c0ff" }
--- Guild: the minimap "guild banner" indicator atlas (confirmed via
--- DandersFrames_Options's atlas browser list). Friends: the exact atlas
--- EllesmereUIMinimap's own friends button uses (FRIENDS_ATLAS in
--- EllesmereUIMinimap.lua). Both plain public Blizzard atlases.
-local CATEGORY_ATLAS = { GUILD = "UI-HUD-Minimap-GuildBanner-Up", FRIENDS = "housefinder_neighborhood-friends-icon" }
+
+-- Ordered candidates per category; the first usable one wins (see
+-- W.ResolveIcon). EllesmereUIChat's own sidebar art is preferred because it
+-- is known to render -- that addon draws it today -- and because a matched
+-- pair of its flat line-art icons reads better together than one line-art
+-- icon beside a Blizzard silhouette. It is REFERENCED on disk, never copied,
+-- so there is no redistribution question; the atlas entries below cover the
+-- case where that addon isn't installed.
+--
+-- The guild atlas was previously used on its own and rendered as nothing:
+-- its name came from DandersFrames_Options' atlas browser list, which that
+-- browser itself filters through C_Texture.GetAtlasInfo at runtime -- so
+-- appearing there never meant the atlas exists in this client.
+local EUI_CHAT_MEDIA = "Interface\\AddOns\\EllesmereUIChat\\Media\\"
+local ICON_CANDIDATES = {
+    GUILD = {
+        { texture = EUI_CHAT_MEDIA .. "chat_guild.png", addon = "EllesmereUIChat" },
+        { atlas = "UI-HUD-Minimap-GuildBanner-Up" },
+        { atlas = "communities-icon-addgroupplus" },
+    },
+    FRIENDS = {
+        { texture = EUI_CHAT_MEDIA .. "chat_friends.png", addon = "EllesmereUIChat" },
+        -- EllesmereUIMinimap's own friends button draws this one, so it is
+        -- known good even though the rest of the list isn't.
+        { atlas = "housefinder_neighborhood-friends-icon" },
+    },
+}
+
+-- Resolved once, on first use: C_Texture.GetAtlasInfo needs the client up,
+-- so this can't be decided at file-load time. `false` caches a genuine miss.
+local resolvedIcons = {}
+local function CategoryIcon(category)
+    if resolvedIcons[category] == nil then
+        resolvedIcons[category] = AniMods.W.ResolveIcon(ICON_CANDIDATES[category]) or false
+    end
+    return resolvedIcons[category] or nil
+end
 
 local function InitLDB()
     ldbObject = Broker.Register("AniModsSocialStatus", {
@@ -422,12 +454,22 @@ end
 
 -- The shared builder (AniMods.Broker) owns the icon/text formatting and the
 -- display-mode setting; this only has to say what the parts are.
+local function BrokerPart(category, count)
+    local part = { count = count, color = CATEGORY_COLOR[category] }
+    local icon = CategoryIcon(category)
+    if icon then
+        part.atlas = icon.atlas
+        part.texture = icon.texture
+    end
+    return part
+end
+
 local function UpdateBroker()
     if not ldbObject then return end
     local guild, favorites, friends = GatherOnlineFriends()
     ldbObject.text = Broker.BuildText(ModuleDB, {
-        { count = #guild,                 color = CATEGORY_COLOR.GUILD,   atlas = CATEGORY_ATLAS.GUILD },
-        { count = #favorites + #friends,  color = CATEGORY_COLOR.FRIENDS, atlas = CATEGORY_ATLAS.FRIENDS },
+        BrokerPart("GUILD", #guild),
+        BrokerPart("FRIENDS", #favorites + #friends),
     })
 end
 

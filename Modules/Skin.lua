@@ -310,7 +310,12 @@ local FLYOUT_ICON_LABEL = {
     bag    = "Bag",
 }
 local FLYOUT_ICON_ORDER = { "filter", "gear", "group", "bag" }
--- All verified present in DandersFrames_Options' atlas browser list.
+-- Candidates, not guarantees: these names came from DandersFrames_Options'
+-- atlas browser list, which that browser itself filters through
+-- C_Texture.GetAtlasInfo at runtime -- so appearing there never meant the
+-- atlas exists in this client, and a missing one draws nothing at all with
+-- no error. The dropdown below only offers the ones that actually resolve.
+-- "filter" is EUI's own and is known to render, since EUI draws it today.
 local FLYOUT_ICON_ATLAS = {
     filter = "Map-Filter-Button",
     gear   = "options-icon",
@@ -323,10 +328,28 @@ local FLYOUT_PUSHED_ATLAS = { filter = "Map-Filter-Button-down" }
 local FLYOUT_TINT_LABEL = { light = "Light", accent = "EllesmereUI accent" }
 local FLYOUT_TINT_ORDER = { "light", "accent" }
 
+-- Only the styles whose atlas actually exists in this client, so the picker
+-- can't offer one that would render as an empty button.
+local function UsableFlyoutIcons()
+    local order = {}
+    for _, key in ipairs(FLYOUT_ICON_ORDER) do
+        if AniMods.W.AtlasExists(FLYOUT_ICON_ATLAS[key]) then order[#order + 1] = key end
+    end
+    return order
+end
+
 local function GetFlyoutIcon()
     local key = SkinDB().flyoutIcon
-    if key and FLYOUT_ICON_ATLAS[key] then return key end
-    return "gear"
+    if key and AniMods.W.AtlasExists(FLYOUT_ICON_ATLAS[key]) then return key end
+    -- Fall back to the first that resolves, preferring the configured
+    -- default; "filter" (EUI's own) is last-resort since it always works.
+    local usable = UsableFlyoutIcons()
+    for _, preferred in ipairs({ "gear", "group", "bag" }) do
+        for _, key in ipairs(usable) do
+            if key == preferred then return key end
+        end
+    end
+    return usable[1] or "filter"
 end
 
 local function GetFlyoutTint()
@@ -439,7 +462,7 @@ local GroupButtonEntry = {
         rows[#rows + 1] = {
             label   = "Icon",
             options = FLYOUT_ICON_LABEL,
-            order   = FLYOUT_ICON_ORDER,
+            order   = UsableFlyoutIcons(),
             get     = GetFlyoutIcon,
             set     = function(v) SkinDB().flyoutIcon = v; ApplyFlyoutSkin() end,
             atlas   = FLYOUT_ICON_ATLAS[GetFlyoutIcon()],

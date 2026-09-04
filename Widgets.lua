@@ -113,6 +113,39 @@ function W.Font(parent, size, flags, alpha, addonKey)
     return fs
 end
 
+-- ── Icon resolution ─────────────────────────────────────────────────────────
+-- Atlas names get renamed and removed between patches, and a missing one
+-- draws nothing at all with no error -- which is exactly how the guild icon
+-- silently went blank. Anything picking an atlas should check it first
+-- rather than trusting a name that merely appears in some list.
+
+function W.AtlasExists(atlas)
+    if not atlas then return false end
+    if not (C_Texture and C_Texture.GetAtlasInfo) then return false end
+    return C_Texture.GetAtlasInfo(atlas) and true or false
+end
+
+-- Picks the first usable icon from an ordered candidate list. Candidates are
+--   { atlas = "some-atlas" }                        -- used if it exists here
+--   { texture = "Interface\\...", addon = "Name" }  -- used if that addon is loaded
+-- The addon-scoped texture form REFERENCES a file already on disk rather
+-- than bundling a copy, so it carries no redistribution question -- it just
+-- has to degrade gracefully when that addon isn't there, which is what the
+-- rest of the list is for. Returns { atlas = ... } or { texture = ... }, or
+-- nil if nothing is usable.
+function W.ResolveIcon(candidates)
+    for _, candidate in ipairs(candidates or {}) do
+        if candidate.atlas then
+            if W.AtlasExists(candidate.atlas) then return { atlas = candidate.atlas } end
+        elseif candidate.texture then
+            if (not candidate.addon) or AniMods.IsAddOnLoaded(candidate.addon) then
+                return { texture = candidate.texture }
+            end
+        end
+    end
+    return nil
+end
+
 function W.Tex(parent, layer, r, g, b, a)
     local tex = parent:CreateTexture(nil, layer or "BACKGROUND")
     tex:SetColorTexture(r, g, b, a or 1)

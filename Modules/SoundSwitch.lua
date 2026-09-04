@@ -116,18 +116,38 @@ end
 -- Broker
 -- ---------------------------------------------------------------------------
 
--- Verified present in DandersFrames_Options' atlas browser list; the
--- chatframe-button-icon-speaker name that reads as the obvious guess does
--- not exist.
-local SPEAKER_ATLAS = "voicechat-icon-speaker"
+-- Resolved against the client rather than hard-coded: an atlas that doesn't
+-- exist draws nothing at all, with no error. EllesmereUIChat's own voice
+-- icon is preferred when that addon is present (known to render, and matches
+-- the flat line-art the rest of the panel uses); it is referenced on disk,
+-- never copied.
+local ICON_CANDIDATES = {
+    { texture = "Interface\\AddOns\\EllesmereUIChat\\Media\\chat_voice.png", addon = "EllesmereUIChat" },
+    { atlas = "voicechat-icon-speaker" },
+    { atlas = "chatframe-button-icon-voicechat" },
+}
+
+local resolvedIcon
+local function SpeakerIcon()
+    if resolvedIcon == nil then
+        resolvedIcon = AniMods.W.ResolveIcon(ICON_CANDIDATES) or false
+    end
+    return resolvedIcon or nil
+end
 
 local function UpdateBroker()
     if not ldbObject then return end
     local name = CurrentDeviceName()
     lastKnownDevice = name
-    ldbObject.text = Broker.BuildText(ModuleDB, {
-        { text = name or "Unknown", atlas = SPEAKER_ATLAS },
-    })
+
+    local part = { text = name or "Unknown" }
+    local icon = SpeakerIcon()
+    if icon then
+        part.atlas = icon.atlas
+        part.texture = icon.texture
+    end
+
+    ldbObject.text = Broker.BuildText(ModuleDB, { part })
 end
 
 local function SwitchNext()
