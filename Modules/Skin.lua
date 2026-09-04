@@ -30,6 +30,15 @@ local Skin = {
 -- Per-entry enable/disable, persisted. Default on.
 -- ---------------------------------------------------------------------------
 
+-- Settings shared by the entries below (each entry's own enable flag lives
+-- in EntryDB). Declared up here because Lua only closes over locals declared
+-- BEFORE the function that uses them -- defined further down, every earlier
+-- reference would silently resolve to a nil global instead.
+local function SkinDB()
+    AniModsDB.skin = AniModsDB.skin or {}
+    return AniModsDB.skin
+end
+
 local function EntryDB()
     AniModsDB.skin = AniModsDB.skin or {}
     AniModsDB.skin.entries = AniModsDB.skin.entries or {}
@@ -186,6 +195,25 @@ local function BuildTTSButton(sidebar, anchorTo, real)
     return btn
 end
 
+-- Two ways to deal with the button, because rehoming it turned out not to
+-- look good: Blizzard's icon is a filled speech-bubble glyph, and even
+-- desaturated and alpha-matched it reads as a foreign blob next to
+-- EllesmereUIChat's thin line-art sidebar icons. Hiding it is the default --
+-- that is what EUI itself does with every other Blizzard chat chrome button
+-- it doesn't want (QuickJoinToastButton, ChatFrameMenuButton, ...).
+local TTS_MODE_LABEL = { hide = "Hide it", sidebar = "Move to EUI sidebar" }
+local TTS_MODE_ORDER = { "hide", "sidebar" }
+
+local function GetTTSMode()
+    local mode = SkinDB().ttsMode
+    if mode and TTS_MODE_LABEL[mode] then return mode end
+    return "hide"
+end
+
+-- Forward-declared so the Mode dropdown below can re-run it; assigned right
+-- after the entry table is built.
+local ApplyTTS
+
 local TTSEntry = {
     key = "tts",
     name = "TTS Button",
@@ -200,24 +228,27 @@ local TTSEntry = {
     end,
     -- Idempotent, and safe to call again after Revert() to re-apply live.
     Apply = function()
-        if ttsProxy then
-            ttsReal:SetAlpha(0)
-            ttsReal:EnableMouse(false)
-            ttsProxy:Show()
-            return true
-        end
-        local real = _G.TextToSpeechButton
+        local real = ttsReal or _G.TextToSpeechButton
         if not real then return false end
-        local sbd = GetChatSidebarData()
-        local sidebar = sbd and sbd.sidebar
-        local scrollBtn = sbd and sbd.scrollBtn
-        if not (sidebar and scrollBtn) then return false end
-
         ttsReal = real
-        ttsProxy = BuildTTSButton(sidebar, scrollBtn, real)
-        -- Suppress Blizzard's own copy now that a replacement exists.
-        ttsReal:SetAlpha(0)
-        ttsReal:EnableMouse(false)
+
+        local wantSidebar = GetTTSMode() == "sidebar"
+
+        if wantSidebar and not ttsProxy then
+            -- Only needs EUI's sidebar for this mode; hiding works whether or
+            -- not the sidebar has been built yet.
+            local sbd = GetChatSidebarData()
+            local sidebar = sbd and sbd.sidebar
+            local scrollBtn = sbd and sbd.scrollBtn
+            if not (sidebar and scrollBtn) then return false end
+            ttsProxy = BuildTTSButton(sidebar, scrollBtn, real)
+        end
+
+        if ttsProxy then ttsProxy:SetShown(wantSidebar) end
+
+        -- Suppressed either way: hidden outright, or replaced by the proxy.
+        real:SetAlpha(0)
+        real:EnableMouse(false)
         return true
     end,
     Revert = function()
@@ -228,15 +259,29 @@ local TTSEntry = {
         end
     end,
     GetInfoRows = function()
-        return {
+        local rows = {
             { label = "Blizzard TextToSpeechButton", value = _G.TextToSpeechButton and "Found" or "Not found" },
             {
-                label = "Icon copied from Blizzard's button",
-                value = ttsProxy and (ttsIconFound and "Yes" or "No (showing a \"T\" label instead)") or "N/A",
+                label   = "Mode",
+                options = TTS_MODE_LABEL,
+                order   = TTS_MODE_ORDER,
+                get     = GetTTSMode,
+                set     = function(v)
+                    SkinDB().ttsMode = v
+                    if ApplyTTS then ApplyTTS() end
+                end,
             },
         }
+        if GetTTSMode() == "sidebar" then
+            rows[#rows + 1] = {
+                label = "Icon copied from Blizzard's button",
+                value = ttsProxy and (ttsIconFound and "Yes" or "No (showing a \"T\" label instead)") or "N/A",
+            }
+        end
+        return rows
     end,
 }
+ApplyTTS = TTSEntry.Apply
 
 -- ---------------------------------------------------------------------------
 -- Entry: Minimap Group Button Icon
@@ -277,11 +322,6 @@ local FLYOUT_PUSHED_ATLAS = { filter = "Map-Filter-Button-down" }
 
 local FLYOUT_TINT_LABEL = { light = "Light", accent = "EllesmereUI accent" }
 local FLYOUT_TINT_ORDER = { "light", "accent" }
-
-local function SkinDB()
-    AniModsDB.skin = AniModsDB.skin or {}
-    return AniModsDB.skin
-end
 
 local function GetFlyoutIcon()
     local key = SkinDB().flyoutIcon

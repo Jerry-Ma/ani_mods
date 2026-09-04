@@ -47,6 +47,7 @@ end
 -- Builds a broker's `text` from an ordered list of parts:
 --   { count = 3, color = "ffd700", atlas = "some-atlas" }   -- Blizzard atlas icon
 --   { count = 3, color = "59c0ff", texture = "Interface\\..." } -- plain texture file
+--   { text = "Headphones", atlas = "some-atlas" }           -- any label, not just a number
 --
 -- In "Icon + Text" mode each part's icon is packed directly against its
 -- count with no padding (the most compact rendering, and the icon itself is
@@ -62,7 +63,8 @@ function Broker.BuildText(getDB, parts)
 
     local rendered = {}
     for i, part in ipairs(parts) do
-        local numText = colored and ("|cff%s%d|r"):format(part.color, part.count) or tostring(part.count)
+        local body = part.text or tostring(part.count)
+        local numText = (colored and part.color) and ("|cff%s%s|r"):format(part.color, body) or body
         if showIcon and part.atlas then
             rendered[i] = ("|A:%s:14:14|a%s"):format(part.atlas, numText)
         elseif showIcon and part.texture then

@@ -415,3 +415,24 @@ generic solver. Only `Libs\LibStub` remains bundled (for LibDataBroker lookups).
   own files directly — silently wiped on its next update. Staying a plain LDB broker
   means it survives every EUI update untouched, at the cost of using EllesmereUIDataBars'
   generic "Broker Plugin" block type instead of a dedicated one.
+- **SoundSwitch** — switch the game's sound output device from a databar.
+  **Left-click** cycles to the next device; **right-click** opens this module's tab,
+  where each detected device has an in-the-cycle checkbox (the current one is marked
+  "current"), so you can skip outputs you never want to land on. The tooltip lists every
+  device, highlighting the active one and dimming skipped ones.
+
+  The core is lifted from **SoundManager** (by Zax), reduced to just the switching part —
+  that addon also does per-device volume presets, its own movable frame and keybinds,
+  none of which are wanted here. Only Blizzard API is used
+  (`Sound_GameSystem_GetNumOutputDrivers` / `…GetOutputDriverNameByIndex`, the
+  `Sound_OutputDriverIndex` CVar, and `Sound_GameSystem_RestartSoundSystem` with
+  `AudioOptionsFrame_AudioRestart` as the pre-10.0 fallback), so nothing needs to be
+  installed. Two non-obvious details are kept from SoundManager, both called out in its
+  own comments: the **last** driver is a system-default pseudo-device rather than a real
+  output and is left out of the cycle (its loop runs to `count - 1`), and driver
+  **indices go stale** when the OS adds or removes an output — so settings are keyed by
+  device *name* and indices are re-read fresh at the moment of switching, never stored.
+
+  Refreshes on `CVAR_UPDATE`, which is how SoundManager notices the output being changed
+  from outside (the OS, Blizzard's audio options, another addon); the handler re-reads
+  the device and only pushes an update when it actually differs, so there's no polling.
