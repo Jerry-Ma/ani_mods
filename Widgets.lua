@@ -459,11 +459,13 @@ function W.Dropdown(parent, width)
         local ok, a = pcall(eui.MakeDropdownArrow, f, 6, eui.PanelPP)
         if ok then arrow = a end
     end
+    -- `arrow` exists only to answer "did EUI give us one" -- nothing below
+    -- needs a handle on either it or the caret, since both are anchored to
+    -- `f` and never touched again.
     if not arrow then
         local caret = W.Font(f, 10, nil, W.DD_TXT_A)
         caret:SetPoint("RIGHT", f, "RIGHT", -8, 0)
         caret:SetText("\226\150\188") -- U+25BC
-        arrow = caret
     end
 
     local o = { frame = f, list = {}, order = {} }

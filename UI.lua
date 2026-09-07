@@ -17,7 +17,6 @@
 --   * Nothing polls. Modules push AniMods.RefreshUI() when their data
 --     actually changes.
 
-local ADDON_NAME = "AniMods"
 local AniMods = _G.AniMods
 local W = AniMods.W
 

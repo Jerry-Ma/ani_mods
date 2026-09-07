@@ -345,8 +345,10 @@ local function GetFlyoutIcon()
     -- default; "filter" (EUI's own) is last-resort since it always works.
     local usable = UsableFlyoutIcons()
     for _, preferred in ipairs({ "gear", "group", "bag" }) do
-        for _, key in ipairs(usable) do
-            if key == preferred then return key end
+        -- `candidate`, not `key`: shadowing the configured-key local above
+        -- makes this read as though it were still about that value.
+        for _, candidate in ipairs(usable) do
+            if candidate == preferred then return candidate end
         end
     end
     return usable[1] or "filter"
