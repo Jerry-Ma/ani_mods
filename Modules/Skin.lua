@@ -564,10 +564,20 @@ function Skin:Enable()
             PollEntry(entry)
         end
     end
-    PollAll()
-    for _, delay in ipairs({ 2, 5, 10, 20 }) do
-        C_Timer.After(delay, PollAll)
-    end
+
+    -- Gated on the skin API rather than fired at PLAYER_LOGIN: EllesmereUI
+    -- dispatches that callback after its OWN boot, so it is the first moment
+    -- both the facade and EllesmereUI's frames are guaranteed to exist. The
+    -- first pass used to run at an arbitrary point during PLAYER_LOGIN and
+    -- rely on the retry ladder below to eventually catch up; now the ladder
+    -- only covers what is genuinely created later (the chat sidebar and the
+    -- minimap flyout are built by EllesmereUI on its own schedule).
+    AniMods.W.OnReady(function()
+        PollAll()
+        for _, delay in ipairs({ 2, 5, 10, 20 }) do
+            C_Timer.After(delay, PollAll)
+        end
+    end)
 end
 
 AniMods.RegisterModule("Skin", Skin)

@@ -1,123 +1,177 @@
--- AniMods widget toolkit -- hand-rolled panel chrome that matches
--- EllesmereUI's look.
+-- AniMods widget toolkit, built on EllesmereUI's public skinning API.
 --
--- Why hand-rolled rather than a library: every options panel in this
--- install that reads as "modern" is hand-rolled (EllesmereUIOptions,
--- DandersFrames_Options, MidnightRoutine, ClickableRaidBuffs), and the one
--- that reads as dated uses stock Blizzard templates. AceGUI's widgets are
--- Blizzard-template-derived, which is the look being escaped -- no amount
--- of layout tuning fixes that. (ClickableRaidBuffs *ships* AceGUI in its
--- Libs and never references it; an earlier version of this addon cited it
--- as precedent for using AceGUI, which was simply wrong.)
+-- ── Why this is a hard dependency, with no fallback ──────────────────────────
 --
--- Two-tier: when EllesmereUI is loaded, its own public primitives do the
--- drawing (MakeBorder for pixel-snapped 1px borders, PanelPP for
--- pixel-perfect sizing, MakeFont for its configured font, RegAccent so this
--- panel recolors live with the user's accent/class color). When it isn't,
--- the fallbacks below draw the same thing with the same literal colors --
--- copied from EllesmereUI.lua's own palette block (lines 72-208) -- so the
--- panel looks the same either way; what's lost without EUI is only pixel
--- snapping and live accent updates.
+-- This file used to hand-draw everything and reach into EllesmereUI internals
+-- (MakeBorder, PanelPP, RegAccent, DisablePixelSnap, MakeDropdownArrow,
+-- GetFontPath, EXPRESSWAY) with literal-color fallbacks behind each one --
+-- eight undocumented couplings and a parallel look to keep in sync. One of
+-- them, RegAccent, crashed on login because its shape was guessed wrong.
+--
+-- All of that is replaced by ONE published contract:
+--
+--     EllesmereUI.RegisterSkin("AniMods", function(S) ... end)
+--
+-- S is a facade over EllesmereUI's window-skin engine. Its own header states
+-- the terms: the facade is the public surface (never raw WSkin), entries are
+-- late-bound pass-throughs so engine internals stay free to change, and
+-- signatures are additive-only, versioned by S.apiVersion. Each callback is
+-- pcall-isolated, so a mistake here cannot break EllesmereUI, or vice versa.
+--
+-- There are deliberately NO fallbacks. A second, hand-drawn rendering of the
+-- same panel is debt that has to be maintained and can never be verified to
+-- still match. The cost is an honest hard dependency, stated in the .toc:
+-- without EllesmereUI + EllesmereUIBlizzardSkin, and with third-party
+-- skinning enabled, AniMods has no UI. W.OnReady's diagnostic says exactly
+-- that instead of failing silently.
+--
+-- ── The one rule that is not obvious ─────────────────────────────────────────
+--
+-- S.Panel and S.Shell enrol their frame in the engine's RESTRIP REGISTRY.
+-- WSkin.Restrip() is a global sweep -- called from ~20 places whenever a
+-- Blizzard window repaints (Collections, Spellbook, Guild, Calendar, Loot,
+-- Item Upgrade, ...) -- and it alpha-zeroes every direct texture region on
+-- every registered frame except the engine's own protected keys.
+--
+-- So: NEVER add our own texture directly to a frame passed to S.Panel or
+-- S.Shell. It will silently vanish the first time the player opens their
+-- collections. Put our art on a CHILD frame instead. Every constructor below
+-- follows that rule, and it is why W.Window hands back `content` rather than
+-- letting callers draw on the window itself.
 
 local AniMods = _G.AniMods
 
 local W = {}
 AniMods.W = W
 
--- ── Palette (EllesmereUI.lua:72-208) ────────────────────────────────────────
+-- ── Design tokens ───────────────────────────────────────────────────────────
+-- Alphas and metrics only. Every COLOR now comes from the theme via S, so a
+-- palette copied out of EllesmereUI's source no longer exists here to drift
+-- out of date. These are AniMods' own proportions, not EllesmereUI's values.
 
-W.PANEL_BG  = { 0.05, 0.07, 0.09 }
-W.CARD_BG   = { 0.075, 0.09, 0.11 }
-W.CB_BOX    = { 0.10, 0.12, 0.16 }   -- checkbox box background
-W.DD_BG     = { 0.075, 0.113, 0.141 } -- dropdown background
-W.BTN_BG    = { 0.061, 0.095, 0.120 }
-W.INPUT_BG  = { 0.02, 0.03, 0.04 }
-
-W.BORDER_A      = 0.15   -- panel chrome border alpha (white)
-W.CB_BRD_A      = 0.05   -- checkbox border, unchecked
-W.CB_ACT_BRD_A  = 0.15   -- checkbox border, checked (accent-colored)
-W.DD_BRD_A      = 0.20
-W.DD_BRD_HA     = 0.30
-W.DD_TXT_A      = 0.50
-W.DD_TXT_HA     = 0.60
-W.DD_ITEM_HL_A  = 0.08   -- menu item hover
-W.DD_ITEM_SEL_A = 0.04   -- menu item current selection
-W.BTN_BRD_A     = 0.30
-W.BTN_BRD_HA    = 0.45
-W.BTN_TXT_A     = 0.55
-W.BTN_TXT_HA    = 0.70
-W.SL_TRACK_A    = 0.16
-W.SL_FILL_A     = 0.75
-
-W.TEXT_A        = 1.00
-W.TEXT_DIM_A    = 0.53
+W.TEXT_A         = 1.00
+W.TEXT_DIM_A     = 0.53
 W.TEXT_SECTION_A = 0.41
-W.ROW_BG_ODD    = 0.10   -- black overlay alpha
-W.ROW_BG_EVEN   = 0.20
+W.ROW_BG_ODD     = 0.10   -- black overlay alpha, odd rows
+W.ROW_BG_EVEN    = 0.20
 
--- ── EllesmereUI bridges (all optional) ──────────────────────────────────────
+W.DD_TXT_A       = 0.50
+W.DD_TXT_HA      = 0.60
+W.DD_ITEM_HL_A   = 0.08   -- menu item hover
+W.DD_ITEM_SEL_A  = 0.04   -- menu item current selection
+W.BTN_TXT_A      = 0.55
+W.BTN_TXT_HA     = 0.70
+W.SL_TRACK_A     = 0.16
+W.SL_FILL_A      = 0.75
 
-local function EUI()
-    return _G.EllesmereUI
+-- ── The facade ──────────────────────────────────────────────────────────────
+
+local S                 -- set once, when EllesmereUI dispatches at PLAYER_LOGIN
+local readyQueue = {}   -- fns waiting on that dispatch
+local warned = false
+
+-- Anything needing S must go through here. It runs `fn` immediately when the
+-- facade has already arrived, and otherwise queues it -- which is also the
+-- fix for a load-order problem this addon used to paper over with retry
+-- timers: EllesmereUI fires the callback after its own boot, so "the skin
+-- engine is ready" and "EllesmereUI's frames exist" are the same moment.
+function W.OnReady(fn)
+    if S then return fn(S) end
+    readyQueue[#readyQueue + 1] = fn
 end
 
--- The user's live accent color, or EllesmereUI's own default green.
+function W.IsReady()
+    return S ~= nil
+end
+
+-- Live-recolor registry for accent-colored things WE drew. EllesmereUI's own
+-- primitives track the accent themselves; anything we colour by hand has to
+-- be re-applied, which is what S.OnLooksChanged is for. Weak keys so a
+-- released widget does not pin its frame.
+local accentTex = setmetatable({}, { __mode = "k" })   -- texture    -> alpha
+local accentText = setmetatable({}, { __mode = "k" })  -- fontstring -> alpha
+
+local function RefreshLooks()
+    if not S then return end
+    local r, g, b = S.GetAccentColor()
+    for tex, a in pairs(accentTex) do tex:SetColorTexture(r, g, b, a) end
+    for fs, a in pairs(accentText) do fs:SetTextColor(r, g, b, a) end
+end
+
+if EllesmereUI and EllesmereUI.RegisterSkin then
+    EllesmereUI.RegisterSkin("AniMods", function(facade)
+        S = facade
+        W.S = facade
+        S.OnLooksChanged(RefreshLooks)
+        for i = 1, #readyQueue do
+            -- Isolated per entry: one module's bad layout must not stop the
+            -- rest of the addon from coming up.
+            local ok, err = pcall(readyQueue[i])
+            if not ok then geterrorhandler()(err) end
+        end
+        readyQueue = {}
+    end)
+end
+
+-- Every constructor asserts through this. The message is deliberately
+-- specific about the three things that can be wrong, because "nothing
+-- happened" is the worst possible failure for a settings panel.
+local function Need()
+    if S then return S end
+    if not warned then
+        warned = true
+        print("|cffff4444AniMods:|r UI unavailable. It is drawn with EllesmereUI's "
+            .. "skinning API, which needs |cffffd700EllesmereUI|r and "
+            .. "|cffffd700EllesmereUIBlizzardSkin|r loaded, and third-party skinning "
+            .. "left enabled for AniMods in EllesmereUI's options.")
+    end
+    return nil
+end
+
+-- ── Theme reads ─────────────────────────────────────────────────────────────
+
+-- The user's live accent colour.
 function W.Accent()
-    local eui = EUI()
-    if eui and eui.GetAccentColor then
-        local ok, r, g, b = pcall(eui.GetAccentColor)
-        if ok and r then return r, g, b end
-    end
-    return 0.05, 0.82, 0.62
+    local s = Need()
+    if not s then return 1, 1, 1 end
+    return s.GetAccentColor()
 end
 
--- Registers a region for live accent recoloring, so this panel follows a
--- theme change without a reload. `kind` is "vertex" for a Texture or "text"
--- for a FontString.
---
--- EUI's UpdateAccentElements only handles obj-based entries of type solid /
--- gradient / vertex, plus a `callback` type -- there is no font branch, so a
--- FontString has to go through a callback that sets its text color itself.
--- (Registering one as a text/font type instead fails silently: the entry
--- just never matches a branch, and the color quietly stops tracking the
--- theme.)
-function W.RegisterAccent(region, kind)
-    local eui = EUI()
-    if not (eui and eui.RegAccent) then return end
-
+-- Registers a region for live accent recolouring, so the panel follows a
+-- theme change without a reload. `kind` is "vertex" for a Texture, "text" for
+-- a FontString.
+function W.RegisterAccent(region, kind, alpha)
     if kind == "text" then
-        pcall(eui.RegAccent, {
-            type = "callback",
-            fn = function(r, g, b) region:SetTextColor(r, g, b, 1) end,
-        })
+        accentText[region] = alpha or 1
     else
-        pcall(eui.RegAccent, { obj = region, type = "vertex" })
+        accentTex[region] = alpha or 1
     end
 end
 
--- `addonKey` picks a specific EUI module's configured font (e.g. "minimap"),
--- matching what that part of EUI draws with; omit it for the global one.
-function W.FontPath(addonKey)
-    local eui = EUI()
-    if eui and eui.GetFontPath then
-        local ok, path = pcall(eui.GetFontPath, addonKey)
-        if ok and path then return path end
-    end
-    return (eui and eui.EXPRESSWAY) or "Fonts\\FRIZQT__.TTF"
+-- The user's configured UI font. Returns path only; W.Font applies the flag.
+function W.FontPath()
+    local s = Need()
+    if not s then return "Fonts\\FRIZQT__.TTF" end
+    local path = s.GetFont()
+    return path
 end
 
-function W.Font(parent, size, flags, alpha, addonKey)
+function W.Font(parent, size, flags, alpha)
+    local s = Need()
     local fs = parent:CreateFontString(nil, "OVERLAY")
-    fs:SetFont(W.FontPath(addonKey), size or 12, flags or "")
+    local path, themeFlag = "Fonts\\FRIZQT__.TTF", ""
+    if s then path, themeFlag = s.GetFont() end
+    fs:SetFont(path, size or 12, flags or themeFlag or "")
     fs:SetTextColor(1, 1, 1, alpha or W.TEXT_A)
     return fs
 end
 
 -- ── Icon resolution ─────────────────────────────────────────────────────────
+-- Independent of the skin API: pure client queries, usable before S arrives.
 -- Atlas names get renamed and removed between patches, and a missing one
 -- draws nothing at all with no error -- which is exactly how the guild icon
--- silently went blank. Anything picking an atlas should check it first
--- rather than trusting a name that merely appears in some list.
+-- silently went blank. Anything picking an atlas checks it first rather than
+-- trusting a name that merely appears in some list.
 
 function W.AtlasExists(atlas)
     if not atlas then return false end
@@ -146,45 +200,27 @@ function W.ResolveIcon(candidates)
     return nil
 end
 
+-- ── Surfaces ────────────────────────────────────────────────────────────────
+
+-- A plain solid texture. Only ever used on frames we did NOT hand to S (see
+-- the restrip rule at the top of this file).
 function W.Tex(parent, layer, r, g, b, a)
     local tex = parent:CreateTexture(nil, layer or "BACKGROUND")
     tex:SetColorTexture(r, g, b, a or 1)
-    local eui = EUI()
-    if eui and eui.DisablePixelSnap then pcall(eui.DisablePixelSnap, tex) end
     return tex
 end
 
--- 1px border. EUI's MakeBorder is pixel-snapped and rescales with the UI;
--- the fallback is a plain 1px BackdropTemplate edge in the same color.
--- Returns a table with SetColor(self, r, g, b, a) either way.
-function W.Border(frame, r, g, b, a)
-    local eui = EUI()
-    if eui and eui.MakeBorder then
-        local ok, border = pcall(eui.MakeBorder, frame, r, g, b, a, eui.PanelPP)
-        if ok and border then return border end
-    end
-
-    local bf = CreateFrame("Frame", nil, frame, "BackdropTemplate")
-    bf:SetAllPoints(frame)
-    bf:SetFrameLevel(frame:GetFrameLevel() + 1)
-    bf:EnableMouse(false)
-    bf:SetBackdrop({ edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1 })
-    bf:SetBackdropBorderColor(r or 1, g or 1, b or 1, a or 1)
-    return {
-        _frame = bf,
-        SetColor = function(_, cr, cg, cb, ca)
-            bf:SetBackdropBorderColor(cr, cg, cb, ca or 1)
-        end,
-    }
-end
-
--- A background+border panel, the base of every surface here.
-function W.Panel(parent, bg, borderAlpha)
+-- A themed panel: house fill plus the house 1px border, painted by the
+-- engine. `opts` is passed through to S.Panel -- {inset = true} for the
+-- darker nested fill, {shade = true} for a translucent black wash,
+-- {noBorder = true} to skip the border.
+--
+-- The returned frame is in the restrip registry, so callers must not draw
+-- textures on it directly; add child frames instead.
+function W.Panel(parent, opts)
+    local s = Need()
     local f = CreateFrame("Frame", nil, parent)
-    bg = bg or W.PANEL_BG
-    f._bg = W.Tex(f, "BACKGROUND", bg[1], bg[2], bg[3], bg[4] or 1)
-    f._bg:SetAllPoints()
-    f._border = W.Border(f, 1, 1, 1, borderAlpha or W.BORDER_A)
+    if s then s.Panel(f, opts) end
     return f
 end
 
@@ -266,7 +302,8 @@ function W.ValueRow(parent)
         label:SetText(labelText or "")
         value:SetText(valueText or "")
     end
-    -- Alternating stripe, matching EUI's option rows.
+    -- Alternating stripe, matching EllesmereUI's option rows. Safe as a
+    -- direct texture: this frame is ours and never went through S.
     function o:Stripe(index)
         if not f._stripe then
             f._stripe = W.Tex(f, "BACKGROUND", 0, 0, 0, 0)
@@ -299,44 +336,30 @@ function W.Heading(parent)
 end
 
 -- ── Checkbox ────────────────────────────────────────────────────────────────
--- Same construction as EllesmereUI's (EllesmereUI_Widgets.lua:263-296): a
--- small solid box with a 1px border, filled with the accent color when on,
--- dimmed when idle. No Blizzard template.
+-- A real CheckButton skinned by the engine: S.Checkbox strips the Blizzard
+-- art, lays the house dark box with a 1px border, and tints the check itself
+-- in the accent colour -- tracking theme changes on its own, with no
+-- registration from us. The label is ours, so it follows our text tokens.
 
 function W.CheckBox(parent)
     local f = CreateFrame("Button", nil, parent)
     f:SetHeight(20)
 
-    local box = CreateFrame("Frame", nil, f)
-    box:SetSize(16, 16)
-    box:SetPoint("LEFT", f, "LEFT", 8, 0)
-    local boxBg = W.Tex(box, "BACKGROUND", W.CB_BOX[1], W.CB_BOX[2], W.CB_BOX[3], 1)
-    boxBg:SetAllPoints()
-    local boxBorder = W.Border(box, 1, 1, 1, W.CB_BRD_A)
-
-    local fill = W.Tex(box, "ARTWORK", W.Accent())
-    fill:SetPoint("TOPLEFT", box, "TOPLEFT", 2, -2)
-    fill:SetPoint("BOTTOMRIGHT", box, "BOTTOMRIGHT", -2, 2)
-    fill:Hide()
-    W.RegisterAccent(fill, "vertex")
+    local box = CreateFrame("CheckButton", nil, f, "UICheckButtonTemplate")
+    box:SetSize(24, 24)
+    box:SetPoint("LEFT", f, "LEFT", 4, 0)
+    box:EnableMouse(false)   -- the whole row is the hit area, not just the box
+    W.OnReady(function(s) s.Checkbox(box) end)
 
     local label = W.Font(f, 12, nil, W.TEXT_DIM_A)
-    label:SetPoint("LEFT", box, "RIGHT", 8, 0)
+    label:SetPoint("LEFT", box, "RIGHT", 4, 0)
     label:SetPoint("RIGHT", f, "RIGHT", -8, 0)
     label:SetJustifyH("LEFT")
 
     local o = { frame = f, checked = false }
 
     local function ApplyVisual(hovering)
-        if o.checked then
-            fill:Show()
-            fill:SetAlpha(hovering and 1 or 0.85)
-            local r, g, b = W.Accent()
-            boxBorder:SetColor(r, g, b, W.CB_ACT_BRD_A + 0.25)
-        else
-            fill:Hide()
-            boxBorder:SetColor(1, 1, 1, hovering and (W.CB_BRD_A + 0.15) or W.CB_BRD_A)
-        end
+        box:SetChecked(o.checked)
         label:SetTextColor(1, 1, 1, hovering and W.TEXT_A or W.TEXT_DIM_A)
     end
 
@@ -365,7 +388,7 @@ end
 -- click-catcher behind the menu, which is what makes "click anywhere else
 -- to dismiss" work without polling for mouse position.
 
-local menu, menuCatcher
+local menu, menuCatcher, menuInner
 local menuItems = {}
 local menuOwner
 
@@ -379,6 +402,8 @@ local function HideMenu()
 end
 W.CloseDropdownMenu = HideMenu
 
+local MENU_ITEM_H, MENU_PAD = 18, 6
+
 local function EnsureMenu()
     if menu then return menu end
 
@@ -390,21 +415,24 @@ local function EnsureMenu()
     menuCatcher:SetScript("OnClick", HideMenu)
     menuCatcher:Hide()
 
-    menu = W.Panel(UIParent, W.DD_BG, W.DD_BRD_HA)
+    menu = W.Panel(UIParent, { inset = true })
     menu:SetFrameStrata("FULLSCREEN_DIALOG")
     menu:SetFrameLevel(510)
     menu:SetClampedToScreen(true)
     menu:EnableMouse(true)
     menu:Hide()
 
+    -- Items live on a child, not on `menu` itself: `menu` went through
+    -- S.Panel and is therefore in the restrip registry (see the file header).
+    menuInner = CreateFrame("Frame", nil, menu)
+    menuInner:SetAllPoints()
+
     return menu
 end
 
-local MENU_ITEM_H, MENU_PAD = 18, 6
-
 local function EnsureMenuItem(index)
     if menuItems[index] then return menuItems[index] end
-    local btn = CreateFrame("Button", nil, menu)
+    local btn = CreateFrame("Button", nil, menuInner)
     btn:SetHeight(MENU_ITEM_H)
     btn:RegisterForClicks("AnyUp")
 
@@ -442,38 +470,29 @@ function W.Dropdown(parent, width)
     f:SetHeight(22)
     f:SetWidth(width or 200)
     f:RegisterForClicks("AnyUp")
+    -- S.Dropdown gives the flat house block and border. It is idempotent and
+    -- nil-guarded per template, so a bare Button is a valid target.
+    W.OnReady(function(s) s.Dropdown(f) end)
 
-    local bg = W.Tex(f, "BACKGROUND", W.DD_BG[1], W.DD_BG[2], W.DD_BG[3], 0.9)
-    bg:SetAllPoints()
-    local border = W.Border(f, 1, 1, 1, W.DD_BRD_A)
+    -- Content on a child: `f` is a restrip-registered frame.
+    local inner = CreateFrame("Frame", nil, f)
+    inner:SetAllPoints()
 
-    local text = W.Font(f, 12, nil, W.DD_TXT_A)
-    text:SetPoint("LEFT", f, "LEFT", 8, 0)
-    text:SetPoint("RIGHT", f, "RIGHT", -22, 0)
+    local text = W.Font(inner, 12, nil, W.DD_TXT_A)
+    text:SetPoint("LEFT", inner, "LEFT", 8, 0)
+    text:SetPoint("RIGHT", inner, "RIGHT", -22, 0)
     text:SetJustifyH("LEFT")
 
-    -- EUI ships the arrow art; without it a plain caret glyph reads the same.
-    local arrow
-    local eui = EUI()
-    if eui and eui.MakeDropdownArrow then
-        local ok, a = pcall(eui.MakeDropdownArrow, f, 6, eui.PanelPP)
-        if ok then arrow = a end
-    end
-    -- `arrow` exists only to answer "did EUI give us one" -- nothing below
-    -- needs a handle on either it or the caret, since both are anchored to
-    -- `f` and never touched again.
-    if not arrow then
-        local caret = W.Font(f, 10, nil, W.DD_TXT_A)
-        caret:SetPoint("RIGHT", f, "RIGHT", -8, 0)
-        caret:SetText("\226\150\188") -- U+25BC
-    end
+    local caret = W.Font(inner, 10, nil, W.DD_TXT_A)
+    caret:SetPoint("RIGHT", inner, "RIGHT", -8, 0)
+    caret:SetText("\226\150\188") -- U+25BC
 
     local o = { frame = f, list = {}, order = {} }
 
     local function Hover(on)
-        bg:SetColorTexture(W.DD_BG[1], W.DD_BG[2], W.DD_BG[3], on and 0.98 or 0.9)
-        border:SetColor(1, 1, 1, on and W.DD_BRD_HA or W.DD_BRD_A)
-        text:SetTextColor(1, 1, 1, on and W.DD_TXT_HA or W.DD_TXT_A)
+        local a = on and W.DD_TXT_HA or W.DD_TXT_A
+        text:SetTextColor(1, 1, 1, a)
+        caret:SetTextColor(1, 1, 1, a)
     end
     f:SetScript("OnEnter", function() Hover(true) end)
     f:SetScript("OnLeave", function() Hover(false) end)
@@ -492,8 +511,8 @@ function W.Dropdown(parent, width)
         for i, key in ipairs(o.order) do
             count = i
             local item = EnsureMenuItem(i)
-            item:SetPoint("TOPLEFT", menu, "TOPLEFT", 0, -(MENU_PAD + (i - 1) * MENU_ITEM_H))
-            item:SetPoint("TOPRIGHT", menu, "TOPRIGHT", 0, -(MENU_PAD + (i - 1) * MENU_ITEM_H))
+            item:SetPoint("TOPLEFT", menuInner, "TOPLEFT", 0, -(MENU_PAD + (i - 1) * MENU_ITEM_H))
+            item:SetPoint("TOPRIGHT", menuInner, "TOPRIGHT", 0, -(MENU_PAD + (i - 1) * MENU_ITEM_H))
             item._fs:SetText(o.list[key] or tostring(key))
             item._sel:SetShown(key == o.value)
             item._hl:Hide()
@@ -521,8 +540,8 @@ function W.Dropdown(parent, width)
 
     f:SetScript("OnClick", OpenMenu)
     f:SetScript("OnHide", function()
-        -- Mirrors AceGUI's Dropdown_OnHide: a menu whose owner just went
-        -- away must not be left floating over the screen.
+        -- A menu whose owner just went away must not be left floating over
+        -- the screen.
         if menuOwner == o then HideMenu() end
     end)
 
@@ -551,8 +570,8 @@ function W.Dropdown(parent, width)
 end
 
 -- ── Slider ──────────────────────────────────────────────────────────────────
--- Track + accent fill + square thumb + numeric readout, matching EUI's
--- (EllesmereUI_Widgets.lua BuildSliderCore) without its editbox/snap extras.
+-- Track + accent fill + square thumb + numeric readout. Drawn by us (the
+-- engine has no slider primitive), so the fill registers for accent updates.
 
 function W.Slider(parent, width)
     local f = CreateFrame("Frame", nil, parent)
@@ -622,33 +641,29 @@ function W.Slider(parent, width)
 end
 
 -- ── Button ──────────────────────────────────────────────────────────────────
+-- S.Button paints the flat dark block, the house border and a subtle white
+-- hover overlay, so all that is left here is the label and the click.
 
 function W.Button(parent, width, height)
     local f = CreateFrame("Button", nil, parent)
     f:SetSize(width or 120, height or 22)
     f:RegisterForClicks("AnyUp")
+    W.OnReady(function(s) s.Button(f) end)
 
-    local bg = W.Tex(f, "BACKGROUND", W.BTN_BG[1], W.BTN_BG[2], W.BTN_BG[3], 0.6)
-    bg:SetAllPoints()
-    local border = W.Border(f, 1, 1, 1, W.BTN_BRD_A)
-
-    local fs = W.Font(f, 12, nil, W.BTN_TXT_A)
+    -- Label on a child: `f` is restrip-registered.
+    local inner = CreateFrame("Frame", nil, f)
+    inner:SetAllPoints()
+    local fs = W.Font(inner, 12, nil, W.BTN_TXT_A)
     fs:SetPoint("CENTER")
 
     local o = { frame = f }
-    local function Hover(on)
-        bg:SetColorTexture(W.BTN_BG[1], W.BTN_BG[2], W.BTN_BG[3], on and 0.65 or 0.6)
-        border:SetColor(1, 1, 1, on and W.BTN_BRD_HA or W.BTN_BRD_A)
-        fs:SetTextColor(1, 1, 1, on and W.BTN_TXT_HA or W.BTN_TXT_A)
-    end
-    f:SetScript("OnEnter", function() Hover(true) end)
-    f:SetScript("OnLeave", function() Hover(false) end)
+    f:SetScript("OnEnter", function() fs:SetTextColor(1, 1, 1, W.BTN_TXT_HA) end)
+    f:SetScript("OnLeave", function() fs:SetTextColor(1, 1, 1, W.BTN_TXT_A) end)
     f:SetScript("OnClick", function() if o._onClick then o._onClick() end end)
 
     function o:SetText(text) fs:SetText(text or "") end
     function o:SetOnClick(fn) o._onClick = fn end
 
-    Hover(false)
     return o
 end
 
@@ -674,7 +689,8 @@ end
 
 -- ── Scroll area ─────────────────────────────────────────────────────────────
 -- Blizzard ScrollFrame for the clipping/scrolling, but a thin custom thumb
--- instead of UIPanelScrollFrameTemplate's chunky stock bar.
+-- instead of the chunky stock bar. `outer` never goes through S, so its
+-- textures are safe to place directly.
 
 function W.ScrollArea(parent)
     local outer = CreateFrame("Frame", nil, parent)
@@ -752,10 +768,23 @@ function W.ScrollArea(parent)
 end
 
 -- ── Window ──────────────────────────────────────────────────────────────────
--- Movable, Esc-closable panel with a title bar and close button.
+-- Movable, Esc-closable window wearing EllesmereUI's own window dress:
+-- S.Shell lays the atlas backdrop, the black title band and the frame border,
+-- and registers the window so it LIVE-FOLLOWS the user's window style -- the
+-- "eui" atlas look and the flat "modern" colour swap without a reload, and
+-- Modern colour edits apply immediately. That is the whole point of going
+-- through the skin API rather than painting a panel ourselves.
+--
+-- Returns the frame with `.content` -- a child covering everything below the
+-- title band. Callers must build into `.content`, never onto the window
+-- itself, because the window is restrip-registered (see the file header).
+
+local TITLE_BAR_H = 25   -- S.Shell's own top band height
 
 function W.Window(name, titleText, width, height)
-    local f = W.Panel(UIParent, W.PANEL_BG, W.BORDER_A)
+    local s = Need()
+
+    local f = CreateFrame("Frame", nil, UIParent)
     f:SetSize(width or 700, height or 500)
     f:SetPoint("CENTER")
     f:SetFrameStrata("HIGH")
@@ -767,8 +796,10 @@ function W.Window(name, titleText, width, height)
     f:SetScript("OnDragStop", f.StopMovingOrSizing)
     f:Hide()
 
+    if s then s.Shell(f) end
+
     local titleBar = CreateFrame("Frame", nil, f)
-    titleBar:SetHeight(30)
+    titleBar:SetHeight(TITLE_BAR_H)
     titleBar:SetPoint("TOPLEFT")
     titleBar:SetPoint("TOPRIGHT")
 
@@ -779,15 +810,15 @@ function W.Window(name, titleText, width, height)
     title:SetTextColor(ar, ag, ab, 1)
     W.RegisterAccent(title, "text")
 
-    local rule = W.Tex(titleBar, "ARTWORK", 1, 1, 1, W.BORDER_A)
-    rule:SetHeight(1)
-    rule:SetPoint("BOTTOMLEFT")
-    rule:SetPoint("BOTTOMRIGHT")
-
     local close = W.Button(titleBar, 22, 20)
     close:SetText("\195\151") -- U+00D7 multiplication sign
     close.frame:SetPoint("RIGHT", titleBar, "RIGHT", -6, 0)
     close:SetOnClick(function() f:Hide() end)
+
+    local content = CreateFrame("Frame", nil, f)
+    content:SetPoint("TOPLEFT", f, "TOPLEFT", 0, -TITLE_BAR_H)
+    content:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", 0, 0)
+    f.content = content
 
     -- Esc closes it, matching every other panel in the game.
     _G[name] = f

@@ -208,9 +208,10 @@ and inspectable instead of silently double-hooking or crashing on a missing glob
 
 The addon runs **no periodic work of any kind** — no `OnUpdate`, no `NewTicker`. Every
 module is woken by an event, and the only `C_Timer` calls left are bounded one-shots
-(the 2/5/10/20s retry ladders that wait for an EllesmereUI frame to appear, which stop
-once it does) and next-frame deferrals. Three rules keep it that way, and all three were
-learned by getting them wrong first:
+(the 2/5/10/20s retry ladders that wait for an EllesmereUI frame that is genuinely
+created later, which stop once it appears) and next-frame deferrals. Load-order waiting
+is not one of those cases any more — that goes through `W.OnReady`, see the UI section.
+Three rules keep it that way, and all three were learned by getting them wrong first:
 
 - **Register the event that means what you want.** GroupRoles listened on `UNIT_FLAGS`
   for role-count changes. `UNIT_FLAGS` fires when a unit's PvP / combat / AFK flags
@@ -252,7 +253,8 @@ modules leaves the displayed numbers unchanged, that no-op repaint was the commo
 ## UI
 
 `/animods` opens the status panel: one tab per registered module, drawn with
-`AniMods.W` (`Widgets.lua`) — hand-rolled chrome that matches EllesmereUI's look. Each
+`AniMods.W` (`Widgets.lua`) on EllesmereUI's public skinning API, so it wears the same
+window dress as the rest of the suite and follows the user's theme live. Each
 tab's title is prefixed with a colored status dot (green = active, gray = user-disabled,
 orange = inactive/condition unmet, red = failed) so load state is visible without
 opening the tab.
@@ -269,49 +271,72 @@ popup with the full traceback (message + `debugstack()`) — not just the one-li
 message. (WoW's addon sandbox doesn't expose the `debug` table at all — only specific
 whitelisted globals like `debugstack()`, which is what this actually uses.)
 
-### Why hand-rolled
+### Built on EllesmereUI's public skinning API
 
-Every options panel in this install that reads as modern is hand-rolled —
-EllesmereUIOptions, DandersFrames_Options, MidnightRoutine, ClickableRaidBuffs — and the
-one that reads as dated (TwintopInsanityBar) uses stock Blizzard templates and a canvas
-settings category. AceGUI's widgets are Blizzard-template-derived, which lands it much
-closer to the second group; no amount of layout tuning changes that.
+`Widgets.lua` draws nothing itself. It registers once —
 
-This addon used AceGUI before, partly on the stated grounds that ClickableRaidBuffs
-"uses that exact library." **That was wrong.** ClickableRaidBuffs *ships* Ace3 including
-AceGUI in its `Libs` folder and never references it — its panel is entirely hand-rolled
-(`Options\Panel.lua`, `ToggleSwitch.lua`, …). The library is dead weight there.
+```lua
+EllesmereUI.RegisterSkin("AniMods", function(S) ... end)
+```
 
-The other stated reason — "a library is safer when there's no way to see the result" —
-was also backwards. DetailsFramework (tried twice before AceGUI, backed out both times)
-failed here precisely because its declarative `BuildMenu` API had behavior that couldn't
-be verified by reading: a `nil` switch template silently aborted a whole menu build.
-Plain `CreateFrame` + `SetBackdrop` + `SetColorTexture` with explicit colors is the most
-verifiable code available — there's nothing hidden to get wrong.
+— and every surface is painted by `S`, the facade EllesmereUI hands third-party addons
+over its window-skin engine (`EllesmereUIBlizzardSkin_SkinAPI.lua`). `S.Shell` dresses the
+panel as a native EllesmereUI window, `S.Panel` / `S.Button` / `S.Checkbox` / `S.Dropdown`
+paint the controls, and `S.GetFont` / `S.GetAccentColor` / `S.GetPanelColor` report the
+live theme.
 
-### How `Widgets.lua` matches EllesmereUI
+This replaced eight undocumented couplings into EllesmereUI internals — `MakeBorder`,
+`PanelPP`, `RegAccent`, `DisablePixelSnap`, `MakeDropdownArrow`, `GetFontPath`,
+`EXPRESSWAY`, plus a copied palette — with one published contract. The facade's own
+header states the terms: it is the public surface (never raw `WSkin`), its entries are
+late-bound pass-throughs so engine internals stay free to change, its signatures are
+additive-only and versioned by `S.apiVersion`, and each callback is `pcall`-isolated so a
+mistake here cannot break EllesmereUI or vice versa. One of the replaced internals,
+`RegAccent`, had already crashed this addon on login because its shape was guessed wrong.
 
-Two tiers. When EllesmereUI is loaded, its own public primitives do the drawing:
-`MakeBorder` (1px pixel-snapped borders), `PanelPP` (pixel-perfect sizing), `MakeFont`
-(the user's configured font), `MakeDropdownArrow`, and `RegAccent`, which registers this
-panel's accent-colored regions for **live recoloring** when the user changes their
-accent/class theme. When it isn't loaded, the fallbacks draw the same thing with the
-same literal colors — copied from EllesmereUI's own palette block (`EllesmereUI.lua`
-lines 72-208: `PANEL_BG 0.05/0.07/0.09`, checkbox box `0.10/0.12/0.16`, dropdown
-`0.075/0.113/0.141`, row stripes at 0.1/0.2 black, border white @ 0.15). The panel looks
-the same either way; what's lost without EUI is only pixel snapping and live accent
-updates.
+What that buys beyond safety: the panel now **live-follows the user's window style**.
+`S.Shell` registers it with the engine, so switching between the "eui" atlas look and the
+flat "modern" colour — and editing the Modern colour — applies with no reload. Accent
+changes propagate through `S.OnLooksChanged` into a weak-keyed registry of the few things
+AniMods still colours by hand (the slider fill, headings, the window title).
 
-The widgets themselves are re-implemented rather than borrowed: EUI's
-`BuildCheckboxControl`/`BuildSliderCore`/`BuildDropdownControl` are file-locals inside a
-LoadOnDemand addon, so they can't be called from outside. They're short, though — EUI's
-own checkbox is 33 lines — and the recipes are followed closely (checkbox = solid box +
-1px border + inset accent fill; dropdown = solid bg + border + arrow with a shared popup
-menu; slider = track + accent fill + square thumb).
+**There are deliberately no fallbacks.** A second hand-drawn rendering of the same panel
+is debt that must be maintained and can never be verified to still match. The price is an
+honest hard dependency, declared in the `.toc`: `EllesmereUI` plus
+`EllesmereUIBlizzardSkin`, with third-party skinning left enabled for AniMods in
+EllesmereUI's options. If any of those is missing, `W.OnReady`'s diagnostic names which
+one instead of failing silently.
 
-Layout is a deliberate non-engine: `W.ResetStack`/`W.Stack` place children top-to-bottom
-with a running cursor, which is all this panel needs and is far easier to verify than a
-generic solver. Only `Libs\LibStub` remains bundled (for LibDataBroker lookups).
+#### The restrip rule
+
+`S.Panel` and `S.Shell` enrol their frame in the engine's **restrip registry**.
+`WSkin.Restrip()` is a global sweep — called from ~20 places whenever a Blizzard window
+repaints (Collections, Spellbook, Guild, Calendar, Loot, Item Upgrade, …) — and it
+alpha-zeroes every direct texture region on every registered frame except the engine's own
+protected keys.
+
+So **never add a texture directly to a frame passed to `S.Panel` or `S.Shell`**; it
+silently vanishes the first time the player opens their collections. Our art goes on a
+child frame instead. That is why `W.Window` returns `.content` rather than letting callers
+draw on the window, why `W.Dropdown` and `W.Button` hold their label on an `inner` child,
+and why `SocialStatus`'s popup parents its rows and dividers to `TTInner()`. This is the
+one non-obvious part of the contract, and the API's developer guide (`SKINNING_API.md`) is
+referenced by the source but not shipped in the addon folders — the engine is the spec.
+
+#### Sequencing, not polling
+
+`W.OnReady(fn)` runs `fn` when the facade arrives, or immediately if it already has.
+EllesmereUI dispatches at `PLAYER_LOGIN` *after its own boot*, so that callback is the
+first moment both the skin engine and EllesmereUI's frames are guaranteed to exist —
+which is why `Skin:Enable()` now hangs its first pass off `OnReady` instead of firing
+during `PLAYER_LOGIN` and relying on a retry ladder to catch up. The ladder that remains
+covers only what EllesmereUI genuinely creates later.
+
+Layout stays a deliberate non-engine: `W.ResetStack`/`W.Stack` place children
+top-to-bottom with a running cursor, which is all this panel needs and is far easier to
+verify than a generic solver. `Widgets.lua` keeps only alpha and metric tokens — every
+colour now comes from the theme, so there is no copied palette left to drift. Only
+`Libs\LibStub` remains bundled (for LibDataBroker lookups).
 
 ## Commands
 

@@ -252,33 +252,57 @@ local FTT_PAD, FTT_ROW_H, FTT_HDR_H, FTT_GAP, FTT_DIV_PAD = 8, 14, 16, 2, 5
 local MAX_ROWS_PER_SECTION = 30 -- EUI's own hard cap; its user-configurable friendsMaxRows setting isn't reachable from here
 
 -- Every bridge into EllesmereUI goes through AniMods.W: it's the one place
--- that knows which members are actually exported and what to fall back to.
--- Duplicating those lookups here is how this module ended up reading .r off
--- RegAccent (a function) in a sibling module and crashing on login.
+-- that knows what the skinning API exposes. Duplicating those lookups here is
+-- how this module ended up reading .r off RegAccent (a function) in a sibling
+-- module and crashing on login.
+--
+-- One font for the whole addon now: the skin API reports the user's single
+-- configured UI font, with no per-EllesmereUI-module override. This popup
+-- used to ask for EllesmereUIMinimap's font specifically, to match the button
+-- it mirrors -- a nicety that cost a private GetFontPath(addonKey) call, and
+-- one the theme font satisfies anyway in every configuration that doesn't
+-- deliberately set the minimap apart.
 local function TTFont()
-    -- "minimap": this popup mirrors EllesmereUIMinimap's own, so it should
-    -- use whatever font that module is configured with, not the global one.
-    return AniMods.W.FontPath("minimap")
+    return AniMods.W.FontPath()
 end
 
-local socialTT
+local socialTT, socialTTInner
 local ttRows, ttHeaders, ttDividers = {}, {}, {}
 
 local function GetSocialTT()
     if socialTT then return socialTT end
-    local f = AniMods.W.Panel(UIParent, { 0.067, 0.067, 0.067, 0.92 }, 0.15)
+    -- House panel fill and border from the theme, rather than the literal
+    -- near-black this used to hard-code: the popup now tracks the user's
+    -- window colours the same way EllesmereUI's own do.
+    local f = AniMods.W.Panel(UIParent)
     f:SetFrameStrata("TOOLTIP")
     f:SetFrameLevel(200)
     f:SetClampedToScreen(true)
     f:Hide()
+
+    -- Rows go on this child, never on `f`: W.Panel hands the frame to
+    -- S.Panel, which enrols it in EllesmereUI's restrip registry (see
+    -- Widgets.lua's header).
+    socialTTInner = CreateFrame("Frame", nil, f)
+    socialTTInner:SetAllPoints()
+
     socialTT = f
     return f
 end
 
+-- The child every piece of tooltip content is parented to. Anything created
+-- straight on the panel would be a direct region of a restrip-registered
+-- frame -- the dividers below are Textures, and FadeRegions alpha-zeroes
+-- exactly those -- so the popup would quietly lose its rules the first time
+-- the player opened a Blizzard window.
+local function TTInner()
+    GetSocialTT()
+    return socialTTInner
+end
+
 local function EnsureTTRow(idx)
     if ttRows[idx] then return ttRows[idx] end
-    local tt = GetSocialTT()
-    local row = CreateFrame("Frame", nil, tt)
+    local row = CreateFrame("Frame", nil, TTInner())
     row:SetHeight(FTT_ROW_H)
     local nameFS = row:CreateFontString(nil, "OVERLAY")
     nameFS:SetJustifyH("LEFT")
@@ -292,8 +316,7 @@ end
 
 local function EnsureTTHeader(idx)
     if ttHeaders[idx] then return ttHeaders[idx] end
-    local tt = GetSocialTT()
-    local fs = tt:CreateFontString(nil, "OVERLAY")
+    local fs = TTInner():CreateFontString(nil, "OVERLAY")
     fs:SetJustifyH("CENTER")
     fs:SetTextColor(1, 1, 1, 0.9)
     ttHeaders[idx] = fs
@@ -302,8 +325,7 @@ end
 
 local function EnsureTTDivider(idx)
     if ttDividers[idx] then return ttDividers[idx] end
-    local tt = GetSocialTT()
-    local tex = tt:CreateTexture(nil, "ARTWORK")
+    local tex = TTInner():CreateTexture(nil, "ARTWORK")
     tex:SetColorTexture(1, 1, 1, 0.12)
     tex:SetHeight(1)
     ttDividers[idx] = tex

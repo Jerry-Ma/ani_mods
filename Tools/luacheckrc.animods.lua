@@ -27,6 +27,22 @@ globals = {
 }
 
 -- ---------------------------------------------------------------------------
+-- Foreign addon globals
+-- ---------------------------------------------------------------------------
+-- EllesmereUI is a hard dependency (## Dependencies in the .toc), and
+-- Widgets.lua reads it bare rather than through _G to register for the
+-- skinning API. This is the luacheck twin of Tools\meta\externals.lua, which
+-- declares the same thing for the Lua Language Server; the two lists are
+-- separate only because the tools are.
+--
+-- Everything else AniMods borrows from other addons is reached as `_G.Name`,
+-- which luacheck sees as a table field rather than a global, so it needs no
+-- entry here.
+local foreignGlobals = {
+    "EllesmereUI",
+}
+
+-- ---------------------------------------------------------------------------
 -- Blizzard globals missing from the generated list
 -- ---------------------------------------------------------------------------
 -- The list is parsed from Ketho/BlizzardInterfaceResources, which covers the
@@ -41,6 +57,10 @@ local extraReadGlobals = {
     "UISpecialFrames",                -- Escape-closes-frame registry
     "AudioOptionsFrame_AudioRestart", -- pre-10.0 sound restart, SoundSwitch's fallback path
 }
+
+for i = 1, #foreignGlobals do
+    read_globals[#read_globals + 1] = foreignGlobals[i]
+end
 
 for i = 1, #extraReadGlobals do
     read_globals[#read_globals + 1] = extraReadGlobals[i]

@@ -4,6 +4,8 @@
 ## Author: Ani
 ## Version: 1.0.0
 ## SavedVariables: AniModsDB
+## Dependencies: EllesmereUI
+## OptionalDeps: EllesmereUIBlizzardSkin, EllesmereUIQoL, EllesmereUIChat, EllesmereUIMinimap, NDui
 
 Libs\LibStub\LibStub.lua
 

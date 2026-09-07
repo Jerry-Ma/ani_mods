@@ -82,13 +82,18 @@ local function ShowCopyPopup(titleText, text)
         errorPopup = W.Window("AniModsErrorPopup", "AniMods — Error", 560, 340)
         errorPopup:SetFrameStrata("FULLSCREEN_DIALOG")
 
-        local hint = W.Font(errorPopup, 11, nil, W.TEXT_DIM_A)
-        hint:SetPoint("TOPLEFT", errorPopup, "TOPLEFT", PAD, -36)
+        -- Everything goes on the window's `content` child, never the window
+        -- itself: W.Window runs it through S.Shell, which enrols it in
+        -- EllesmereUI's restrip registry (see Widgets.lua's header).
+        local host = errorPopup.content
+
+        local hint = W.Font(host, 11, nil, W.TEXT_DIM_A)
+        hint:SetPoint("TOPLEFT", host, "TOPLEFT", PAD, -8)
         hint:SetText("Ctrl+A, Ctrl+C to copy")
 
-        local box = W.Panel(errorPopup, W.INPUT_BG, W.BORDER_A)
-        box:SetPoint("TOPLEFT", errorPopup, "TOPLEFT", PAD, -56)
-        box:SetPoint("BOTTOMRIGHT", errorPopup, "BOTTOMRIGHT", -PAD, PAD)
+        local box = W.Panel(host, { inset = true })
+        box:SetPoint("TOPLEFT", host, "TOPLEFT", PAD, -28)
+        box:SetPoint("BOTTOMRIGHT", host, "BOTTOMRIGHT", -PAD, PAD)
 
         local scroll = CreateFrame("ScrollFrame", nil, box)
         scroll:SetPoint("TOPLEFT", 6, -6)
@@ -737,19 +742,25 @@ local function BuildUI()
 
     frame = W.Window("AniModsPanel", "AniMods", 700, 500)
 
-    tabStrip = CreateFrame("Frame", nil, frame)
-    tabStrip:SetHeight(24)
-    tabStrip:SetPoint("TOPLEFT", frame, "TOPLEFT", PAD, -34)
-    tabStrip:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -PAD, -34)
+    -- `content` is the window's own child, below S.Shell's title band.
+    -- Building on `frame` directly would put these regions in EllesmereUI's
+    -- restrip registry, where they get alpha-zeroed the next time a Blizzard
+    -- window repaints (see Widgets.lua's header).
+    local host = frame.content
 
-    local rule = W.Tex(frame, "ARTWORK", 1, 1, 1, W.BORDER_A)
+    tabStrip = CreateFrame("Frame", nil, host)
+    tabStrip:SetHeight(24)
+    tabStrip:SetPoint("TOPLEFT", host, "TOPLEFT", PAD, -8)
+    tabStrip:SetPoint("TOPRIGHT", host, "TOPRIGHT", -PAD, -8)
+
+    local rule = W.Tex(host, "ARTWORK", 1, 1, 1, 0.15)
     rule:SetHeight(1)
     rule:SetPoint("TOPLEFT", tabStrip, "BOTTOMLEFT")
     rule:SetPoint("TOPRIGHT", tabStrip, "BOTTOMRIGHT")
 
-    scrollArea = W.ScrollArea(frame)
+    scrollArea = W.ScrollArea(host)
     scrollArea.frame:SetPoint("TOPLEFT", rule, "BOTTOMLEFT", 0, -4)
-    scrollArea.frame:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -PAD, PAD)
+    scrollArea.frame:SetPoint("BOTTOMRIGHT", host, "BOTTOMRIGHT", -PAD, PAD)
     content = scrollArea.content
 
     local names = RefreshTabs()
