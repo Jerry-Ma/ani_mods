@@ -1,0 +1,9 @@
+{
+  "$schema": "https://raw.githubusercontent.com/LuaLS/vscode-lua/master/setting/schema.json",
+  "runtime.version": "Lua 5.1",
+  "workspace.library": ["Tools/meta"],
+  "workspace.ignoreDir": ["Libs", ".git", "Tools"],
+  "workspace.checkThirdParty": false,
+  "diagnostics.globals": ["AniMods", "AniModsDB"],
+  "diagnostics.disable": ["lowercase-global"]
+}

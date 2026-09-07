@@ -12,11 +12,12 @@ Personal/local use — not published to CurseForge.
 ## Checks
 
 ```powershell
-.\Tools\check.ps1          # both layers
-.\Tools\check.ps1 -SkipLint  # fast: Lua 5.1 parse only
+.\Tools\check.ps1             # all three layers
+.\Tools\check.ps1 -Fast       # Lua 5.1 parse only, while iterating
+.\Tools\check.ps1 -SkipTypes  # layers 1-2, if the VS Code extensions aren't installed
 ```
 
-Two layers, because they catch different things:
+Three layers, because each catches what the previous cannot:
 
 1. **`luac -p`** — a real **Lua 5.1** parse of every file `AniMods.toc` loads, in load
    order. WoW runs 5.1; luacheck's own bundled runtime is 5.4 and its parser accepts a
@@ -27,6 +28,18 @@ Two layers, because they catch different things:
    silent no-load in game.
 2. **`luacheck`** — static analysis against the **full** Blizzard globals list: typo'd or
    undefined globals, accidental global writes, unused and shadowed locals.
+3. **`lua-language-server --check`** — type-aware diagnostics against the WoW API
+   annotations from the [WoW API](https://marketplace.visualstudio.com/items?itemName=ketho.wow-api)
+   VS Code extension. This is the only layer that knows what WoW functions *return*, so
+   it's the only one that catches a possibly-nil value passed somewhere that can't take
+   nil, a wrong argument type, or a call into an API the client no longer has. It earned
+   its place on the first run by finding `badge.text:SetFont(badge.text:GetFont(), ...)`
+   in `GroupRoles.lua` — `GetFont()` can return nil and `SetFont(nil, ...)` is a hard
+   error. Neither of the layers above can see that.
+
+   It uses the language server binary bundled with the `sumneko.lua` extension, so
+   there's nothing extra to install. Both extensions are located by glob with the newest
+   match winning, so upgrading either doesn't need an edit to the script.
 
 Setup (one-off):
 
@@ -34,6 +47,26 @@ Setup (one-off):
 scoop install lua-for-windows luacheck   # Lua 5.1.5 + luac, and the linter
 .\Tools\update-luacheckrc.ps1            # generates .luacheckrc
 ```
+
+Plus the two VS Code extensions for layer 3 (and for live in-editor diagnostics):
+**Lua** (`sumneko.lua`) and **WoW API** (`ketho.wow-api`) — the latter ships LuaLS
+annotations for ~8,000 functions with signatures and return types, 260 `C_` namespaces,
+860+ widget types, 843 enums, and deprecated functions with their replacements. It
+activates automatically on a folder containing a `.toc`.
+
+`.luarc.json` configures LuaLS for both the editor and layer 3.
+`Tools\meta\externals.lua` is a `---@meta` stub — not loaded by the game, not in the
+`.toc` — declaring the foreign globals AniMods deliberately reaches for
+(`EllesmereUI`, `NDui`, `EllesmereUIRaidToolsIcon`, `_EUI_RaidTools_DB`) plus the
+superseded Blizzard ones kept as guarded fallbacks (`IsAddOnLoaded`,
+`GetAddOnMetadata`, `AudioOptionsFrame_AudioRestart`). Without it, reaching into another
+addon's globals — most of what this addon does — is an "undefined field" warning at
+every site, and a checker that cries wolf on the core idiom is one nobody reads. Types
+there are deliberately loose (`any`): these are foreign, undocumented, version-dependent
+objects, and pretending to know their shape would invent a contract nothing enforces.
+The one place a warning is suppressed inline rather than by configuration is
+`Skin.lua`'s `FindFlyoutToggle`, where probing EUI's private `_norm`/`_pushed`/`_hl`
+fields *is* the identification — suppressed at that single line, not loosened globally.
 
 `.luacheckrc` is a **generated artifact and is gitignored** — it is the ~44,000-entry
 Blizzard globals list from [Jayrgo/wow-luacheckrc](https://github.com/Jayrgo/wow-luacheckrc)
@@ -46,15 +79,9 @@ regenerating rather than hand-extending, so the habit of silencing warnings by a
 globals never starts. The handful of genuinely-missing entries in
 `luacheckrc.animods.lua` were each confirmed working in game first.
 
-For editor-level help, install the [WoW API](https://marketplace.visualstudio.com/items?itemName=ketho.wow-api)
-VS Code extension ([Ketho/vscode-wow-api](https://github.com/Ketho/vscode-wow-api)) — LuaLS
-annotations for ~8,000 functions with signatures and return types, 260 `C_` namespaces,
-860+ widget types, 843 enums, and deprecated functions with their replacements. It
-activates automatically on a folder containing a `.toc`.
-
 **What none of this catches.** It does not run the addon. A wrong event name, a
-nonexistent atlas, a loop that iterates zero times, a value used at the wrong type — all
-invisible here, and all of them have shipped in this addon at least once. Headless
+nonexistent atlas, a loop that iterates zero times — all invisible here, and all of them
+have shipped in this addon at least once. Headless
 runners exist ([wowless](https://github.com/wowless/wowless) is the serious one) but it
 is pre-alpha and its own README says errors it reports are probably its own bugs, so it
 isn't a gate. **A `/reload` is still the real test** — this only makes one worth doing.

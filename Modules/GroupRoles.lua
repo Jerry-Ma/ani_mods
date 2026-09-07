@@ -373,7 +373,12 @@ local function BuildDockedBadge(iconBtn)
     badge.text = badge:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     badge.text:SetAllPoints()
     badge.text:SetJustifyH("CENTER")
-    local fontPath = badge.text:GetFont()
+    -- Keep the template's own font path (so the badge matches the Blizzard
+    -- text around it) but re-size it smaller and outline it. GetFont() is
+    -- typed as possibly-nil and genuinely can be, and SetFont(nil, ...) is a
+    -- hard error, so fall back to the addon's own resolved font rather than
+    -- passing that nil straight through.
+    local fontPath = badge.text:GetFont() or AniMods.W.FontPath()
     badge.text:SetFont(fontPath, 9, "OUTLINE")
 
     badge:EnableMouse(true)

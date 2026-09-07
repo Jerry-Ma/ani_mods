@@ -369,6 +369,13 @@ local function FindFlyoutToggle()
     local minimap = _G.Minimap
     if not minimap then return nil end
     for _, child in ipairs({ minimap:GetChildren() }) do
+        -- _norm/_pushed/_hl are EllesmereUI's own private fields on its
+        -- flyout toggle. Probing for them IS the identification: the button
+        -- is created unnamed, so its field shape is the only handle on it.
+        -- LuaLS is right that they aren't part of any widget type -- that is
+        -- the point, so the warning is suppressed at exactly this line
+        -- rather than by loosening the check everywhere.
+        ---@diagnostic disable-next-line: undefined-field
         if child._norm and child._pushed and child._hl then return child end
     end
     return nil

@@ -203,7 +203,11 @@ local function CountOnline()
     for i = 1, numBNet do
         local acct = C_BattleNet and C_BattleNet.GetFriendAccountInfo and C_BattleNet.GetFriendAccountInfo(i)
         local gameInfo = acct and acct.gameAccountInfo
-        if gameInfo and gameInfo.isOnline and gameInfo.clientProgram == "WoW" then
+        -- `acct and` is redundant (gameInfo can only be non-nil if acct was),
+        -- but it states the narrowing outright for both the reader and the
+        -- type checker instead of making either infer it through the
+        -- `acct and acct.x` above.
+        if acct and gameInfo and gameInfo.isOnline and gameInfo.clientProgram == "WoW" then
             local charName = gameInfo.characterName
             if charName then seenBNet[charName] = true end
             -- Mirrors the `name` field GatherOnlineFriends builds for a BNet
