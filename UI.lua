@@ -11,7 +11,7 @@
 --     disturbed by a counter ticking over.
 --   * Each `{section=...}` block owns its own container. When a section's
 --     row SHAPE changes (a row appearing/disappearing -- e.g.
---     RaidComposition's Status block going 1 row solo to 4 rows grouped)
+--     GroupRoles' Status block going 1 row solo to 4 rows grouped)
 --     only that section is rebuilt; other sections, and any dropdown in
 --     them, are untouched.
 --   * Nothing polls. Modules push AniMods.RefreshUI() when their data

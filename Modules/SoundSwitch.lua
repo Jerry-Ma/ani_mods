@@ -147,7 +147,7 @@ local function UpdateBroker()
         part.texture = icon.texture
     end
 
-    ldbObject.text = Broker.BuildText(ModuleDB, { part })
+    Broker.SetText(ldbObject, Broker.BuildText(ModuleDB, { part }))
 end
 
 local function SwitchNext()

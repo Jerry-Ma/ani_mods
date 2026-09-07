@@ -82,6 +82,34 @@ local function CompareVersions(a, b)
 end
 AniMods.CompareVersions = CompareVersions
 
+-- ── Event coalescing ──────────────────────────────────────────────────────────
+
+-- Wraps `fn` so that a burst of calls collapses into a single deferred call on
+-- the next frame.
+--
+-- The problem this solves: several of the events modules care about are not
+-- "something changed" notifications but per-item ones, fired once per affected
+-- unit/friend/member. BN_FRIEND_INFO_CHANGED fires for every friend whose
+-- status, AFK flag or rich-presence text moves -- dozens of times within a
+-- second or two at login -- and GROUP_ROSTER_UPDATE fires repeatedly while a
+-- raid fills. Recomputing on each one does the same expensive walk N times to
+-- reach exactly the state the last one would have produced on its own.
+--
+-- C_Timer.After(0, ...) runs on the next frame, so the whole burst is answered
+-- once, after it has finished, with no added latency a player could see. This
+-- is a one-shot per burst, NOT a poll: nothing is scheduled while idle.
+function AniMods.Coalesce(fn)
+    local scheduled = false
+    return function()
+        if scheduled then return end
+        scheduled = true
+        C_Timer.After(0, function()
+            scheduled = false
+            fn()
+        end)
+    end
+end
+
 -- ── Condition evaluation ──────────────────────────────────────────────────────
 
 local function NormalizeRequirement(req)
@@ -204,6 +232,41 @@ function AniMods.SetModuleEnabled(name, enabled)
     if AniMods.RefreshUI then AniMods.RefreshUI() end
 end
 
+-- ── Saved-variable migrations ─────────────────────────────────────────────────
+
+-- Renaming a module changes two keys the saved variables are indexed by: its
+-- entry in db.modules (the enabled flag) and its own settings sub-table. Both
+-- are moved here rather than left to default, so a rename never silently
+-- resets someone's configuration.
+--
+-- Each migration only ever runs when the old key is present and the new one
+-- is not, so it is a no-op on every login after the first, and safe if a
+-- module is later renamed again.
+local MODULE_RENAMES = {
+    -- oldModuleName -> { newModuleName, oldDBKey, newDBKey }
+    RaidComposition = { "GroupRoles", "raidComposition", "groupRoles" },
+}
+
+local function MigrateRenames()
+    for oldName, spec in pairs(MODULE_RENAMES) do
+        local newName, oldKey, newKey = spec[1], spec[2], spec[3]
+
+        if db.modules[oldName] ~= nil then
+            if db.modules[newName] == nil then
+                db.modules[newName] = db.modules[oldName]
+            end
+            db.modules[oldName] = nil
+        end
+
+        if db[oldKey] ~= nil then
+            if db[newKey] == nil then
+                db[newKey] = db[oldKey]
+            end
+            db[oldKey] = nil
+        end
+    end
+end
+
 -- ── Events ─────────────────────────────────────────────────────────────────
 
 local eventFrame = CreateFrame("Frame")
@@ -214,6 +277,7 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1)
         AniModsDB = AniModsDB or {}
         AniModsDB.modules = AniModsDB.modules or {}
         db = AniModsDB
+        MigrateRenames()
         eventFrame:UnregisterEvent("ADDON_LOADED")
 
     elseif event == "PLAYER_LOGIN" then
@@ -227,7 +291,7 @@ end)
 
 -- ── Slash commands ────────────────────────────────────────────────────────────
 
--- Module names are registered CamelCase ("RaidComposition"), but nobody
+-- Module names are registered CamelCase ("GroupRoles"), but nobody
 -- wants to have to type them that way -- resolve case-insensitively, and
 -- return the real registered name so messages echo it back properly.
 local function ResolveModuleName(input)
@@ -245,7 +309,7 @@ _G.SLASH_ANIMODS2 = "/ani"
 _G.SlashCmdList["ANIMODS"] = function(msg)
     -- Only the command word is lowercased -- lowercasing the whole message
     -- (as this used to) also mangled the module name, so `/ani enable
-    -- RaidComposition` looked up "raidcomposition" and always reported
+    -- GroupRoles` looked up "grouproles" and always reported
     -- "Unknown module".
     local cmd, name = strtrim(msg or ""):match("^(%S*)%s*(.-)$")
     cmd = (cmd or ""):lower()

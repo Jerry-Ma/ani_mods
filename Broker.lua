@@ -1,7 +1,7 @@
 -- AniMods broker (LibDataBroker) helper.
 --
--- Shared by every module that publishes an LDB plugin (RaidComposition,
--- SocialStatus), which otherwise all grow the same ~60 lines of
+-- Shared by every module that publishes an LDB plugin (GroupRoles,
+-- SocialStatus, SoundSwitch), which otherwise all grow the same ~60 lines of
 -- near-identical boilerplate: acquiring the library, the "Icon + Text" vs
 -- "Text Only" display-mode setting, the inline-icon text builder, and the
 -- "Broker Display" rows for the AniMods panel. Those had already drifted
@@ -75,6 +75,22 @@ function Broker.BuildText(getDB, parts)
     end
 
     return table.concat(rendered, showIcon and "  " or "/")
+end
+
+-- Assigns a data object's `text` only when it actually differs.
+--
+-- LibDataBroker's data objects are proxy tables: every assignment to a field
+-- goes through its __newindex and fires
+-- LibDataBroker_AttributeChanged_<name>, unconditionally -- it does not
+-- compare against the current value. EllesmereUIDataBars subscribes to that
+-- callback per block and re-renders on it, so re-assigning an identical
+-- string still walks the callback list and repaints the FontString for
+-- nothing. Since most of what wakes these modules is a roster/friend-list
+-- event that leaves the displayed numbers unchanged, that no-op repaint was
+-- the common case rather than the rare one.
+function Broker.SetText(obj, text)
+    if not obj or obj.text == text then return end
+    obj.text = text
 end
 
 -- The standard "Broker Display" section for a module's GetInfoRows(): a

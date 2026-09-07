@@ -1,6 +1,6 @@
 The .tga files in this folder (LynUI/, ElvUI/, ToxiUI/) are copied unmodified
 from the NDui_Plus addon's Media\Texture\ folder, used here as some of
-RaidComposition's "Icon Style" choices. NDui_Plus is MIT-licensed (see its own
+GroupRoles' "Icon Style" choices. NDui_Plus is MIT-licensed (see its own
 LICENSE file, reproduced below):
 
 MIT License

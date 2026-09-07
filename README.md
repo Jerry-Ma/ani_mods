@@ -55,7 +55,7 @@ in the status panel just skips its `Enable()` next login/reload.
 ### Shared broker helper (`Broker.lua`)
 
 Any module publishing a LibDataBroker plugin uses `AniMods.Broker` rather than growing
-its own copy of the same boilerplate (RaidComposition and SocialStatus had already
+its own copy of the same boilerplate (GroupRoles and SocialStatus had already
 drifted to differently-named copies of the same getter before this was pulled out):
 
 - `Broker.Register(objectName, spec)` — registers a data object, or returns `nil` if
@@ -104,7 +104,7 @@ takes a texture path, not an atlas name — there's no icon-aware dropdown item 
 the bundled AceGUI-3.0, so the preview lives outside the dropdown itself rather than
 per-item inside it). A row with `min` renders as a Slider — for a setting that's
 genuinely a number (e.g. a spacing amount) rather than a small set of named choices;
-committed on mouse-up, not while dragging (no current module uses one — RaidComposition
+committed on mouse-up, not while dragging (no current module uses one — GroupRoles
 tried a spacing slider and removed it once compact spacing (0) turned out to just always
 be the right answer, leaving nothing to actually tune). A row with plain `get`/`set` (no
 `options`/`min`) renders as a checkbox, for real booleans. Everything else is a plain
@@ -124,6 +124,51 @@ same thing (e.g. ChatContextSwitch below only applies when NDui — which ships 
 exact behavior itself — isn't loaded). Others might only make sense *with* a specific
 addon present, or above/below a given version of it. `condition` makes that explicit
 and inspectable instead of silently double-hooking or crashing on a missing global.
+
+### Doing nothing when nothing happened
+
+The addon runs **no periodic work of any kind** — no `OnUpdate`, no `NewTicker`. Every
+module is woken by an event, and the only `C_Timer` calls left are bounded one-shots
+(the 2/5/10/20s retry ladders that wait for an EllesmereUI frame to appear, which stop
+once it does) and next-frame deferrals. Three rules keep it that way, and all three were
+learned by getting them wrong first:
+
+- **Register the event that means what you want.** GroupRoles listened on `UNIT_FLAGS`
+  for role-count changes. `UNIT_FLAGS` fires when a unit's PvP / combat / AFK flags
+  change, for any unit the client tracks — many times a second in a raid — and has
+  nothing to do with `UnitGroupRolesAssigned`. Each firing paid for a full roster walk
+  and a broker-text rebuild to arrive at identical numbers. The event that actually
+  means "someone's assigned role changed" is `PLAYER_ROLES_ASSIGNED`.
+- **Coalesce per-item event bursts.** `AniMods.Coalesce(fn)` (`Core.lua`) wraps a
+  handler so a burst collapses into one deferred call on the next frame. Several of the
+  events modules care about aren't "something changed" notifications but per-item ones:
+  `BN_FRIEND_INFO_CHANGED` fires once per friend whose status, AFK flag or
+  rich-presence text moves — dozens of times within a second or two at login — and
+  `GUILD_ROSTER_UPDATE` fires repeatedly per roster query. Answering each separately
+  redoes the same walk N times to reach the state the last one alone would have
+  produced. This is a one-shot per burst, **not** a poll: nothing is scheduled while
+  idle.
+- **Compute what the caller actually needs.** SocialStatus' broker needs two integers,
+  and recomputed them on every friend/guild event through the same
+  `GatherOnlineFriends()` the tooltip uses — allocating a 7-field table per online guild
+  member (700+ in a large guild), resolving each one's class through `C_CreatureInfo`,
+  and running three `table.sort`s, only to call `#` on the results. `CountOnline()` does
+  the same three walks and the same de-duplication without any of that; the full gather
+  is now reached only from the two tooltip paths, on hover. The de-dup rules are
+  deliberately duplicated between the two (sharing them would mean materialising the
+  lists again, the exact cost being avoided) — which makes them the one thing that has
+  to be kept in step, or the broker's numbers will silently disagree with its own
+  tooltip.
+
+Two smaller ones in the same spirit: hot loops reuse their scratch tables and their unit
+tokens rather than rebuilding a set of 40 identical strings per walk (`RAID_UNITS` /
+`PARTY_UNITS` in `GroupRoles.lua`, the `wipe()`d scratch sets in `SocialStatus.lua`);
+and `Broker.SetText(obj, text)` assigns only on an actual change, because LDB data
+objects are proxy tables whose `__newindex` fires
+`LibDataBroker_AttributeChanged_<name>` unconditionally — it never compares against the
+current value, so re-assigning an identical string still walks the callback list and
+makes every subscribed databar repaint for nothing. Since most of what wakes these
+modules leaves the displayed numbers unchanged, that no-op repaint was the common case.
 
 ## UI
 
@@ -212,11 +257,17 @@ generic solver. Only `Libs\LibStub` remains bundled (for LibDataBroker lookups).
   (`C.db["Chat"]["Disable"]` is falsy); if NDui is installed with its chat module turned
   off, this still applies. Migrated from the standalone ChatContextSwitch addon (now
   removed). Half-baked / not fully tested — bugs may remain from the original.
-- **RaidComposition** — Tank/Healer/DPS role counts while in a group; its detail pane
+- **GroupRoles** — Tank/Healer/DPS role counts while in a group; its detail pane
   ("Status" section) shows the live counts, or "N/A" when solo. EllesmereUI's QoL Raid
   Tools panel has no composition display the way NDui's raid tool does, so this fills
-  the gap; only active when EllesmereUIQoL is loaded and NDui is not. Two display
-  surfaces, both driven by the same counts:
+  the gap; only active when EllesmereUIQoL is loaded and NDui is not. Named for what it
+  reports — assigned *roles*, in a party as well as a raid; it was called
+  `RaidComposition` until the rename, which was wrong twice over (it works in 5-mans,
+  and "composition" normally means the class/spec makeup rather than the role split).
+  `Core.lua`'s `MODULE_RENAMES` migrates the old saved-variable keys
+  (`db.modules.RaidComposition`, `db.raidComposition`) on first login after the rename,
+  so no setting is lost; the LDB object name changed too, which does orphan an existing
+  databar block (see below). Two display surfaces, both driven by the same counts:
 
   - **Docked badge** — a compact count badge anchored just below Raid Tools' own
     collapsed icon (the global frame `EllesmereUIRaidToolsIcon`), reading as part of
@@ -225,16 +276,25 @@ generic solver. Only `Libs\LibStub` remains bundled (for LibDataBroker lookups).
     section just reports whether it's docked yet as a plain status line, since
     EllesmereUIQoL only builds that icon on first use of Raid Tools with a non-"never"
     mode ("never" is its own default), so there may briefly (or permanently) be nothing
-    to dock to. Anchored via `SetPoint` (just reads its rect) and synced three ways:
-    `hooksecurefunc(iconBtn, "Show"/"Hide", ...)` (fires even though EUI's own
-    visibility runs through a secure `SecureHandlerStateTemplate` snippet, not a plain
-    Lua call); an `OnClick` hook on the icon itself for zero-latency feedback on the
-    expand action specifically (`SecureHandlerClickTemplate`'s secure `_onclick`
-    attribute is a separate execution path from the button's ordinary `OnClick`
-    script, which still fires too); and a fast (0.15s) resync ticker as a
-    belt-and-suspenders backstop for every other path that can hide/show the icon
-    (driver transitions, the toggle keybind, a shell's own collapse button) that we
-    don't have a direct handle on to hook. No taint risk (never touches EUI's secure
+    to dock to. Anchored via `SetPoint` (just reads its rect) and synced two ways:
+    `HookScript("OnShow"/"OnHide", ...)` on the icon, and an `OnClick` hook on it for
+    zero-latency feedback on the expand action specifically
+    (`SecureHandlerClickTemplate`'s secure `_onclick` attribute is a separate execution
+    path from the button's ordinary `OnClick` script, which still fires too).
+
+    The `OnShow`/`OnHide` **scripts** are load-bearing here, as opposed to
+    `hooksecurefunc(iconBtn, "Show"/"Hide", ...)` — which is what this used to do. Both
+    see EUI's own visibility changes even though those run through a secure
+    `SecureHandlerStateTemplate` snippet rather than a plain Lua call, but only the
+    script handlers fire on *effective* visibility changes, i.e. when the icon is
+    hidden or shown because an **ancestor** was. A parent's `Hide()` never calls the
+    child's, so the method hooks silently missed that whole class of transition —
+    which is exactly why a permanent `C_Timer.NewTicker(0.15, ...)` used to sit here as
+    a backstop, waking ~7 times a second for the entire session to poll `IsShown()`.
+    The script hooks close the gap properly and the ticker is gone; this module now
+    does no periodic work at all. (The visibility check is `IsVisible()`, not
+    `IsShown()`, for the same reason: `IsShown()` reports only the button's own flag
+    and stays true under a hidden ancestor.) No taint risk (never touches EUI's secure
     frames, only observes and anchors to them). Can be hidden entirely (**"Show docked
     badge"**, on by default) while staying hooked/tracking underneath — useful together
     with the broker plugin below, so the same counts aren't shown twice (once docked,
@@ -249,9 +309,14 @@ generic solver. Only `Libs\LibStub` remains bundled (for LibDataBroker lookups).
     (`_G._EUI_RaidTools_DB()`, the plain read-only getter
     `EllesmereUIQoL_RaidTools.lua` exposes for its own options panel) as part of the
     dock-status line when not yet docked.
-  - **Broker (LDB) plugin** — registers as a LibDataBroker data source ("AniMods: Raid
-    Composition"), pickable as a widget in EllesmereUIDataBars (or any other
-    LDB-consuming data bar). EUI ships LibStub + LibDataBroker-1.1 itself
+  - **Broker (LDB) plugin** — registers as a LibDataBroker data source
+    (`AniModsGroupRoles`, labelled "AniMods: Group Roles"), pickable as a widget in
+    EllesmereUIDataBars (or any other LDB-consuming data bar). **The object name is an
+    ID, not a label**: EllesmereUIDataBars stores it verbatim in its own saved variables
+    as the block's `source` and shows it in the data-source picker, so the rename from
+    `AniModsRaidComposition` orphans any databar block that already pointed at the old
+    name — re-pick it once from the picker. That's also why it shouldn't be renamed
+    again casually. EUI ships LibStub + LibDataBroker-1.1 itself
     (`EllesmereUI/Libs/`) and `EllesmereUIDataBars` depends on `EllesmereUI`, so the
     library is guaranteed present whenever this module's own condition holds — no need
     to embed a copy. `text` goes empty — not "N/A" — when solo, so a
@@ -270,7 +335,7 @@ generic solver. Only `Libs\LibStub` remains bundled (for LibDataBroker lookups).
     loads `Blizzard_RaidUI`, guarded against combat lockdown) — the actual
     raid-management UI, not this module's settings; right- or middle-clicking opens the
     AniMods panel switched straight to this module's own tab
-    (`AniMods.OpenModuleTab("RaidComposition")`), whether or not the panel was already
+    (`AniMods.OpenModuleTab("GroupRoles")`), whether or not the panel was already
     open on a different one.
 
   Role icons ("Icon Style" section, a `Dropdown` with a live preview of the selected
@@ -341,7 +406,7 @@ generic solver. Only `Libs\LibStub` remains bundled (for LibDataBroker lookups).
     structure degrades to a working-but-plain button rather than a silent,
     unexplained empty click zone. Reads EllesmereUIChat's exposed
     `EllesmereUI._chatCFD` (its internal per-chat-frame state accessor) to find the
-    sidebar and scroll button, polling the same way RaidComposition waits for EUI's
+    sidebar and scroll button, polling the same way GroupRoles waits for EUI's
     Raid Tools icon. Available only when EllesmereUIChat is loaded and its own chat
     module is enabled (`EllesmereUI._ModuleNS["EllesmereUIChat"].ECHAT.DB().enabled`)
     — installed but toggled off means none of this (the sidebar, TextToSpeechButton's
@@ -393,7 +458,7 @@ generic solver. Only `Libs\LibStub` remains bundled (for LibDataBroker lookups).
   data with plain `AddLine`/`AddDoubleLine` calls for any display that only supports
   that path.
 
-  `text` is built the same shape as RaidComposition's broker (`BuildBrokerText`) — a
+  `text` is built the same shape as GroupRoles' broker (`BuildBrokerText`) — a
   `Dropdown` "Style" in the "Broker Display" section, **Icon + Text** (Guild's minimap
   guild-banner atlas + Friends' exact atlas EUI's own button uses,
   `housefinder_neighborhood-friends-icon`, packed against each count with no

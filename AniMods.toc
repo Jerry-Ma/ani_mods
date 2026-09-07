@@ -12,7 +12,7 @@ Broker.lua
 Widgets.lua
 UI.lua
 Modules\ChatContextSwitch.lua
-Modules\RaidComposition.lua
+Modules\GroupRoles.lua
 Modules\Skin.lua
 Modules\SocialStatus.lua
 Modules\SoundSwitch.lua

@@ -82,7 +82,7 @@ end
 
 -- EllesmereUIChat.lua exposes `EllesmereUI._chatCFD = CFD`, its internal
 -- per-chat-frame state accessor (`CFD(cf).sidebar`, `.scrollBtn`, etc.) --
--- a plain read, no different in spirit from RaidComposition reading
+-- a plain read, no different in spirit from GroupRoles reading
 -- `_G.EllesmereUIRaidToolsIcon` or `_G._EUI_RaidTools_DB()`.
 local function GetChatSidebarData()
     local eui = _G.EllesmereUI

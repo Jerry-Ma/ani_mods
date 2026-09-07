@@ -152,6 +152,90 @@ local function GatherOnlineFriends()
     return guild, favorites, friends
 end
 
+-- Counts only -- the same three walks and the same de-duplication as
+-- GatherOnlineFriends, but without building a table per online player,
+-- reading their zone/level/class, or sorting anything.
+--
+-- Why this exists as a separate function: the broker text needs exactly two
+-- integers, and it is recomputed on every friend/guild event -- which is by
+-- far the most frequent thing this module does. Doing it through
+-- GatherOnlineFriends meant, on each of those events, allocating one 7-field
+-- table per online guild member (700+ in a large guild), resolving each one's
+-- class through C_CreatureInfo, and then running THREE table.sorts, purely to
+-- call `#` on the results and throw all of it away. The full gather is now
+-- reached only from the two tooltip paths, which run on hover.
+--
+-- The de-dup rules are duplicated here rather than shared, because sharing
+-- them would mean materialising the lists again -- the exact cost being
+-- avoided. That makes this the one thing to keep in step: if the guild/BNet/
+-- character-friend filtering in GatherOnlineFriends changes, change it here
+-- too, or the broker's numbers will silently disagree with its own tooltip.
+--
+-- Both scratch tables are reused across calls: wipe() keeps the hash capacity
+-- already allocated, so a big guild roster stops re-growing a fresh table on
+-- every event.
+local guildNameScratch, seenBNetScratch = {}, {}
+
+local function CountOnline()
+    local guildCount, friendCount = 0, 0
+    local guildSet, seenBNet = guildNameScratch, seenBNetScratch
+    -- Not `local t = wipe(x)`: wipe() is a Blizzard C function and its return
+    -- value isn't something to depend on. Clear, then use.
+    wipe(guildSet)
+    wipe(seenBNet)
+    local myName = UnitName("player")
+
+    if IsInGuild and IsInGuild() then
+        local total = GetNumGuildMembers() or 0
+        for i = 1, total do
+            local name, _, _, _, _, _, _, _, online = GetGuildRosterInfo(i)
+            if online and name then
+                local short = name:match("^([^%-]+)") or name
+                if short ~= myName then
+                    guildCount = guildCount + 1
+                    guildSet[short] = true
+                end
+            end
+        end
+    end
+
+    local numBNet = BNGetNumFriends and BNGetNumFriends() or 0
+    for i = 1, numBNet do
+        local acct = C_BattleNet and C_BattleNet.GetFriendAccountInfo and C_BattleNet.GetFriendAccountInfo(i)
+        local gameInfo = acct and acct.gameAccountInfo
+        if gameInfo and gameInfo.isOnline and gameInfo.clientProgram == "WoW" then
+            local charName = gameInfo.characterName
+            if charName then seenBNet[charName] = true end
+            -- Mirrors the `name` field GatherOnlineFriends builds for a BNet
+            -- entry, since that is the key its guild filter matches on.
+            local key = charName
+            if not key then
+                local rawTag = acct.battleTag or acct.accountName
+                key = (rawTag and rawTag:match("^([^#]+)")) or rawTag or "???"
+            end
+            if not guildSet[key] then
+                friendCount = friendCount + 1
+            end
+        end
+    end
+
+    local numChar = C_FriendList and C_FriendList.GetNumFriends and C_FriendList.GetNumFriends() or 0
+    for i = 1, numChar do
+        local info = C_FriendList.GetFriendInfoByIndex(i)
+        if info and info.connected then
+            local charName = info.name
+            if charName and not seenBNet[charName] then
+                local short = charName:match("^([^%-]+)") or charName
+                if not guildSet[short] then
+                    friendCount = friendCount + 1
+                end
+            end
+        end
+    end
+
+    return guildCount, friendCount
+end
+
 -- ---------------------------------------------------------------------------
 -- Custom tooltip -- ported layout from ShowFriendsTooltip: dark bordered
 -- popup, section headers ("Title (count)", count in accent color), two
@@ -466,11 +550,11 @@ end
 
 local function UpdateBroker()
     if not ldbObject then return end
-    local guild, favorites, friends = GatherOnlineFriends()
-    ldbObject.text = Broker.BuildText(ModuleDB, {
-        BrokerPart("GUILD", #guild),
-        BrokerPart("FRIENDS", #favorites + #friends),
-    })
+    local guildCount, friendCount = CountOnline()
+    Broker.SetText(ldbObject, Broker.BuildText(ModuleDB, {
+        BrokerPart("GUILD", guildCount),
+        BrokerPart("FRIENDS", friendCount),
+    }))
 end
 
 -- ---------------------------------------------------------------------------
@@ -481,9 +565,9 @@ function SocialStatus:GetInfoRows()
     local rows = {}
 
     rows[#rows + 1] = { section = "Status" }
-    local guild, favorites, friends = GatherOnlineFriends()
-    rows[#rows + 1] = { label = "Guild online", value = tostring(#guild) }
-    rows[#rows + 1] = { label = "Friends online", value = tostring(#favorites + #friends) }
+    local guildCount, friendCount = CountOnline()
+    rows[#rows + 1] = { label = "Guild online", value = tostring(guildCount) }
+    rows[#rows + 1] = { label = "Friends online", value = tostring(friendCount) }
     rows[#rows + 1] = { label = "Broker (LDB) plugin", value = ldbObject and "Registered" or "Not available" }
 
     for _, row in ipairs(Broker.DisplayRows(ModuleDB, UpdateBroker)) do
@@ -497,6 +581,18 @@ function SocialStatus:Enable()
     InitLDB()
     UpdateBroker()
 
+    -- Coalesced: BN_FRIEND_INFO_CHANGED alone fires once per friend whose
+    -- status, AFK flag or rich-presence blurb changes, arriving in bursts of
+    -- dozens at login and whenever a group of people log on together, and
+    -- GUILD_ROSTER_UPDATE fires repeatedly per roster query. Answering each
+    -- one separately meant running the full online-count walk N times to
+    -- produce the number the last one alone would have produced. One walk per
+    -- frame, at most, is enough.
+    local Refresh = AniMods.Coalesce(function()
+        UpdateBroker()
+        if AniMods.RefreshUI then AniMods.RefreshUI() end
+    end)
+
     local eventFrame = CreateFrame("Frame")
     for _, event in ipairs({
         "GUILD_ROSTER_UPDATE", "FRIENDLIST_UPDATE",
@@ -505,10 +601,7 @@ function SocialStatus:Enable()
     }) do
         eventFrame:RegisterEvent(event)
     end
-    eventFrame:SetScript("OnEvent", function()
-        UpdateBroker()
-        if AniMods.RefreshUI then AniMods.RefreshUI() end
-    end)
+    eventFrame:SetScript("OnEvent", Refresh)
 end
 
 AniMods.RegisterModule("SocialStatus", SocialStatus)

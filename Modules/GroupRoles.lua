@@ -1,5 +1,10 @@
--- RaidComposition
+-- GroupRoles
 -- Tank/Healer/DPS role counts, shown while in a group.
+--
+-- Named for what it actually reports: assigned ROLES, in a party as well as a
+-- raid. The old name (RaidComposition) was wrong on both halves -- it works
+-- in 5-mans, and "composition" usually means the class/spec makeup, which is
+-- a different question from the role split this shows.
 --
 -- EllesmereUI's QoL Raid Tools panel (EllesmereUIQoL_RaidTools.lua) has ready
 -- check, role check, pull timer, and markers, but no composition/role-count
@@ -29,8 +34,8 @@
 -- Only active when EllesmereUIQoL is loaded and NDui is not (NDui already
 -- has this).
 
-local RaidComposition = {
-    title = "Raid Composition",
+local GroupRoles = {
+    title = "Group Roles",
     description = "Tank/Healer/DPS role counts, docked onto EllesmereUI's Raid Tools icon.",
     dependencies = {
         { text = "EllesmereUIQoL loaded", met = function() return AniMods.IsAddOnLoaded("EllesmereUIQoL") end },
@@ -46,23 +51,42 @@ local ROLES = { "TANK", "HEALER", "DAMAGER" }
 local ROLE_COLOR = { TANK = "59c0ff", HEALER = "2ecc71", DAMAGER = "ff5555" }
 
 local function ModuleDB()
-    AniModsDB.raidComposition = AniModsDB.raidComposition or {}
-    return AniModsDB.raidComposition
+    AniModsDB.groupRoles = AniModsDB.groupRoles or {}
+    return AniModsDB.groupRoles
 end
 
+-- Unit tokens built once at load rather than concatenated per walk. A roster
+-- walk in a full raid did 40 `"raid" .. i` concatenations, each allocating a
+-- string and hashing it into the intern table, every single time the counts
+-- were recomputed -- pure garbage for a set of 40 strings that never change.
+local RAID_UNITS, PARTY_UNITS = {}, {}
+for i = 1, 40 do RAID_UNITS[i] = "raid" .. i end
+for i = 1, 4 do PARTY_UNITS[i] = "party" .. i end
+
+-- Reused across calls: CountRoles runs on roster/role events and previously
+-- allocated a fresh 3-entry table each time, purely to be thrown away by the
+-- next call. The one caller that keeps values past the call (GetInfoRows)
+-- reads them out immediately, so a shared table is safe here.
+local roleCounts = { TANK = 0, HEALER = 0, DAMAGER = 0 }
+
 local function CountRoles()
-    local counts = { TANK = 0, HEALER = 0, DAMAGER = 0 }
+    local counts = roleCounts
+    counts.TANK, counts.HEALER, counts.DAMAGER = 0, 0, 0
 
     if IsInRaid() then
-        for i = 1, GetNumGroupMembers() do
-            local role = UnitGroupRolesAssigned("raid" .. i)
+        local n = GetNumGroupMembers()
+        if n > 40 then n = 40 end
+        for i = 1, n do
+            local role = UnitGroupRolesAssigned(RAID_UNITS[i])
             if counts[role] then counts[role] = counts[role] + 1 end
         end
     else
         local role = UnitGroupRolesAssigned("player")
         if counts[role] then counts[role] = counts[role] + 1 end
-        for i = 1, GetNumSubgroupMembers() do
-            role = UnitGroupRolesAssigned("party" .. i)
+        local n = GetNumSubgroupMembers()
+        if n > 4 then n = 4 end
+        for i = 1, n do
+            role = UnitGroupRolesAssigned(PARTY_UNITS[i])
             if counts[role] then counts[role] = counts[role] + 1 end
         end
     end
@@ -84,14 +108,18 @@ local function CollectRoleClasses()
         list[#list + 1] = class
     end
 
+    -- Allocates freely (unlike CountRoles): this only ever runs on a tooltip
+    -- hover, never on an event.
     if IsInRaid() then
-        for i = 1, GetNumGroupMembers() do
-            Add("raid" .. i)
+        local n = math.min(GetNumGroupMembers(), 40)
+        for i = 1, n do
+            Add(RAID_UNITS[i])
         end
     else
         Add("player")
-        for i = 1, GetNumSubgroupMembers() do
-            Add("party" .. i)
+        local n = math.min(GetNumSubgroupMembers(), 4)
+        for i = 1, n do
+            Add(PARTY_UNITS[i])
         end
     end
 
@@ -236,8 +264,13 @@ local docked = false -- true once EUI's icon has been found and the badge wired 
 local ldbObject    -- LibDataBroker data source, if LDB is available
 
 local function InitLDB()
-    ldbObject = Broker.Register("AniModsRaidComposition", {
-        label = "AniMods: Raid Composition",
+    -- NOTE: this name is an ID, not a label -- EllesmereUIDataBars stores it
+    -- verbatim in its own saved variables as the block's `source`, and shows
+    -- it in the data-source picker. Renaming it (from AniModsRaidComposition)
+    -- therefore orphans any databar block already pointing at the old name;
+    -- that block has to be re-picked once. Don't rename it again casually.
+    ldbObject = Broker.Register("AniModsGroupRoles", {
+        label = "AniMods: Group Roles",
         -- Left click: Blizzard's own raid roster/role/ready-check frame --
         -- the actual raid-management UI, not this module's settings.
         -- ToggleRaidFrame is the standard global for it (same one
@@ -251,12 +284,12 @@ local function InitLDB()
                     ToggleRaidFrame()
                 end
             elseif AniMods.OpenModuleTab then
-                AniMods.OpenModuleTab("RaidComposition")
+                AniMods.OpenModuleTab("GroupRoles")
             end
         end,
         -- No self-titled header line -- the tooltip already only ever shows
-        -- up when hovering this exact plugin, so "AniMods: Raid Composition"
-        -- was just noise.
+        -- up when hovering this exact plugin, so "AniMods: Group Roles" was
+        -- just noise.
         OnTooltipShow = ShowCompositionTooltip,
     })
 end
@@ -295,7 +328,7 @@ local function UpdateCounts()
         -- Empty (not "N/A") when not in a group, on request: with a
         -- transparent databar background, an empty-text block just
         -- disappears instead of leaving "N/A" sitting there.
-        ldbObject.text = inGroup and BuildBrokerText(counts) or ""
+        Broker.SetText(ldbObject, inGroup and BuildBrokerText(counts) or "")
     end
 end
 
@@ -330,7 +363,7 @@ end
 -- shows. Checked live inside OnEnter rather than toggling EnableMouse/the
 -- scripts themselves, so flipping the option takes effect immediately.
 local function BuildDockedBadge(iconBtn)
-    local badge = CreateFrame("Frame", "AniModsRaidCompositionDocked", UIParent)
+    local badge = CreateFrame("Frame", "AniModsGroupRolesDocked", UIParent)
     badge:SetSize(36, 12)
     badge:SetFrameStrata(iconBtn:GetFrameStrata())
     badge:SetFrameLevel(iconBtn:GetFrameLevel() + 5)
@@ -379,7 +412,7 @@ end
 
 -- Set inside TryDockToEUIIcon once the badge/icon are known; re-invoked by
 -- the "Show docked badge" toggle so flipping it applies immediately without
--- waiting for the icon's own Show/Hide/OnClick/ticker triggers.
+-- waiting for one of the icon's own Show/Hide/OnClick transitions.
 local resyncDockedBadge
 
 -- EllesmereUIQoL only builds its Raid Tools frames (including the collapsed
@@ -398,18 +431,12 @@ local function TryDockToEUIIcon()
     docked = true
     dockedBadge = BuildDockedBadge(iconBtn)
 
-    -- Split on purpose: visibility sync (cheap -- one IsShown() check) vs.
-    -- a full resync (also recomputes counts -- a roster walk + broker text
-    -- rebuild, not free). Real state-change moments (Show/Hide/OnClick, the
-    -- "Show docked badge" toggle) get the full resync; the backstop ticker
-    -- below gets only the cheap half. Bundling both into one function that
-    -- a 0.15s ticker called forever -- the original shape here -- meant
-    -- redoing the roster walk ~7 times a second for the entire session
-    -- regardless of whether anything changed, the same category of mistake
-    -- as the AniMods panel's old rebuild-every-second ticker (see UI.lua's
-    -- history): a timer standing in for real event coverage.
+    -- IsVisible(), not IsShown(): IsShown() reports only this button's own
+    -- flag, so it stays true while an ancestor is hidden and the badge would
+    -- be left floating under an invisible icon. IsVisible() is the effective
+    -- answer, which is what "should the badge be on screen" actually means.
     local function ResyncVisibility()
-        dockedBadge:SetShown(ShowDockedBadge() and iconBtn:IsShown())
+        dockedBadge:SetShown(ShowDockedBadge() and iconBtn:IsVisible())
     end
 
     resyncDockedBadge = function()
@@ -417,8 +444,16 @@ local function TryDockToEUIIcon()
         UpdateCounts()
     end
 
-    hooksecurefunc(iconBtn, "Show", resyncDockedBadge)
-    hooksecurefunc(iconBtn, "Hide", resyncDockedBadge)
+    -- OnShow/OnHide, not hooksecurefunc(iconBtn, "Show"/"Hide"): the script
+    -- handlers fire on EFFECTIVE visibility changes, which includes the icon
+    -- being hidden or shown because an ANCESTOR was -- exactly the case the
+    -- method hooks miss, since a parent's Hide() never calls the child's.
+    -- That gap is the whole reason this used to carry a permanent
+    -- C_Timer.NewTicker(0.15, ...) backstop, waking ~7 times a second for the
+    -- entire session to poll IsShown(). The script hooks close it properly,
+    -- so the ticker is gone: this module now does no periodic work at all.
+    iconBtn:HookScript("OnShow", resyncDockedBadge)
+    iconBtn:HookScript("OnHide", resyncDockedBadge)
     -- Clicking the icon expands it (collapsed -> windows) via EUI's secure
     -- "_onclick" attribute snippet, a separate execution path from the
     -- button's ordinary OnClick script -- but the button still fires its
@@ -428,23 +463,13 @@ local function TryDockToEUIIcon()
     -- yet, for zero added latency on this specific transition.
     iconBtn:HookScript("OnClick", resyncDockedBadge)
     resyncDockedBadge()
-
-    -- Belt-and-suspenders for every OTHER path that hides/shows the icon
-    -- (driver transitions, the toggle keybind, a shell's own collapse
-    -- button -- none of which we have a direct handle on to hook their
-    -- click, and none of which route through iconBtn's own Show/Hide if
-    -- what actually changed was a PARENT frame's visibility): genuinely
-    -- cheap now that it's just the IsShown() check, not a roster walk.
-    -- GROUP_ROSTER_UPDATE/UNIT_FLAGS/PLAYER_ENTERING_WORLD (see Enable())
-    -- are what actually drive count freshness.
-    C_Timer.NewTicker(0.15, ResyncVisibility)
 end
 
 -- ---------------------------------------------------------------------------
 -- Status panel: live composition + display options
 -- ---------------------------------------------------------------------------
 
-function RaidComposition:GetInfoRows()
+function GroupRoles:GetInfoRows()
     local rows = {}
 
     rows[#rows + 1] = { section = "Status" }
@@ -524,15 +549,11 @@ function RaidComposition:GetInfoRows()
     return rows
 end
 
-function RaidComposition:Enable()
+function GroupRoles:Enable()
     InitLDB()
     UpdateCounts()
 
-    local eventFrame = CreateFrame("Frame")
-    eventFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
-    eventFrame:RegisterEvent("UNIT_FLAGS")
-    eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
-    eventFrame:SetScript("OnEvent", function()
+    local Refresh = AniMods.Coalesce(function()
         TryDockToEUIIcon()
         UpdateCounts()
         -- Nudge the AniMods panel too, if it's open on this tab -- the
@@ -541,10 +562,23 @@ function RaidComposition:Enable()
         if AniMods.RefreshUI then AniMods.RefreshUI() end
     end)
 
+    local eventFrame = CreateFrame("Frame")
+    eventFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
+    -- PLAYER_ROLES_ASSIGNED, not UNIT_FLAGS. UNIT_FLAGS was simply the wrong
+    -- event: it fires when a unit's PvP / combat / AFK flags change, for ANY
+    -- unit the client is tracking, which in a raid is many times a second and
+    -- has nothing whatsoever to do with UnitGroupRolesAssigned. Every one of
+    -- those firings was paying for a full roster walk and a broker-text
+    -- rebuild to arrive at unchanged numbers. PLAYER_ROLES_ASSIGNED is the
+    -- event that actually means "someone's assigned role changed".
+    eventFrame:RegisterEvent("PLAYER_ROLES_ASSIGNED")
+    eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+    eventFrame:SetScript("OnEvent", Refresh)
+
     TryDockToEUIIcon()
     for _, delay in ipairs({ 2, 5, 10, 20 }) do
         C_Timer.After(delay, TryDockToEUIIcon)
     end
 end
 
-AniMods.RegisterModule("RaidComposition", RaidComposition)
+AniMods.RegisterModule("GroupRoles", GroupRoles)
