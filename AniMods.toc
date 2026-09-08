@@ -3,6 +3,7 @@
 ## Notes: Ani's personal collection of small WoW UI patches and QoL tweaks, cherry-picked from other addons.
 ## Author: Ani
 ## Version: 1.0.0
+## IconTexture: Interface\AddOns\AniMods\Media\icon.png
 ## SavedVariables: AniModsDB
 ## OptionalDeps: EllesmereUI, EllesmereUIBlizzardSkin, EllesmereUIQoL, EllesmereUIChat, EllesmereUIMinimap, NDui
 

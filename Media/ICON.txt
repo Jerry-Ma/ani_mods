@@ -1,0 +1,10 @@
+icon.png is the author's own GitHub avatar (github.com/Jerry-Ma) -- a WoW
+screenshot of their character against a desert sunset -- downscaled from the
+460x460 original to 128x128.
+
+128x128 because WoW's texture loader wants power-of-two dimensions, and 128
+leaves headroom above the ~32-48px the addon list actually draws it at.
+
+Noted here only so a later reader knows where it came from and that it is the
+author's own image, not borrowed art with a license to honour (unlike the
+NDui_Plus textures under RoleIcons\, which carry their own LICENSE.txt).
