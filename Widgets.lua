@@ -462,26 +462,33 @@ function W.Toggle(parent)
     local track = W.Tex(f, "BACKGROUND", 1, 1, 1, 0.10)
     track:SetAllPoints()
 
-    local fill = W.Tex(f, "ARTWORK", W.Accent())
+    local fill = W.Tex(f, "ARTWORK", 0, 0, 0, 0)
     fill:SetAllPoints()
-    fill:SetAlpha(0)
-    W.RegisterAccent(fill, "vertex")
 
     local knob = W.Tex(f, "OVERLAY", 1, 1, 1, 0.85)
     knob:SetSize(KNOB, KNOB)
 
     local o = { frame = f, checked = false }
 
+    -- Green when on, not the accent colour.
+    --
+    -- The accent is user-chosen and can be near-white, which leaves a white
+    -- knob on a white track with no readable on-state -- which is exactly how
+    -- it first shipped. Green is unambiguous at this size whatever the theme,
+    -- and it matches the [Active] badge sitting beside it, so the two halves
+    -- of "this module is running" agree instead of using different colours.
+    local ON = W.BADGE_OK
+
     local function Apply(hovering)
         knob:ClearAllPoints()
         if o.checked then
             knob:SetPoint("RIGHT", f, "RIGHT", -2, 0)
-            fill:SetAlpha(hovering and 0.85 or 0.7)
+            fill:SetColorTexture(ON[1], ON[2], ON[3], hovering and 0.85 or 0.65)
             knob:SetColorTexture(1, 1, 1, 1)
         else
             knob:SetPoint("LEFT", f, "LEFT", 2, 0)
-            fill:SetAlpha(0)
-            knob:SetColorTexture(1, 1, 1, hovering and 0.7 or 0.5)
+            fill:SetColorTexture(0, 0, 0, 0)
+            knob:SetColorTexture(1, 1, 1, hovering and 0.7 or 0.45)
         end
     end
 

@@ -39,6 +39,13 @@ _EUI_RaidTools_DB = nil
 ---@type any
 NDui = nil
 
+---Not a Blizzard API: a convention that addons reshaping the minimap define,
+---returning a shape name ("ROUND", "SQUARE", "TRICORNER-TOPLEFT", ...).
+---LibDBIcon reads it and so does General's minimap button, both guarded --
+---absent means round.
+---@type any
+GetMinimapShape = nil
+
 -- ---------------------------------------------------------------------------
 -- Superseded Blizzard globals, kept as guarded fallbacks
 -- ---------------------------------------------------------------------------

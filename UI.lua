@@ -108,11 +108,11 @@ function AniMods.PromptReload(reason)
         reloadReasons = {}
         table.sort(names)
 
-        local what = (#names > 0) and table.concat(names, ", ") or "A setting"
+        local what = (#names > 0) and table.concat(names, ", ") or "This change"
+        -- "Later" carries the reassurance that the change is kept, so the
+        -- message does not have to.
         W.Confirm({
-            message = ("%s needs a UI reload to take effect.\n\n"
-                .. "The change is saved either way -- reloading now just applies it "
-                .. "immediately instead of at your next login."):format(what),
+            message = ("Reload to apply:  %s"):format(what),
             confirmText = "Reload UI",
             cancelText  = "Later",
             onConfirm   = function() ReloadUI() end,
@@ -596,15 +596,8 @@ local function BuildTabContent(name)
     cache.toggle = toggle
 
     local toggleHelp = W.Help(titleFrame, entry.liveToggle
-        and ("Turns the module off. This one stops and starts cleanly, so the "
-            .. "change applies straight away.\n\n"
-            .. "While off, its Enable() is skipped at login and none of its code runs.")
-        or ("Turns the module off. This one needs a UI reload to fully apply, and "
-            .. "will offer one.\n\n"
-            .. "While off, its Enable() is skipped at login and none of its code "
-            .. "runs -- but switching off mid-session cannot undo what it already "
-            .. "did, because WoW gives no way to remove a hooksecurefunc hook or "
-            .. "withdraw a data broker once registered."))
+        and "Applies immediately. While off, the module does not load at login."
+        or  "Needs a UI reload to fully apply. While off, the module does not load at login.")
     toggleHelp.frame:SetPoint("RIGHT", toggle.frame, "LEFT", -6, 0)
 
     cache.blocks[#cache.blocks + 1] = { frame = titleFrame, gap = BLOCK_GAP }

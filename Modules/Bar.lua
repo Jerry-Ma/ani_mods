@@ -39,17 +39,15 @@ local Bar = {
     description = "A bar for LibDataBroker widgets. Off by default.",
     dependencies = {
         { text = "LibDataBroker",
-          help = "The library every data broker publishes through. AniMods does "
-              .. "not bundle it -- EllesmereUI and most data-bar addons ship it, "
-              .. "and one copy is shared by everyone.",
+          help = "The library data brokers publish through. Shipped by EllesmereUI "
+              .. "and most data bars.",
           met = function()
               return (_G.LibStub and _G.LibStub:GetLibrary("LibDataBroker-1.1", true)) and true or false
           end,
           metText = "Available", unmetText = "Missing" },
         { text = "Another data bar",
-          help = "If you already run EllesmereUIDataBars, Titan, ChocolateBar or "
-              .. "similar, use that instead -- it will do more than this one. "
-              .. "This bar exists for setups that have none.",
+          help = "This bar is for setups with none. If you have one, use it "
+              .. "instead -- it does more.",
           met = function()
               return not (AniMods.IsAddOnLoaded("EllesmereUIDataBars")
                        or AniMods.IsAddOnLoaded("Titan")
@@ -494,9 +492,7 @@ function Bar:GetInfoRows()
     rows[#rows + 1] = { section = "Appearance" }
     rows[#rows + 1] = {
         label = "Lock position",
-        help  = "Stops the bar being dragged. Unlocked by default so it can be "
-             .. "placed when you first switch the module on; lock it once it is "
-             .. "where you want it, so a stray click on a widget cannot move it.",
+        help  = "Stops the bar being dragged.",
         get   = IsLocked,
         set   = function(v)
             ModuleDB().locked = v and true or false
@@ -524,10 +520,8 @@ function Bar:GetInfoRows()
     }
     rows[#rows + 1] = {
         label = "Strip plugin colors",
-        help  = "Plugins colour their own text, which overrides anything the bar "
-             .. "applies. Stripping hands that control back to the bar. Off by "
-             .. "default because AniMods' own widgets use colour to carry meaning "
-             .. "-- role counts, guild versus friends.",
+        help  = "Ignore each plugin's own text color. AniMods' widgets use color "
+             .. "to carry meaning, so this discards that too.",
         get   = function() return ModuleDB().stripColors == true end,
         set   = function(v)
             ModuleDB().stripColors = v and true or false
@@ -542,9 +536,7 @@ function Bar:GetInfoRows()
     rows[#rows + 1] = {
         label = "Max widget width",
         note  = "0 = unlimited",
-        help  = "Caps how wide any single widget may get, ellipsizing past that. "
-             .. "A plugin can publish arbitrarily long text, and without a cap one "
-             .. "of them can push everything else off the bar.",
+        help  = "Caps a single widget's width. Longer text is truncated.",
         min   = 0, max = 400, step = 10,
         get   = function() return ModuleDB().maxWidth or 0 end,
         set   = function(v)

@@ -11,8 +11,9 @@ local General = {
     description = "AniMods' own settings: how you reach the panel.",
     order = 0,
     dependencies = {
-        { text = "LibDataBroker", help = "Used to publish AniMods' own minimap "
-            .. "button. Shipped by EllesmereUI and most data-bar addons.",
+        { text = "LibDataBroker",
+          help = "Shipped by EllesmereUI and most data bars. Only the data-bar "
+              .. "modules need it.",
           met = function()
               return (_G.LibStub and _G.LibStub:GetLibrary("LibDataBroker-1.1", true)) and true or false
           end },
@@ -41,42 +42,107 @@ end
 -- what is wanted here is: sit on the minimap ring at a saved angle, drag to
 -- move, click to open.
 
-local RADIUS = 80   -- distance from the minimap centre to the ring
+-- Gap between the minimap edge and the button's centre. LibDBIcon's own
+-- default, and what makes AniMods' button sit on the same ring as everyone
+-- else's.
+local EDGE_GAP = 5
 
+-- Which quadrants of a given minimap shape are round. A square minimap needs
+-- the button pushed out to the diagonal instead of the circle, or it lands
+-- inside the map at the corners. GetMinimapShape is a convention addons that
+-- reshape the minimap define; absent, it is round.
+local MINIMAP_SHAPES = {
+    ROUND = { true, true, true, true },
+    SQUARE = { false, false, false, false },
+    ["CORNER-TOPLEFT"] = { false, false, false, true },
+    ["CORNER-TOPRIGHT"] = { false, false, true, false },
+    ["CORNER-BOTTOMLEFT"] = { false, true, false, false },
+    ["CORNER-BOTTOMRIGHT"] = { true, false, false, false },
+    ["SIDE-LEFT"] = { false, true, false, true },
+    ["SIDE-RIGHT"] = { true, false, true, false },
+    ["SIDE-TOP"] = { false, false, true, true },
+    ["SIDE-BOTTOM"] = { true, true, false, false },
+    ["TRICORNER-TOPLEFT"] = { false, true, true, true },
+    ["TRICORNER-TOPRIGHT"] = { true, false, true, true },
+    ["TRICORNER-BOTTOMLEFT"] = { true, true, false, true },
+    ["TRICORNER-BOTTOMRIGHT"] = { true, true, true, false },
+}
+
+-- Placement follows LibDBIcon's geometry rather than a fixed radius.
+--
+-- The first version hard-coded 80px from centre, which is only right for a
+-- default-sized minimap: the radius has to come from the minimap's ACTUAL
+-- size, and EllesmereUIMinimap (like most minimap addons) resizes it. Width
+-- and height are read separately so a non-square minimap still works.
 local function PositionButton()
-    if not button then return end
+    if not button or not Minimap then return end
+
     local angle = math.rad(ModuleDB().minimapAngle or 200)
-    button:SetPoint("CENTER", Minimap, "CENTER",
-        math.cos(angle) * RADIUS, math.sin(angle) * RADIUS)
+    local x, y = math.cos(angle), math.sin(angle)
+
+    -- Quadrant, in LibDBIcon's numbering: 1 = +x+y, 2 = -x+y, 3 = +x-y, 4 = -x-y.
+    local q = 1
+    if x < 0 then q = q + 1 end
+    if y > 0 then q = q + 2 end
+
+    local shape = (_G.GetMinimapShape and _G.GetMinimapShape()) or "ROUND"
+    local quad = MINIMAP_SHAPES[shape] or MINIMAP_SHAPES.ROUND
+
+    local w = (Minimap:GetWidth() / 2) + EDGE_GAP
+    local h = (Minimap:GetHeight() / 2) + EDGE_GAP
+
+    if quad[q] then
+        x, y = x * w, y * h
+    else
+        -- Square corner: project onto the diagonal, then clamp to the edges.
+        local dw = math.sqrt(2 * w * w) - 10
+        local dh = math.sqrt(2 * h * h) - 10
+        x = math.max(-w, math.min(x * dw, w))
+        y = math.max(-h, math.min(y * dh, h))
+    end
+
+    button:ClearAllPoints()
+    button:SetPoint("CENTER", Minimap, "CENTER", x, y)
 end
 
 local function BuildButton()
     if button then return button end
     if not _G.Minimap then return nil end
 
+    -- Geometry copied from LibDBIcon's retail button, so this sits on the ring
+    -- at the same size as every other addon's minimap button rather than at
+    -- whatever looked about right. The numbers are not arbitrary: the 50x50
+    -- tracking border is drawn anchored TOPLEFT of a 31x31 button, which is
+    -- what centres its ring on the button.
     button = CreateFrame("Button", "AniModsMinimapButton", Minimap)
-    button:SetSize(24, 24)
+    button:SetSize(31, 31)
     button:SetFrameStrata("MEDIUM")
     button:SetFrameLevel(8)
     button:RegisterForClicks("AnyUp")
     button:RegisterForDrag("LeftButton")
+    button:SetHighlightTexture(136477) -- UI-Minimap-ZoomButton-Highlight
 
-    local ring = button:CreateTexture(nil, "OVERLAY")
-    ring:SetTexture("Interface\\Minimap\\MiniMap-TrackingBorder")
-    ring:SetSize(50, 50)
-    ring:SetPoint("TOPLEFT")
+    local background = button:CreateTexture(nil, "BACKGROUND")
+    background:SetSize(24, 24)
+    background:SetTexture(136467)      -- UI-Minimap-Background
+    background:SetPoint("CENTER")
 
     local icon = button:CreateTexture(nil, "ARTWORK")
     icon:SetTexture(MINIMAP_ICON)
-    icon:SetSize(16, 16)
-    icon:SetPoint("CENTER", button, "CENTER", -1, 1)
-    -- Round mask so a square screenshot reads as a minimap button rather than
-    -- a sticker on top of one.
+    icon:SetSize(18, 18)
+    icon:SetPoint("CENTER")
+    -- Round mask, so a square screenshot reads as a minimap button rather
+    -- than a sticker stuck on one.
     local mask = button:CreateMaskTexture()
     mask:SetTexture("Interface\\CharacterFrame\\TempPortraitAlphaMask",
         "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
     mask:SetAllPoints(icon)
     icon:AddMaskTexture(mask)
+
+    local ring = button:CreateTexture(nil, "OVERLAY")
+    ring:SetTexture(136430)            -- MiniMap-TrackingBorder
+    ring:SetSize(50, 50)
+    ring:SetPoint("TOPLEFT")
 
     button:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_LEFT")
@@ -131,8 +197,7 @@ function General:GetInfoRows()
     rows[#rows + 1] = { section = "Access" }
     rows[#rows + 1] = {
         label = "Minimap button",
-        help  = "A round AniMods button on the minimap ring. Drag it around the "
-             .. "ring to reposition; the angle is saved.",
+        help  = "Drag it around the ring to reposition.",
         get   = function() return ModuleDB().minimap ~= false end,
         set   = function(v)
             ModuleDB().minimap = v and true or false
@@ -142,10 +207,8 @@ function General:GetInfoRows()
     rows[#rows + 1] = {
         label = "Addon compartment entry",
         reload = true,
-        help  = "The entry in Blizzard's addon-compartment dropdown, next to the "
-             .. "minimap. Blizzard reads this from the .toc once at startup, so "
-             .. "removing it needs a reload -- AniMods writes the preference now "
-             .. "and honours it on the next login.",
+        help  = "AniMods' entry in Blizzard's addon dropdown by the minimap. "
+             .. "Blizzard builds that list at startup, so this needs a reload.",
         get   = function() return ModuleDB().compartment ~= false end,
         set   = function(v) ModuleDB().compartment = v and true or false end,
     }
