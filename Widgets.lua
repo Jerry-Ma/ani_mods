@@ -1,29 +1,30 @@
--- AniMods widget toolkit, built on EllesmereUI's public skinning API.
+-- AniMods widget toolkit, drawn through the skin facade S.
 --
--- ── Why this is a hard dependency, with no fallback ──────────────────────────
+-- ── One interface, one code path ─────────────────────────────────────────────
 --
 -- This file used to hand-draw everything and reach into EllesmereUI internals
 -- (MakeBorder, PanelPP, RegAccent, DisablePixelSnap, MakeDropdownArrow,
--- GetFontPath, EXPRESSWAY) with literal-color fallbacks behind each one --
--- eight undocumented couplings and a parallel look to keep in sync. One of
--- them, RegAccent, crashed on login because its shape was guessed wrong.
+-- GetFontPath, EXPRESSWAY) with a literal-colour fallback branch behind each
+-- one -- eight undocumented couplings and two renderings per widget to keep
+-- looking alike. One of them, RegAccent, crashed on login because its shape
+-- was guessed wrong.
 --
--- All of that is replaced by ONE published contract:
+-- All of that is replaced by ONE contract. S is the facade EllesmereUI
+-- publishes to third-party addons over its window-skin engine: the public
+-- surface (never raw WSkin), late-bound pass-throughs so engine internals
+-- stay free to change, additive-only signatures versioned by S.apiVersion,
+-- and pcall isolation at the boundary in both directions.
 --
---     EllesmereUI.RegisterSkin("AniMods", function(S) ... end)
+-- NOTHING BELOW ASKS WHICH PROVIDER ANSWERED. Compat.lua picks one at load --
+-- EllesmereUI's when it is there, an AniMods-owned implementation of the same
+-- interface when it is not -- and every constructor here simply calls S.
+-- There is no `if EllesmereUI then` in this file, which is the difference
+-- that matters: the second rendering exists (it has to, for a stock Blizzard
+-- UI) but it lives behind a single boundary in one file rather than as a
+-- branch inside every widget.
 --
--- S is a facade over EllesmereUI's window-skin engine. Its own header states
--- the terms: the facade is the public surface (never raw WSkin), entries are
--- late-bound pass-throughs so engine internals stay free to change, and
--- signatures are additive-only, versioned by S.apiVersion. Each callback is
--- pcall-isolated, so a mistake here cannot break EllesmereUI, or vice versa.
---
--- There are deliberately NO fallbacks. A second, hand-drawn rendering of the
--- same panel is debt that has to be maintained and can never be verified to
--- still match. The cost is an honest hard dependency, stated in the .toc:
--- without EllesmereUI + EllesmereUIBlizzardSkin, and with third-party
--- skinning enabled, AniMods has no UI. W.OnReady's diagnostic says exactly
--- that instead of failing silently.
+-- Consequence worth stating: AniMods has NO hard dependency on EllesmereUI.
+-- The panel, the brokers and the modules all work on a stock UI.
 --
 -- ── The one rule that is not obvious ─────────────────────────────────────────
 --
@@ -98,32 +99,33 @@ local function RefreshLooks()
     for fs, a in pairs(accentText) do fs:SetTextColor(r, g, b, a) end
 end
 
-if EllesmereUI and EllesmereUI.RegisterSkin then
-    EllesmereUI.RegisterSkin("AniMods", function(facade)
-        S = facade
-        W.S = facade
-        S.OnLooksChanged(RefreshLooks)
-        for i = 1, #readyQueue do
-            -- Isolated per entry: one module's bad layout must not stop the
-            -- rest of the addon from coming up.
-            local ok, err = pcall(readyQueue[i])
-            if not ok then geterrorhandler()(err) end
-        end
-        readyQueue = {}
-    end)
-end
+-- Which facade answered is not this file's business: Compat.lua picks the
+-- provider once, at load, and nothing below ever asks whether EllesmereUI is
+-- present. That absence of a provider test is the whole point -- it is what
+-- keeps one rendering path instead of two.
+AniMods.AcquireSkin(function(facade)
+    S = facade
+    W.S = facade
+    S.OnLooksChanged(RefreshLooks)
+    for i = 1, #readyQueue do
+        -- Isolated per entry: one module's bad layout must not stop the
+        -- rest of the addon from coming up.
+        local ok, err = pcall(readyQueue[i])
+        if not ok then geterrorhandler()(err) end
+    end
+    readyQueue = {}
+end)
 
--- Every constructor asserts through this. The message is deliberately
--- specific about the three things that can be wrong, because "nothing
--- happened" is the worst possible failure for a settings panel.
+-- Every constructor asserts through this. Reaching it means a widget was
+-- built before PLAYER_LOGIN, which is a sequencing bug in the caller -- it
+-- should have gone through W.OnReady -- so the message says that rather than
+-- blaming the environment.
 local function Need()
     if S then return S end
     if not warned then
         warned = true
-        print("|cffff4444AniMods:|r UI unavailable. It is drawn with EllesmereUI's "
-            .. "skinning API, which needs |cffffd700EllesmereUI|r and "
-            .. "|cffffd700EllesmereUIBlizzardSkin|r loaded, and third-party skinning "
-            .. "left enabled for AniMods in EllesmereUI's options.")
+        print("|cffff4444AniMods:|r a widget was built before the skin provider "
+            .. "was ready. Wrap the construction in |cffffd700AniMods.W.OnReady|r.")
     end
     return nil
 end

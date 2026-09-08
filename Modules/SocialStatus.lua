@@ -33,11 +33,21 @@
 local SocialStatus = {
     title = "Social Status",
     description = "Online guild/friend counts as a broker (LDB) plugin, mirroring EllesmereUIMinimap's own friends button.",
+    -- No `condition`: nothing here needs another addon. The roster gathering
+    -- below is a port that calls only Blizzard APIs (GetGuildRosterInfo,
+    -- C_BattleNet, C_FriendList), and the broker is a plain LibDataBroker
+    -- object that any data bar can display -- EllesmereUIDataBars, AniMods'
+    -- own bar, or a third-party one.
+    --
+    -- This used to require EllesmereUIMinimap, which was gating the DATA on a
+    -- PRESENTATION dependency: that addon is where the popup's look was
+    -- copied from, not where any of its information comes from. The effect
+    -- was that a stock UI -- or even EllesmereUI installed without its
+    -- Minimap module -- lost working friend counts for no reason.
     dependencies = {
-        { text = "EllesmereUIMinimap loaded", met = function() return AniMods.IsAddOnLoaded("EllesmereUIMinimap") end },
-    },
-    condition = {
-        requires = { "EllesmereUIMinimap" },
+        { text = "None -- uses Blizzard's own guild/friend APIs" },
+        { text = "EllesmereUIMinimap loaded (matches its popup styling)",
+          met = function() return AniMods.IsAddOnLoaded("EllesmereUIMinimap") end },
     },
 }
 

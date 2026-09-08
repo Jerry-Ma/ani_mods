@@ -56,6 +56,12 @@ local extraReadGlobals = {
     "ChatFontNormal",                 -- font object, used to size the error-trace box
     "UISpecialFrames",                -- Escape-closes-frame registry
     "AudioOptionsFrame_AudioRestart", -- pre-10.0 sound restart, SoundSwitch's fallback path
+    -- 12.x "secret values": a size or coordinate read off certain frames can
+    -- come back as a secret number that throws if compared. Must be tested
+    -- for BEFORE any comparison. EllesmereUIBlizzardSkin's window engine
+    -- calls this unguarded (WindowEngine.lua:271, :399), which is the
+    -- confirmation that it exists on this client.
+    "issecretvalue",
 }
 
 for i = 1, #foreignGlobals do

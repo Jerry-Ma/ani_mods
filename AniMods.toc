@@ -4,15 +4,16 @@
 ## Author: Ani
 ## Version: 1.0.0
 ## SavedVariables: AniModsDB
-## Dependencies: EllesmereUI
-## OptionalDeps: EllesmereUIBlizzardSkin, EllesmereUIQoL, EllesmereUIChat, EllesmereUIMinimap, NDui
+## OptionalDeps: EllesmereUI, EllesmereUIBlizzardSkin, EllesmereUIQoL, EllesmereUIChat, EllesmereUIMinimap, NDui
 
 Libs\LibStub\LibStub.lua
 
 Core.lua
 Broker.lua
+Compat.lua
 Widgets.lua
 UI.lua
+Modules\Bar.lua
 Modules\ChatContextSwitch.lua
 Modules\GroupRoles.lua
 Modules\Skin.lua

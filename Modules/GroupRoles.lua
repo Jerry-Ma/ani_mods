@@ -37,13 +37,23 @@
 local GroupRoles = {
     title = "Group Roles",
     description = "Tank/Healer/DPS role counts, docked onto EllesmereUI's Raid Tools icon.",
+    -- No `condition`: the counts come from UnitGroupRolesAssigned, a plain
+    -- Blizzard call, and the broker is a LibDataBroker object any data bar
+    -- can show. Only the DOCKED BADGE needs EllesmereUIQoL, and that is
+    -- already handled at runtime -- TryDockToEUIIcon simply returns when the
+    -- icon does not exist, so the module degrades to broker-only by itself.
+    --
+    -- Both old conditions gated the data on presentation concerns. `requires
+    -- EllesmereUIQoL` meant a stock UI got no role counts at all, when the
+    -- broker would have worked perfectly. `forbids NDui` was there because
+    -- NDui's raid tool draws its own role count -- but that is a different
+    -- surface, and suppressing a databar widget because an unrelated addon
+    -- happens to show similar numbers somewhere else is the user's call to
+    -- make by switching the module off, not ours to make for them.
     dependencies = {
-        { text = "EllesmereUIQoL loaded", met = function() return AniMods.IsAddOnLoaded("EllesmereUIQoL") end },
-        { text = "NDui not loaded",       met = function() return not AniMods.IsAddOnLoaded("NDui") end },
-    },
-    condition = {
-        requires = { "EllesmereUIQoL" },
-        forbids = { "NDui" },
+        { text = "None -- uses Blizzard's own role API" },
+        { text = "EllesmereUIQoL loaded (enables the docked badge)",
+          met = function() return AniMods.IsAddOnLoaded("EllesmereUIQoL") end },
     },
 }
 
