@@ -130,8 +130,10 @@ end
 AniMods.RegisterModule("MyFeature", MyFeature)
 ```
 
-Add the new file to `AniMods.toc` (after `Core.lua`, `Broker.lua` and `UI.lua`) to load
-it.
+Add the new file to `AniMods.toc` after the framework files (`Core.lua`, `Broker.lua`,
+`Compat.lua`, `Widgets.lua`, `UI.lua`) to load it. Layer 1 of the checks cross-checks the
+`.toc` against disk in both directions, so a file added to one and not the other is an
+error rather than a silent no-load.
 
 Modules are enabled by default (once their conditions pass). Most WoW UI hooks can't be
 cleanly undone at runtime, so there's no `Disable()` contract — toggling a module off
@@ -162,8 +164,18 @@ drifted to differently-named copies of the same getter before this was pulled ou
   (inline `|A:name:h:w|a` for an atlas, `|Tpath:h|t` for a texture file) with no
   separator, since the icons already tell the parts apart; "Text Only" falls back to a
   `/` separator.
-- `Broker.DisplayRows(getDB, onChange)` — the standard "Broker Display" section for
-  `GetInfoRows()`: a Style dropdown (Icon + Text / Text Only) and a Colored text toggle.
+- `Broker.SectionRows(getDB, onChange, objectName)` — the whole "Broker widget" section
+  for `GetInfoRows()`: whether the widget was published, under what name, and how it
+  draws (a Style dropdown — Icon + Text / Text Only — and a Colored text toggle, both
+  only once there is something to draw).
+
+  Status and options live together because they are one feature. They used to be split
+  across a "Broker (LDB) plugin: Registered" line among a module's Status rows and a
+  separate "Broker Display" section further down, which read as two unrelated things and
+  left the display options with no visible connection to what they styled. It is also
+  where LibDataBroker belongs: it is not a dependency of these *modules*, which work
+  without it — it is what this one *feature* needs, so a red condition row would have
+  claimed the module was broken when only its broker was unavailable.
 
 `getDB` is the module's own lazy settings accessor (its `ModuleDB` function), so each
 broker's settings live in that module's own saved-variables table — shared *behaviour*,
@@ -216,36 +228,46 @@ colour, which belongs to the panel's own furniture rather than to facts about th
 A row with `section` renders as a divider header, grouping an otherwise-flat scrolling
 list into skimmable chunks (a module with several kinds of info — live status,
 integration facts, a style picker — should section them rather than dumping everything
-in one list). A row with `options` (+ `order`, mirroring AceGUI Dropdown's own
-`SetList(list, order)` signature) renders as a real Dropdown/combobox — the right choice
-once there are more than two or three mutually-exclusive options (a wall of radio-style
-checkboxes doesn't scale); adding `atlas` (a single atlas name, or an array of them for
-a role-icon-set style) puts small icon preview(s) of the *currently selected* option
-next to it (resolved via `C_Texture.GetAtlasInfo()` since AceGUI's `Icon` widget only
-takes a texture path, not an atlas name — there's no icon-aware dropdown item type in
-the bundled AceGUI-3.0, so the preview lives outside the dropdown itself rather than
-per-item inside it). A row with `min` renders as a Slider — for a setting that's
-genuinely a number (e.g. a spacing amount) rather than a small set of named choices;
-committed on mouse-up, not while dragging (no current module uses one — GroupRoles
-tried a spacing slider and removed it once compact spacing (0) turned out to just always
-be the right answer, leaving nothing to actually tune). A row with plain `get`/`set` (no
-`options`/`min`) renders as a checkbox, for real booleans. Everything else is a plain
-read-only label/value line (for live internal state — "N/A" when not applicable is a
-normal `value`). Rebuilt whenever `AniMods.RefreshUI()` is called (a toggle, or a
-module's own event handler noticing its live data changed) or the panel is reopened, so
-it reflects current reality, not what was true when the module loaded — but *not* on a
-fixed timer (a rebuild while, say, a Dropdown row is open would force-close it; see
-`dropdownOpen` in `UI.lua`). This is deliberately the one generic row shape rather than
-a full widget framework — extend it if a module ever needs something `GetInfoRows()`
-can't express.
+in one list); each section becomes its own titled card. A row with `options` (+ `order`)
+renders as a Dropdown — the right choice once there are more than two or three
+mutually-exclusive options, since a wall of radio-style checkboxes doesn't scale; adding
+`atlas` (a single atlas name, or an array of them for a role-icon-set style) puts small
+icon preview(s) of the *currently selected* option beside it, each checked with
+`C_Texture.GetAtlasInfo()` first because a missing atlas draws nothing at all with no
+error. A row with `min` renders as a Slider, committed on mouse-up rather than while
+dragging — for a setting that is genuinely a number, like Data Bar's width. A row with
+plain `get`/`set` renders as a checkbox, for real booleans. Everything else is a plain
+read-only label/value line, for a *measurement*; a yes/no belongs in `state` instead.
+
+Refreshes are **in place**, not rebuilds. `AniMods.RefreshUI()` (called by a toggle, or
+by a module's own event handler noticing its data changed) updates the text of existing
+widgets, so a counter ticking over never disturbs an open dropdown or the scroll
+position. Only when a section's row *shape* changes — a row genuinely appearing or
+disappearing — is that one section rebuilt, and a section holding an open dropdown is
+skipped until the menu closes (`openDropdownSection` in `UI.lua`). Nothing polls; there
+is no timer behind any of it.
+
+This is deliberately one generic row vocabulary rather than a widget framework — extend
+it when a module needs something `GetInfoRows()` can't express, which is how `state`,
+`picker` and `strip` got here.
 
 ### Why conditions?
 
 Some patches only make sense in the *absence* of another addon that already does the
-same thing (e.g. ChatContextSwitch below only applies when NDui — which ships this
-exact behavior itself — isn't loaded). Others might only make sense *with* a specific
-addon present, or above/below a given version of it. `condition` makes that explicit
-and inspectable instead of silently double-hooking or crashing on a missing global.
+same thing (ChatContextSwitch below stands down while NDui's chat module — which ships
+this exact behaviour — is handling it). Others only make sense *with* a specific addon
+present: EllesmereUI Misc adjusts EllesmereUI's own elements, so without it there is
+nothing to adjust. `conditions` makes that explicit and inspectable instead of silently
+double-hooking or crashing on a missing global, and the panel can then answer "why is
+this off" with a checklist rather than silence.
+
+Only three modules have any. That is the point: a condition is a *gate*, and most of
+these patches use plain Blizzard API and work anywhere, so gating them would be
+inventing a restriction. GroupRoles and SocialStatus each carried one for a while —
+"requires EllesmereUIQoL", "requires EllesmereUIMinimap" — which turned out to gate the
+data on a *presentation* concern: the counts are plain Blizzard API and the broker works
+on a stock UI, so the condition was denying a working feature to anyone without the
+addon it merely resembled.
 
 ### Doing nothing when nothing happened
 
@@ -308,7 +330,7 @@ its tab; one that implements `SetEnabled(on)` just applies.
 
 Each tab shows: the module's title, a `?` for its description, a state badge, and — for
 a `forceable` module held back only by soft conditions — a "Run anyway" switch. Below
-that, its **Conditions** card (one row per entry, each with a Met / Not met badge and its
+that, its **Conditions** card (one row per entry, each with a Yes / No badge and its
 own `?`), the reason it is inactive if it is, then its `GetInfoRows()` (see above),
 grouped into titled cards. If a
 module's `Enable()` threw an error (state "Failed"), a **Show Error** button opens a
@@ -342,8 +364,18 @@ mistake here cannot break EllesmereUI or vice versa. One of the replaced interna
 What that buys beyond safety: the panel now **live-follows the user's window style**.
 `S.Shell` registers it with the engine, so switching between the "eui" atlas look and the
 flat "modern" colour — and editing the Modern colour — applies with no reload. Accent
-changes propagate through `S.OnLooksChanged` into a weak-keyed registry of the few things
-AniMods still colours by hand (the slider fill, headings, the window title).
+changes propagate through `S.OnLooksChanged` into a weak-keyed registry of the things
+AniMods colours by hand — the window title, card headers, `?` markers, the slider fill,
+the sidebar's selection marker, and the Data Bar's drag handle. A few can't be a flat
+recolour and re-run their own paint instead (`W.OnLooksChanged`): the toggle's track and
+the power button both depend on the accent *and* on their on/off state.
+
+`W.RefreshLooks()` is public for a reason worth stating, because getting it wrong looked
+exactly like a broken colour picker: two different things must be able to trigger a
+repaint — the host theme changing, and AniMods' own accent setting changing — and only
+the first comes from the provider. It also reads `W.Accent()` rather than
+`S.GetAccentColor()`, or it would repaint in the host's colour and discard the user's
+choice.
 
 **There is no provider test anywhere in `Widgets.lua`.** `Compat.lua` picks one at load —
 EllesmereUI's facade when it's there, an AniMods-owned implementation of the same
@@ -358,10 +390,19 @@ implementing someone else's published contract, instead of a branch inside every
 
 **Consequence: AniMods has no hard dependency on EllesmereUI.** The panel, the brokers and
 every module work on a stock UI. `Compat.lua` implements only the members `Widgets.lua`
-actually calls (`Shell`, `Panel`, `Button`, `Checkbox`, `Dropdown`, `Font`, and the five
-theme getters) — implementing the rest of EllesmereUI's facade unused would be inventing a
-contract nothing exercises. Its accent colour is the player's class colour, the one piece
-of live theming a stock UI has.
+actually calls (`Shell`, `Panel`, `Button`, `Checkbox`, `Dropdown`, `Font`, plus
+`GetAccentColor`, `GetPanelColor`, `GetFont`, `GetStyle`, `OnLooksChanged`, `IsEnabled`
+and `apiVersion`) — implementing the rest of EllesmereUI's facade unused would be
+inventing a contract nothing exercises.
+
+**Which provider answered is also what decides whether AniMods' own accent setting
+applies.** The stock provider's `GetAccentColor` reads the colour picked in **General**
+(defaulting to EllesmereUI's own green, so both providers look like the same addon);
+EllesmereUI's facade answers from the user's EllesmereUI theme and knows nothing about
+our setting. So "EllesmereUI wins when it is present" is structural — enforced by which
+implementation is in play — rather than something a settings control has to remember to
+honour. The swatches in General grey themselves out to match, which is a *reflection* of
+that rule, not the mechanism.
 
 #### The restrip rule
 
@@ -379,9 +420,15 @@ So **never add a texture directly to a frame passed to `S.Panel` or `S.Shell`**;
 silently vanishes the first time the player opens their collections. Our art goes on a
 child frame instead. That is why `W.Window` returns `.content` rather than letting callers
 draw on the window, why `W.Dropdown` and `W.Button` hold their label on an `inner` child,
-and why `SocialStatus`'s popup parents its rows and dividers to `TTInner()`. This is the
-one non-obvious part of the contract, and the API's developer guide (`SKINNING_API.md`) is
-referenced by the source but not shipped in the addon folders — the engine is the spec.
+why `W.CheckMark` puts its fill on a child of the box, and why `SocialStatus`'s popup
+parents its rows and dividers to `TTInner()`. This is the one non-obvious part of the
+contract, and the developer guide (`EllesmereUI\SKINNING_API.md`, which does ship) is
+worth reading alongside it.
+
+The Data Bar is the single exception in the addon: its frame is a plain `CreateFrame`
+that never goes through `S.Panel`, because its background is a user setting rather than
+frame dress — so it is not registered, and its fill, border and drag handle live directly
+on it.
 
 #### Sequencing, not polling
 
@@ -414,11 +461,56 @@ both toggleable in **General**.
 
 ## Current modules
 
+- **General** — AniMods' own settings rather than a patch: the minimap button, the addon
+  compartment entry, and the accent colour. `order = 0` so it heads the sidebar instead
+  of sorting alphabetically into the middle, and `essential = true` so it has no power
+  button — there is no coherent meaning to switching off the tab that contains the
+  switches.
+
+  The minimap button is hand-rolled rather than LibDBIcon-driven (one button does not
+  justify the library), but borrows its geometry exactly — radius
+  `Minimap:GetWidth()/2 + 5`, a 31×31 button, 24×24 background, 18×18 icon, and the
+  `GetMinimapShape` convention with the diagonal clamp — because that is what makes it
+  sit on the same ring as every other addon's button instead of near it.
+
+  The accent swatches are colour squares, not a dropdown: the list they replaced named
+  `0.047/0.824/0.616` "Green" when it is a mint, and carried a separate "Teal" that was
+  nearly the same colour. Showing the colours removes both the naming and the question of
+  whether the name is accurate. They grey out under EllesmereUI, which supplies the accent
+  itself — see the provider note in the UI section.
+- **Data Bar** — a minimal LibDataBroker display bar, so AniMods' own broker widgets (and
+  any other addon's) have somewhere to live on a stock Blizzard UI. Off by default: if a
+  real data bar is installed, that one should be used. Its "no other data bar" condition
+  is therefore `soft` — advice, not a prerequisite — so the panel offers **Run anyway**
+  when that is the only thing holding it back.
+
+  Widgets are picked from a multi-select dropdown and ordered by dragging a preview strip
+  whose cells show each widget's *live output* (the same string the bar renders), with the
+  registered name in the cell's tooltip. Layout is EllesmereUIDataBars' "even" sizing
+  mode: equal shares of the bar, with cumulative rounding so the last slot lands exactly
+  on the edge, and a widget measuring zero taking no share. That is what makes ORDER the
+  only spatial choice left — and why there is no per-widget position setting, and no
+  maximum-width cap, since each widget is bounded by its share already.
+
+  Appearance is deliberately three controls (colour with alpha, texture, border) plus
+  lock and width. A lightweight bar with a heavyweight options tab is not lightweight.
+  Textures come from LibSharedMedia when something has registered it — a registry, not a
+  dependency, so it offers whatever the user's other addons contributed and simply has
+  nothing to offer when nothing has.
+
+  It does **no periodic work**, unlike AbstractBar (the closest comparable, and the source
+  of the good ideas here: a generic `DataObjectIterator` + `LibDataBroker_DataObjectCreated`
+  subscription rather than a private list, and dirty-checking before touching a
+  FontString). AbstractBar's refresh is an unconditional `C_Timer.NewTicker(1.0)` running
+  all session even when the bar is hidden — defensible for its own clock and FPS widgets,
+  which have no events, but AniMods has no sampled widgets at all. Every broker here
+  *pushes*, so the bar listens to `LibDataBroker_AttributeChanged` and does nothing
+  otherwise.
 - **ChatContextSwitch** — cycle chat channel (SAY → PARTY → RAID → INSTANCE_CHAT →
   GUILD → OFFICER → world CHANNEL) with Tab / Shift+Tab in the chat edit box. Ported
   from NDui's chat module (`NDui/Modules/Chat/Core.lua`). Each channel in the cycle can
   be individually enabled/disabled from its detail pane ("Channels in the cycle"
-  section), which also shows which ones are eligible right now ("active now"). OFFICER
+  section), which also shows which ones are eligible right now (an **Active** badge). OFFICER
   and the world CHANNEL default to off (most players aren't guild officers or in a
   custom world channel — by default they'd just be two usually-dead stops every lap);
   the rest default on. Only active when NDui is *not currently handling this itself* —
@@ -426,10 +518,20 @@ both toggleable in **General**.
   (`C.db["Chat"]["Disable"]` is falsy); if NDui is installed with its chat module turned
   off, this still applies. Migrated from the standalone ChatContextSwitch addon (now
   removed). Half-baked / not fully tested — bugs may remain from the original.
-- **GroupRoles** — Tank/Healer/DPS role counts while in a group; its detail pane
-  ("Status" section) shows the live counts, or "N/A" when solo. EllesmereUI's QoL Raid
-  Tools panel has no composition display the way NDui's raid tool does, so this fills
-  the gap; only active when EllesmereUIQoL is loaded and NDui is not. Named for what it
+- **GroupRoles** — Tank/Healer/DPS role counts while in a group; its detail pane's
+  "Status" section leads with **In group [Yes|No]** and shows the live counts under it
+  when there are any. EllesmereUI's QoL Raid Tools panel has no composition display the
+  way NDui's raid tool does, so this fills the gap.
+
+  **No conditions**: the counts come from `UnitGroupRolesAssigned`, a plain Blizzard
+  call, and the broker works in any data bar. It used to require EllesmereUIQoL and
+  forbid NDui, and both were wrong — the first denied a stock UI its role counts because
+  of a badge it wasn't going to show anyway, and the second suppressed a databar widget
+  because an unrelated addon draws similar numbers on a different surface, which is the
+  user's call to make by switching the module off. Only the *docked badge* needs
+  EllesmereUIQoL, and that is handled where it happens: `TryDockToEUIIcon` simply returns
+  when the icon does not exist, so the module degrades to broker-only by itself, and the
+  Integration section reports whether it actually docked. Named for what it
   reports — assigned *roles*, in a party as well as a raid; it was called
   `RaidComposition` until the rename, which was wrong twice over (it works in 5-mans,
   and "composition" normally means the class/spec makeup rather than the role split).
@@ -442,7 +544,8 @@ both toggleable in **General**.
     collapsed icon (the global frame `EllesmereUIRaidToolsIcon`), reading as part of
     that minimized display rather than a separate floating thing. Docking is the only
     display mode (no floating fallback window) — the detail pane's "Integration"
-    section just reports whether it's docked yet as a plain status line, since
+    section reports **Docked to EllesmereUI icon [Yes|No]**, with the reason why not in
+    its `?`, since
     EllesmereUIQoL only builds that icon on first use of Raid Tools with a non-"never"
     mode ("never" is its own default), so there may briefly (or permanently) be nothing
     to dock to. Anchored via `SetPoint` (just reads its rect) and synced two ways:
@@ -486,11 +589,11 @@ both toggleable in **General**.
     `AniModsRaidComposition` orphans any databar block that already pointed at the old
     name — re-pick it once from the picker. That's also why it shouldn't be renamed
     again casually. EUI ships LibStub + LibDataBroker-1.1 itself
-    (`EllesmereUI/Libs/`) and `EllesmereUIDataBars` depends on `EllesmereUI`, so the
-    library is guaranteed present whenever this module's own condition holds — no need
-    to embed a copy. `text` goes empty — not "N/A" — when solo, so a
+    (`EllesmereUI/Libs/`), and AniMods bundles LibStub for the lookup, so no copy of LDB
+    is embedded; when it genuinely isn't there, `Broker.Register` returns nil and the
+    "Broker widget" section says so. `text` goes empty — not "N/A" — when solo, so a
     transparent-background databar can just disappear. Otherwise built from two
-    independent options in the "Broker Display" section: a `Dropdown` "Style" —
+    independent options in the "Broker widget" section: a `Dropdown` "Style" —
     **Icon + Text** (an inline texture escape — `|A:atlas:h:w|a` for an atlas style,
     `|Tpath:h|t` for a texture-file one — styled to match whichever icon style is
     selected, packed with no padding — the icon alone tells the three roles apart, so no
@@ -508,7 +611,7 @@ both toggleable in **General**.
     open on a different one.
 
   Role icons ("Icon Style" section, a `Dropdown` with a live preview of the selected
-  style's Tank/Healer/DPS icons via three AceGUI `Icon` widgets alongside it) default to
+  style's Tank/Healer/DPS icons via three `W.Icon` widgets alongside it) default to
   matching EllesmereUI's own look, but other addons' looks are offered too since there's
   no reason to force just one. Each style is either `kind = "atlas"` (a plain Blizzard
   atlas name — nothing to embed, the art lives in the game client) or
@@ -638,8 +741,8 @@ both toggleable in **General**.
   data with plain `AddLine`/`AddDoubleLine` calls for any display that only supports
   that path.
 
-  `text` is built the same shape as GroupRoles' broker (`BuildBrokerText`) — a
-  `Dropdown` "Style" in the "Broker Display" section, **Icon + Text** (Guild's minimap
+  `text` is built the same shape as GroupRoles' broker (`Broker.BuildText`) — a
+  `Dropdown` "Style" in the "Broker widget" section, **Icon + Text** (Guild's minimap
   guild-banner atlas + Friends' exact atlas EUI's own button uses,
   `housefinder_neighborhood-friends-icon`, packed against each count with no
   padding/separator — the icon tells them apart) or **Text Only** (falls back to a `/`
@@ -647,9 +750,12 @@ both toggleable in **General**.
   Blizzard's own `ToggleFriendsFrame()` (same click action as EUI's button), guarded
   against combat lockdown. Refreshes on `GUILD_ROSTER_UPDATE`/`FRIENDLIST_UPDATE`/
   `BN_FRIEND_INFO_CHANGED`/`BN_FRIEND_ACCOUNT_ONLINE`/`BN_FRIEND_ACCOUNT_OFFLINE`.
-  Available only when EllesmereUIMinimap is loaded — the counting logic itself needs
-  nothing from EUI, but the whole point is to be the broker-shaped equivalent of a
-  button that's specifically EUI's.
+
+  **No conditions.** It required EllesmereUIMinimap for a while, on the reasoning that
+  the whole point was to be the broker-shaped equivalent of a button that is specifically
+  EUI's. But the counting logic needs nothing from EUI and the broker displays in any
+  data bar, so the requirement withheld a working widget on the strength of what inspired
+  it — the same presentation-gating-the-data mistake GroupRoles made.
 
   Deliberately **not** a native EllesmereUIDataBars block type (which would come with
   its own dedicated settings page, matching the depth of its built-in blocks like Gold
@@ -662,8 +768,8 @@ both toggleable in **General**.
   generic "Broker Plugin" block type instead of a dedicated one.
 - **SoundSwitch** — switch the game's sound output device from a databar.
   **Left-click** cycles to the next device; **right-click** opens this module's tab,
-  where each detected device has an in-the-cycle checkbox (the current one is marked
-  "current"), so you can skip outputs you never want to land on. The tooltip lists every
+  where each detected device has an in-the-cycle checkbox (the active one carries a
+  **Current** badge), so you can skip outputs you never want to land on. The tooltip lists every
   device, highlighting the active one and dimming skipped ones.
 
   The core is lifted from **SoundManager** (by Zax), reduced to just the switching part —
