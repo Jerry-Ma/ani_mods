@@ -225,15 +225,12 @@ end
 -- Status panel: live eligibility + per-channel toggles
 -- ---------------------------------------------------------------------------
 
+-- No Status section. It reported whether NDui's chat module was active, which
+-- is exactly what this module's one condition already says, in the card
+-- directly above and with a badge -- two readouts of the same fact, phrased
+-- differently, that could only ever agree.
 function ChatContextSwitch:GetInfoRows()
     local rows = {}
-
-    rows[#rows + 1] = { section = "Status" }
-    local ns = _G.NDui
-    rows[#rows + 1] = {
-        label = "NDui chat module",
-        value = not ns and "Not loaded" or (NDuiChatModuleActive() and "Active" or "Inactive"),
-    }
 
     rows[#rows + 1] = { section = "Channels in the cycle" }
     for _, def in ipairs(CYCLE_DEFS) do

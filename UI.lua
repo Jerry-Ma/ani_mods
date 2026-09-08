@@ -178,7 +178,8 @@ end
 -- A module's GetInfoRows() (optional) returns an ordered list of rows:
 --   { section = "Status" }                                                -- header, starts a new section
 --   { label = "Tanks", value = "2" }                                      -- status
---   { label = "Party", get = fn, set = fn, note = "active now" }          -- toggle
+--   { label = "Party", get = fn, set = fn, note = "active now" }          -- toggle, w/ status badge
+--   { label = "Bar color", color = true, get = fn, set = fn, reset = fn } -- colour swatch (RGB + alpha)
 --   { label = "Style", options = {k="Name",...}, order = {...},
 --     get = fn, set = fn, atlas = "some-atlas" }                          -- dropdown, w/ optional icon preview
 --   { label = "Style", ..., texture = "Interface\\...\\Some" }            -- dropdown, w/ texture-file preview
@@ -192,6 +193,7 @@ local function RowKind(descriptor)
     if descriptor.section then return "section" end
     if descriptor.strip then return "strip" end
     if descriptor.picker then return "picker" end
+    if descriptor.color then return "color" end
     if descriptor.swatches then return "swatches" end
     if descriptor.options then return "options" end
     if descriptor.min then return "min" end
@@ -251,18 +253,28 @@ local function SplitIntoSections(rows)
     return groups
 end
 
--- A checkbox's label plus its optional `note` -- a short qualifier about THIS
--- row ("current", "active now"), never a second name for the same thing.
+-- A row's `note` is a live STATUS about that row -- "active now" for a chat
+-- channel currently eligible, "current" for the sound device in use -- not a
+-- qualifier on its name.
 --
--- Accent-coloured, not the hardcoded green it used to be. That green was the
--- one remaining place where a colour was written out rather than read from the
--- theme, which showed the moment the accent was set to anything else.
-local function CheckboxLabel(descriptor)
-    local label = descriptor.label
+-- So it renders as a badge, in the same green as every other affirmative state
+-- in the panel, rather than as accent-coloured text appended to the label. The
+-- accent belongs to the UI's own furniture (titles, card headers, the check
+-- marks); using it for a status made the two indistinguishable, and made a
+-- fact about the game look like part of the widget.
+--
+-- Always built, shown only when there is a note. Whether a row has one changes
+-- with the world -- joining a party makes three channels eligible at once --
+-- and treating that as a shape change would rebuild the section every time,
+-- which is both wasteful and visibly disruptive.
+local function ApplyNote(badge, descriptor)
+    if not badge then return end
     if descriptor.note then
-        label = label .. ("  |cff%s%s|r"):format(W.AccentHex(), descriptor.note)
+        badge:Set(descriptor.note, W.BADGE_OK)
+        badge.frame:Show()
+    else
+        badge.frame:Hide()
     end
-    return label
 end
 
 -- Attaches the "?" marker to a row when its descriptor carries `help`.
@@ -300,14 +312,16 @@ end
 -- which is what "the checkboxes do not work" was. Dropdowns and sliders
 -- already avoided this by refusing to be reused at all; checkboxes take the
 -- cheaper fix, since re-binding is all they need.
-local function BindCheckbox(check, descriptor)
-    check:SetLabel(CheckboxLabel(descriptor))
+local function BindCheckbox(built, descriptor)
+    local check = built.widget
+    check:SetLabel(descriptor.label or "")
     check:SetChecked(descriptor.get())
     check:SetOnClick(function(value)
         descriptor.set(value)
         if descriptor.reload then AniMods.PromptReload(descriptor.label) end
         if AniMods.RefreshUI then AniMods.RefreshUI() end
     end)
+    ApplyNote(built.note, descriptor)
 end
 
 -- Builds one row into `parent`, returning { kind, widget } for later in-place
@@ -427,7 +441,7 @@ local function BuildRow(parent, descriptor, sectionIndex, stripeIndex)
         local strip = W.OrderStrip(row)
         strip.frame:SetPoint("LEFT", row, "LEFT", 8, 0)
         strip.frame:SetPoint("RIGHT", row, "RIGHT", -8, 0)
-        strip:SetList(descriptor.strip, descriptor.labels)
+        strip:SetList(descriptor.strip, descriptor.labels, descriptor.tips)
         -- Two callbacks, because a drag has two different moments. Each swap
         -- applies to the data immediately so the real bar follows the cursor;
         -- only the drop refreshes the panel, which would otherwise rebuild
@@ -477,11 +491,38 @@ local function BuildRow(parent, descriptor, sectionIndex, stripeIndex)
         AttachHelp(row, descriptor, label)
         return { kind = kind, widget = picker }, row, ROW_GAP
 
+    elseif kind == "color" then
+        local row = CreateFrame("Frame", nil, parent)
+        row:SetHeight(24)
+
+        local label = W.Font(row, 12, nil, W.TEXT_DIM_A)
+        label:SetPoint("LEFT", row, "LEFT", 8, 0)
+        label:SetText(descriptor.label or "")
+
+        local sw = W.ColorSwatch(row, 18)
+        sw.frame:SetPoint("LEFT", row, "LEFT", 150, 0)
+        sw:SetColor(descriptor.get())
+        sw:SetOnChange(function(r, g, b, a)
+            descriptor.set(r, g, b, a)
+        end)
+        sw:SetOnReset(function()
+            if descriptor.reset then descriptor.reset() end
+            sw:SetColor(descriptor.get())
+        end)
+
+        AttachHelp(row, descriptor, label)
+        return { kind = kind, widget = sw }, row, ROW_GAP
+
     elseif kind == "checkbox" then
         local check = W.CheckBox(parent)
         local help = AttachHelp(check.frame, descriptor, check.labelFS)
-        local built = { kind = kind, widget = check, help = help }
-        BindCheckbox(check, descriptor)
+
+        local note = W.Badge(check.frame)
+        note.frame:SetPoint("RIGHT", check.frame, "RIGHT", -4, 0)
+        note.frame:Hide()
+
+        local built = { kind = kind, widget = check, help = help, note = note }
+        BindCheckbox(built, descriptor)
         return built, check.frame, ROW_GAP
 
     else
@@ -505,9 +546,17 @@ local function RefreshRowsInPlace(rows, cache)
             -- row is the same SETTING, so the old closure would usually still
             -- be correct -- but "usually" is what made the pooled-reuse version
             -- of this bug survive so long, and re-binding costs one closure.
-            BindCheckbox(c.widget, descriptor)
+            -- This is also what keeps the note badge live: "active now" comes
+            -- and goes with the group, and nothing else repaints it.
+            BindCheckbox(c, descriptor)
+        elseif c and c.kind == "color" then
+            -- Follows the theme until the user picks something, so it has to be
+            -- re-read: the resolved colour can change without this row acting.
+            c.widget:SetColor(descriptor.get())
         elseif c and c.kind == "strip" then
-            c.widget:SetList(descriptor.strip, descriptor.labels)
+            -- Cells carry the widgets' LIVE text, so this is what keeps the
+            -- preview matching the bar as the numbers on it change.
+            c.widget:SetList(descriptor.strip, descriptor.labels, descriptor.tips)
         elseif c and c.kind == "picker" then
             -- Items as well as the summary: the menu lists every broker
             -- registered right now, and a LoadOnDemand addon can add one while
@@ -572,7 +621,7 @@ local function FillSection(section, slice, sectionIndex)
                 entry.built.widget:Set(descriptor.label, tostring(descriptor.value or ""))
                 entry.built.widget:Stripe(stripe)
             elseif kind == "checkbox" then
-                BindCheckbox(entry.built.widget, descriptor)
+                BindCheckbox(entry.built, descriptor)
                 -- The "?" text too. Whether a row HAS one is part of the shape
                 -- signature, so a row that reaches this branch is guaranteed to
                 -- have a marker to update.
@@ -627,12 +676,13 @@ local scrollPos = {}   -- name -> saved scroll offset
 -- phrasings for the single question every row asks, which made a column of
 -- them read as unrelated facts instead of a checklist.
 --
--- Met/Not met is the pair that stays accurate for all of them: some
--- requirements are about an addon being present, others about one being
--- switched off, or about nothing else claiming the same job. The SPECIFICS
--- belong in the label, which is why each is phrased as a condition
--- ("EllesmereUI installed", "NDui chat module off") -- the label states what
--- must be true, the badge says whether it is.
+-- Yes/No, because each row is already phrased as a STATEMENT --
+-- "EllesmereUI installed", "NDui chat module off" -- and the badge answers it.
+-- Read together they form a question and its answer, which is how the rows are
+-- written; Met/Not met made the reader translate the label into a requirement
+-- first and then judge that. The label carries the specifics either way, which
+-- is what lets one vocabulary serve rows about an addon being present, one
+-- being switched off, and nothing else claiming the same job.
 --
 -- There is exactly one pair now. A second (In use / Not found) existed for
 -- `optional` conditions, which is the vocabulary you need once a checklist
@@ -659,7 +709,7 @@ local function RefreshConditionRows(entry, cache)
                 satisfied = (ok and result) and true or false
             end
 
-            badge:Set(satisfied and "Met" or "Not met",
+            badge:Set(satisfied and "Yes" or "No",
                 satisfied and W.BADGE_OK or W.BADGE_BAD)
         end
     end

@@ -81,6 +81,7 @@ local WATCHED = {
 }
 
 local bar, itemHost
+local barFill, barEdges   -- the bar's own configurable background and border
 local items = {}          -- objName -> { button, fs, icon, text, hasIcon, textW }
 local ldb
 local enabled = {}        -- objName -> true, a lookup over db.order
@@ -94,6 +95,22 @@ local dirty = false
 -- on the bar, and position means where. It replaced a `widgets` map of name ->
 -- "left"/"center"/"right", which needed two controls per widget (a switch and
 -- an alignment) and still could not express "this one before that one".
+--
+-- The list is a SET as well as a sequence -- a widget appears at most once --
+-- and that is enforced here rather than trusted, because the migration that
+-- built the first one got it wrong (see below) and there is now saved data in
+-- the wild carrying duplicates.
+local function DedupeOrder(order)
+    local seen, out = {}, {}
+    for _, name in ipairs(order or {}) do
+        if type(name) == "string" and not seen[name] then
+            seen[name] = true
+            out[#out + 1] = name
+        end
+    end
+    return out
+end
+
 local function ModuleDB()
     AniModsDB.bar = AniModsDB.bar or {}
     local db = AniModsDB.bar
@@ -107,8 +124,14 @@ local function ModuleDB()
         for _, section in ipairs({ "left", "center", "right" }) do
             local group = {}
             for name, value in pairs(db.widgets) do
-                -- `true` was the even older boolean form, which meant "on".
-                if value == true or value == section then group[#group + 1] = name end
+                -- The boolean `true` is the oldest form, from before alignment
+                -- sections existed, and it means "on the bar" -- it is not a
+                -- section. Matching it in every pass, as the first version of
+                -- this did, appended such a widget three times, which is where
+                -- the duplicated rows came from.
+                local inSection = (value == section)
+                    or (value == true and section == "left")
+                if inSection then group[#group + 1] = name end
             end
             table.sort(group)
             for _, name in ipairs(group) do order[#order + 1] = name end
@@ -116,25 +139,73 @@ local function ModuleDB()
         db.order = order
         db.widgets = nil
     end
-    db.order = db.order or {}
+
+    -- Unconditional, not just after the migration: it also repairs a list
+    -- already saved with duplicates in it.
+    db.order = DedupeOrder(db.order)
 
     -- Unlocked by default: a bar you just switched on has to be positionable
     -- without hunting for the setting that allows it. Lock it once it is
     -- where you want it.
     if db.locked == nil then db.locked = false end
-    if db.showIcons == nil then db.showIcons = true end
     if db.width == nil then db.width = 500 end
+    if db.border == nil then db.border = true end
 
     -- Dropped settings, cleared rather than left to rot in the saved variables.
     -- `stripColors` discarded the meaning AniMods' own brokers put in their
     -- colours; `maxWidth` capped a widget's width, which equal division now
-    -- does by construction -- every widget gets exactly its share and its text
-    -- truncates to fit, so there is nothing left for a manual cap to do.
+    -- does by construction; `showIcons` hid art the plugin chose to publish,
+    -- for no gain -- an icon is the most compact thing on the bar and several
+    -- brokers publish nothing else.
     db.stripColors = nil
     db.maxWidth = nil
     db.showOthers = nil
+    db.showIcons = nil
 
     return db
+end
+
+-- ---------------------------------------------------------------------------
+-- Appearance
+-- ---------------------------------------------------------------------------
+
+-- The bar's fill colour: the user's choice, else the theme's panel colour.
+--
+-- `nil` means "follow the theme" rather than being resolved to a concrete
+-- colour at first run, so a bar left alone keeps tracking the theme instead of
+-- freezing whatever it happened to be the first time it was drawn. Right-click
+-- on the swatch returns to it.
+local function BarColor()
+    local c = ModuleDB().color
+    if c then return c.r, c.g, c.b, c.a end
+    local S = AniMods.W.S
+    if S then return S.GetPanelColor() end
+    return 0.05, 0.07, 0.09, 0.94
+end
+
+-- Bar textures come from LibSharedMedia when some addon has registered it.
+-- Not a dependency and not shipped: LSM is a registry, so this offers whatever
+-- the user's other addons have already contributed and simply has nothing to
+-- offer when nothing has. "None" is always present and is a flat fill.
+local function SharedMedia()
+    return _G.LibStub and _G.LibStub:GetLibrary("LibSharedMedia-3.0", true)
+end
+
+local function TexturePath(key)
+    if not key or key == "none" then return nil end
+    local lsm = SharedMedia()
+    if not lsm then return nil end
+    -- noDefault: a key that is no longer registered (its addon was removed)
+    -- must come back nil so the bar falls to a flat fill, rather than silently
+    -- becoming LibSharedMedia's default texture.
+    --
+    -- The disable is for the WoW API annotations, not a real problem: they
+    -- declare Fetch with two parameters, but the library's own source is
+    -- `function lib:Fetch(mediatype, key, noDefault)` -- verified in
+    -- LibSharedMedia-3.0.lua:250. Suppressed at this exact line rather than by
+    -- turning the check off.
+    ---@diagnostic disable-next-line: redundant-parameter
+    return lsm:Fetch("statusbar", key, true)
 end
 
 local function RebuildEnabledLookup()
@@ -372,7 +443,7 @@ local function Refresh()
             -- `icon` is a texture path or an atlas name; SetTexture rejects an
             -- atlas, so try the atlas form first and fall back. iconCoords and
             -- the iconR/G/B tint are part of the same LDB convention.
-            local iconRef = ModuleDB().showIcons and obj and obj.icon or nil
+            local iconRef = obj and obj.icon or nil
             local had = it.hasIcon
             if iconRef then
                 -- Tested with GetAtlasInfo rather than branching on SetAtlas's
@@ -407,6 +478,40 @@ local QueueRefresh
 -- below with the rest of the frame handling. Without this the call would
 -- resolve to a global read and silently do nothing.
 local ApplyVisibility
+
+-- Paints the bar's background and border from the current settings.
+--
+-- ONE texture carries both the flat colour and the picked texture, tinted by
+-- that same colour -- EllesmereUIDataBars' own arrangement (its
+-- ApplyThemeToHost, where a barTexture is drawn with SetVertexColor from the
+-- style's colour), and the reason the colour keeps working when a texture is
+-- chosen instead of being replaced by it.
+--
+-- The vertex colour has to be reset before SetColorTexture: it is a multiplier
+-- that survives the texture being swapped, so a flat fill picked after a
+-- texture would otherwise come out multiplied by the old tint.
+local function ApplyAppearance()
+    if not (bar and barFill) then return end
+    local db = ModuleDB()
+    local r, g, b, a = BarColor()
+
+    local path = TexturePath(db.texture)
+    if path then
+        barFill:SetTexture(path)
+        barFill:SetVertexColor(r, g, b, a)
+    else
+        barFill:SetVertexColor(1, 1, 1, 1)
+        barFill:SetColorTexture(r, g, b, a)
+    end
+
+    -- Black at 0.8, matching EllesmereUIDataBars' own bar border, so a bar
+    -- sitting next to one of theirs does not read as a different kind of
+    -- object.
+    for _, edge in ipairs(barEdges) do
+        edge:SetColorTexture(0, 0, 0, 0.8)
+        edge:SetShown(db.border ~= false)
+    end
+end
 
 -- Applies the lock to the live frame. EnableMouse stays ON either way: the
 -- widgets are buttons and must keep taking clicks. Only dragging is withdrawn.
@@ -464,8 +569,27 @@ end
 local function BuildBar()
     if bar then return bar end
 
-    bar = AniMods.W.Panel(UIParent)
+    -- A plain frame, NOT W.Panel.
+    --
+    -- The house panel paints its own fill and border and owns both, which is
+    -- right for the settings window and wrong here: this bar's background is a
+    -- setting. Skipping S.Panel also keeps the frame out of the restrip
+    -- registry, so its textures can live directly on it -- the one place in
+    -- this addon where that is true, and why it is worth saying out loud.
+    bar = CreateFrame("Frame", nil, UIParent)
     bar:SetHeight(BAR_H)
+
+    barFill = bar:CreateTexture(nil, "BACKGROUND")
+    barFill:SetAllPoints()
+
+    -- 1px border, drawn as four strips for the same reason Compat.lua does:
+    -- a backdrop's edgeFile blurs at fractional UI scales.
+    barEdges = {}
+    for i = 1, 4 do barEdges[i] = bar:CreateTexture(nil, "OVERLAY") end
+    barEdges[1]:SetPoint("TOPLEFT");    barEdges[1]:SetPoint("TOPRIGHT");    barEdges[1]:SetHeight(1)
+    barEdges[2]:SetPoint("BOTTOMLEFT"); barEdges[2]:SetPoint("BOTTOMRIGHT"); barEdges[2]:SetHeight(1)
+    barEdges[3]:SetPoint("TOPLEFT");    barEdges[3]:SetPoint("BOTTOMLEFT");  barEdges[3]:SetWidth(1)
+    barEdges[4]:SetPoint("TOPRIGHT");   barEdges[4]:SetPoint("BOTTOMRIGHT"); barEdges[4]:SetWidth(1)
     bar:SetFrameStrata("MEDIUM")
     bar:SetClampedToScreen(true)
     bar:EnableMouse(true)
@@ -504,6 +628,7 @@ ApplyVisibility = function()
     BuildBar()
     if not bar then return end
     ApplyLock()
+    ApplyAppearance()
     Refresh()
     Relayout()
     bar:Show()
@@ -546,9 +671,21 @@ local function BrokerLabel(name, obj)
     return name
 end
 
--- Short form for the preview strip's cells, which are narrow and already
--- ordered: the friendly label when a plugin offers one, else its name.
-local function BrokerShortLabel(name, obj)
+-- What a preview cell shows: the widget's CURRENT OUTPUT -- the same string the
+-- bar itself renders.
+--
+-- The cells used to carry the broker's name, which was wrong twice over. The
+-- names are long and the cells are narrow (they are equal shares of a strip),
+-- so most of them truncated to nothing useful; and a preview that shows
+-- something other than what the thing previews is not one. Live text also
+-- makes the cell width honest -- it is what that widget will actually occupy.
+--
+-- A broker publishing only an icon, or nothing yet, has no text to show, so
+-- the cell falls back to naming it. Otherwise the cell would be blank and the
+-- widget would look broken rather than quiet.
+local function BrokerPreviewText(name, obj)
+    local text = ItemText(obj)
+    if text ~= "" then return text end
     local label = obj and obj.label
     if type(label) == "string" and label ~= "" then return label end
     return name
@@ -567,8 +704,22 @@ end
 --   * Strip plugin colors. It deleted meaning to solve a palette clash.
 --   * Per-widget settings behind a gear. There is nothing left to put in one:
 --     a widget is either on the bar or it is not.
+-- The texture list, rebuilt at each panel refresh rather than cached: an addon
+-- registering with LibSharedMedia later in the session should simply appear.
+local function TextureChoices()
+    local labels, order = { none = "None" }, { "none" }
+    local lsm = SharedMedia()
+    if not lsm then return labels, order end
+    for _, key in ipairs(lsm:List("statusbar") or {}) do
+        labels[key] = key
+        order[#order + 1] = key
+    end
+    return labels, order
+end
+
 function Bar:GetInfoRows()
     local rows = {}
+    local textureLabels, textureOrder = TextureChoices()
 
     rows[#rows + 1] = { section = "Bar" }
     rows[#rows + 1] = {
@@ -590,13 +741,38 @@ function Bar:GetInfoRows()
         end,
     }
     rows[#rows + 1] = {
-        label = "Show plugin icons",
-        get   = function() return ModuleDB().showIcons ~= false end,
+        label = "Bar color",
+        color = true,
+        help  = "The bar's fill, transparency included. Right-click the swatch "
+             .. "to go back to following your UI theme.",
+        get   = BarColor,
+        set   = function(r, g, b, a)
+            ModuleDB().color = { r = r, g = g, b = b, a = a }
+            ApplyAppearance()
+        end,
+        reset = function()
+            ModuleDB().color = nil
+            ApplyAppearance()
+        end,
+    }
+    rows[#rows + 1] = {
+        label   = "Bar texture",
+        help    = "Textures come from LibSharedMedia, so this lists whatever "
+               .. "your other addons have registered.",
+        options = textureLabels,
+        order   = textureOrder,
+        get     = function() return ModuleDB().texture or "none" end,
+        set     = function(v)
+            ModuleDB().texture = (v ~= "none") and v or nil
+            ApplyAppearance()
+        end,
+    }
+    rows[#rows + 1] = {
+        label = "Show border",
+        get   = function() return ModuleDB().border ~= false end,
         set   = function(v)
-            ModuleDB().showIcons = v and true or false
-            dirty = true
-            Refresh()
-            Relayout()
+            ModuleDB().border = v and true or false
+            ApplyAppearance()
         end,
     }
 
@@ -622,14 +798,19 @@ function Bar:GetInfoRows()
         return rows
     end
 
-    local labels = {}
+    -- Cells show live output; the tooltip carries the identity, which is what
+    -- the cell no longer has room for.
+    local labels, tips = {}, {}
     for _, name in ipairs(db.order) do
-        labels[name] = BrokerShortLabel(name, ldb and ldb:GetDataObjectByName(name))
+        local obj = ldb and ldb:GetDataObjectByName(name)
+        labels[name] = BrokerPreviewText(name, obj)
+        tips[name] = BrokerLabel(name, obj)
     end
 
     rows[#rows + 1] = {
         strip  = db.order,
         labels = labels,
+        tips   = tips,
         -- Applied live, so the bar itself reorders under the cursor.
         onReorder = SetOrder,
         onDrop    = SetOrder,
@@ -715,6 +896,13 @@ function Bar:Enable()
         dirty = true
         QueueRefresh()
     end)
+
+    -- "Follow the theme" has to keep following. With no colour of its own the
+    -- bar paints from S.GetPanelColor(), which changes when the user retunes
+    -- their theme -- without this it would only track it across a reload,
+    -- which is not what following means. Cheap and correct when a colour IS
+    -- set, too: ApplyAppearance simply repaints the same colour.
+    AniMods.W.OnLooksChanged(ApplyAppearance)
 
     AniMods.W.OnReady(ApplyVisibility)
 end

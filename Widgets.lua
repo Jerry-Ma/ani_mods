@@ -862,6 +862,99 @@ function W.Swatches(parent, size)
     return o
 end
 
+-- ── Colour swatch (opens Blizzard's picker) ─────────────────────────────────
+-- One clickable square that opens the game's own colour picker, alpha
+-- included. Left-click picks, right-click resets.
+--
+-- Blizzard's picker rather than one of ours, because an RGB+alpha picker is a
+-- lot of widget to own and the game ships a perfectly good one that players
+-- already know. The call shape is the post-10.2.5 one
+-- (SetupColorPickerAndShow, with `opacity` carrying the ALPHA and
+-- GetColorAlpha reading it back) -- verified against AceGUI's own colour
+-- picker, which keeps both the old and new forms side by side and so shows
+-- exactly what changed. No legacy branch here: this addon targets current
+-- retail only.
+local function OpenColorPicker(r, g, b, a, onChange, onCancel)
+    -- Both callbacks push the whole quad. They fire for different reasons --
+    -- one for the wheel, one for the opacity slider -- but either way the
+    -- current state is all four channels, and reading them together avoids a
+    -- handler that knows only three and leaves the fourth stale.
+    local function Push()
+        local nr, ng, nb = ColorPickerFrame:GetColorRGB()
+        onChange(nr, ng, nb, ColorPickerFrame:GetColorAlpha())
+    end
+
+    ColorPickerFrame:SetFrameStrata("FULLSCREEN_DIALOG")
+    ColorPickerFrame:SetClampedToScreen(true)
+    ColorPickerFrame:SetupColorPickerAndShow({
+        r = r, g = g, b = b,
+        hasOpacity  = true,
+        opacity     = a,
+        swatchFunc  = Push,
+        opacityFunc = Push,
+        cancelFunc  = function() onCancel(r, g, b, a) end,
+    })
+end
+
+function W.ColorSwatch(parent, size)
+    size = size or 18
+
+    local f = CreateFrame("Button", nil, parent)
+    f:SetSize(size, size)
+    f:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+
+    -- Mid-grey backing, so a translucent colour reads AS translucent: alpha
+    -- shows up as the colour drifting toward the grey instead of the swatch
+    -- quietly going darker with no clue why.
+    local back = W.Tex(f, "BACKGROUND", 0.35, 0.35, 0.35, 1)
+    back:SetPoint("TOPLEFT", 1, -1)
+    back:SetPoint("BOTTOMRIGHT", -1, 1)
+
+    local swatch = W.Tex(f, "ARTWORK", 1, 1, 1, 1)
+    swatch:SetPoint("TOPLEFT", 1, -1)
+    swatch:SetPoint("BOTTOMRIGHT", -1, 1)
+
+    local edges = {}
+    for i = 1, 4 do edges[i] = W.Tex(f, "OVERLAY", 1, 1, 1, 0.25) end
+    edges[1]:SetPoint("TOPLEFT");    edges[1]:SetPoint("TOPRIGHT");    edges[1]:SetHeight(1)
+    edges[2]:SetPoint("BOTTOMLEFT"); edges[2]:SetPoint("BOTTOMRIGHT"); edges[2]:SetHeight(1)
+    edges[3]:SetPoint("TOPLEFT");    edges[3]:SetPoint("BOTTOMLEFT");  edges[3]:SetWidth(1)
+    edges[4]:SetPoint("TOPRIGHT");   edges[4]:SetPoint("BOTTOMRIGHT"); edges[4]:SetWidth(1)
+
+    local o = { frame = f, r = 1, g = 1, b = 1, a = 1 }
+
+    function o:SetColor(r, g, b, a)
+        o.r, o.g, o.b, o.a = r or 1, g or 1, b or 1, a == nil and 1 or a
+        swatch:SetColorTexture(o.r, o.g, o.b, o.a)
+    end
+    function o:SetOnChange(fn) o._onChange = fn end
+    function o:SetOnReset(fn) o._onReset = fn end
+
+    f:SetScript("OnEnter", function()
+        for i = 1, 4 do edges[i]:SetColorTexture(1, 1, 1, 0.5) end
+    end)
+    f:SetScript("OnLeave", function()
+        for i = 1, 4 do edges[i]:SetColorTexture(1, 1, 1, 0.25) end
+    end)
+    f:SetScript("OnClick", function(_, button)
+        if button == "RightButton" then
+            if o._onReset then o._onReset() end
+            return
+        end
+        OpenColorPicker(o.r, o.g, o.b, o.a,
+            function(r, g, b, a)
+                o:SetColor(r, g, b, a == nil and o.a or a)
+                if o._onChange then o._onChange(o.r, o.g, o.b, o.a) end
+            end,
+            function(r, g, b, a)
+                o:SetColor(r, g, b, a)
+                if o._onChange then o._onChange(r, g, b, a) end
+            end)
+    end)
+
+    return o
+end
+
 -- ── Card ────────────────────────────────────────────────────────────────────
 -- A titled panel that groups related rows.
 --
@@ -1338,7 +1431,7 @@ function W.OrderStrip(parent)
     local f = CreateFrame("Frame", nil, parent)
     f:SetHeight(CHIP_H)
 
-    local o = { frame = f, chips = {}, order = {}, labels = {} }
+    local o = { frame = f, chips = {}, order = {}, labels = {}, tips = {} }
     local dragging = nil   -- INDEX being dragged, not a name: cells are pooled
                            -- by position and hold whatever is at that position.
 
@@ -1410,12 +1503,26 @@ function W.OrderStrip(parent)
             if o._onDrop then o._onDrop(o.order) end
         end)
         chip:SetScript("OnEnter", function(self)
-            if dragging and dragging ~= self._index then
-                Swap(dragging, self._index)
+            if dragging then
+                if dragging ~= self._index then Swap(dragging, self._index) end
+                PaintAll()
+                return
             end
             PaintAll()
+            -- Only at rest. A tooltip chasing the cursor through a drag would
+            -- sit on top of the cells being dropped onto.
+            local tip = o.tips[o.order[self._index]]
+            if tip then
+                GameTooltip:SetOwner(self, "ANCHOR_TOP")
+                GameTooltip:SetText(tip, 1, 1, 1, 1, true)
+                GameTooltip:AddLine("Drag to reorder", 0.6, 0.6, 0.6)
+                GameTooltip:Show()
+            end
         end)
-        chip:SetScript("OnLeave", PaintAll)
+        chip:SetScript("OnLeave", function()
+            GameTooltip:Hide()
+            PaintAll()
+        end)
 
         o.chips[index] = chip
         return chip
@@ -1450,9 +1557,9 @@ function W.OrderStrip(parent)
     -- Ignored while a drag is in flight: the panel refreshing underneath a
     -- gesture would replace the order being edited with the one it was read
     -- from.
-    function o:SetList(order, labels)
+    function o:SetList(order, labels, tips)
         if dragging then return end
-        o.order, o.labels = order or {}, labels or {}
+        o.order, o.labels, o.tips = order or {}, labels or {}, tips or {}
         Layout()
     end
     function o:Relayout() if not dragging then Layout() end end
