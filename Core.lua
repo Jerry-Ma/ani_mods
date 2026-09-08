@@ -110,58 +110,10 @@ function AniMods.Coalesce(fn)
     end
 end
 
--- ── Condition evaluation ──────────────────────────────────────────────────────
+-- ── Conditions ────────────────────────────────────────────────────────────────
 
-local function NormalizeRequirement(req)
-    if type(req) == "string" then
-        return { name = req }
-    end
-    return req
-end
-
--- Returns met (bool), reason (string, only set when not met / not applicable).
-local function EvaluateCondition(condition)
-    if not condition then return true end
-
-    for _, raw in ipairs(condition.requires or {}) do
-        local req = NormalizeRequirement(raw)
-        if not IsAddOnLoaded(req.name) then
-            return false, req.name .. " is not loaded"
-        end
-        if req.minVersion or req.maxVersion then
-            local version = GetAddOnVersion(req.name)
-            if req.minVersion and CompareVersions(version, req.minVersion) < 0 then
-                return false, ("%s version %s < required %s"):format(req.name, tostring(version), req.minVersion)
-            end
-            if req.maxVersion and CompareVersions(version, req.maxVersion) > 0 then
-                return false, ("%s version %s > max %s"):format(req.name, tostring(version), req.maxVersion)
-            end
-        end
-    end
-
-    for _, raw in ipairs(condition.forbids or {}) do
-        local forbid = NormalizeRequirement(raw)
-        if IsAddOnLoaded(forbid.name) then
-            return false, forbid.name .. " is loaded"
-        end
-    end
-
-    if condition.check then
-        local ok, why = condition.check()
-        if not ok then
-            return false, why or "condition not met"
-        end
-    end
-
-    return true
-end
-AniMods.EvaluateCondition = EvaluateCondition
-
--- ── Requirements ──────────────────────────────────────────────────────────────
-
--- A module's `dependencies` are not documentation: most of them gate whether
--- it runs at all. Three kinds, and the kind decides both the consequence and
--- how the panel words the badge:
+-- A module's `conditions` are not documentation: most of them gate whether it
+-- runs at all. Three kinds, and the kind decides the consequence:
 --
 --   REQUIRED (the default)  unmet -> the module is inactive. It genuinely
 --                           cannot work.
@@ -179,13 +131,19 @@ AniMods.EvaluateCondition = EvaluateCondition
 -- rows were dropped and the panel stopped answering "why is part of this
 -- missing".
 --
+-- Each entry's `text` is phrased as a STATEMENT that is true or false --
+-- "EllesmereUI installed", "NDui chat module off" -- which is what makes the
+-- panel's Met / Not met badge read correctly against it, and what the name
+-- `conditions` is describing. It was `dependencies` first, a noun for the
+-- things rather than for the claims being made about them.
+--
 -- Returns:
---   allMet   every GATING requirement is satisfied (optional ones ignored)
+--   allMet   every GATING condition is satisfied (optional ones ignored)
 --   hardMet  every gating REQUIRED one is satisfied
 --   firstUnmet  text of the first failure, for the inactive reason
 --
 -- Entries with no `met` never fail.
-function AniMods.EvaluateDependencies(deps)
+function AniMods.EvaluateConditions(deps)
     if type(deps) ~= "table" then return true, true, nil end
 
     local allMet, hardMet, firstUnmet = true, true, nil
@@ -202,12 +160,12 @@ function AniMods.EvaluateDependencies(deps)
     return allMet, hardMet, firstUnmet
 end
 
--- Whether a module may run given its requirements and the user's override.
--- Forcing can only ever get past SOFT failures -- a missing hard requirement
+-- Whether a module may run given its conditions and the user's override.
+-- Forcing can only ever get past SOFT failures -- an unmet hard condition
 -- means the module genuinely cannot work, so the override stays unavailable
 -- rather than letting it fail loudly.
-local function RequirementsSatisfied(module, deps, forced)
-    local allMet, hardMet = AniMods.EvaluateDependencies(deps)
+local function ConditionsSatisfied(module, deps, forced)
+    local allMet, hardMet = AniMods.EvaluateConditions(deps)
     if allMet then return true end
     if forced and module.forceable and hardMet then return true end
     return false
@@ -227,7 +185,6 @@ local function InitModules()
 
     for _, name in ipairs(names) do
         local module = modules[name]
-        local conditionMet, reason = EvaluateCondition(module.condition)
 
         local userEnabled
         if module.essential then
@@ -245,16 +202,21 @@ local function InitModules()
         db.forced = db.forced or {}
         local forced = db.forced[name] == true
 
-        -- Requirements gate activation alongside `condition`. The two answer
-        -- different questions: `condition` is "does this patch apply to this
-        -- install at all", requirements are "is what it needs present".
-        local depsAllMet, depsHardMet, firstUnmet = AniMods.EvaluateDependencies(module.dependencies)
-        local reqOK = RequirementsSatisfied(module, module.dependencies, forced)
-        if conditionMet and not reqOK then
-            reason = firstUnmet and ("requires: " .. firstUnmet) or "a requirement is not met"
+        -- `conditions` is the only gate now.
+        --
+        -- There used to be a second one, `condition`, with requires/forbids/
+        -- check fields -- and by the end its only two users were duplicating
+        -- their `conditions` entry inside it, so the same predicate was
+        -- written twice per module with nothing keeping the copies in step.
+        -- Everything it expressed is a condition with a `met` function, which
+        -- is what `conditions` already is, so it is gone rather than kept as
+        -- a second way to say the same thing.
+        local depsAllMet, depsHardMet, firstUnmet = AniMods.EvaluateConditions(module.conditions)
+        local runnable = ConditionsSatisfied(module, module.conditions, forced)
+        local reason
+        if not runnable then
+            reason = firstUnmet and ("needs: " .. firstUnmet) or "a condition is not met"
         end
-
-        local runnable = conditionMet and reqOK
 
         local active = false
         local ranEnable = false
@@ -298,14 +260,14 @@ local function InitModules()
             order           = module.order or 100,
             essential       = module.essential == true,
             description     = module.description,
-            dependencies    = module.dependencies, -- always-visible "Depends on" checklist ({ text, met } entries), distinct from conditionReason (which only shows on failure)
-            conditionMet    = conditionMet,
+            conditions      = module.conditions, -- { text, met, soft, optional, help } entries; distinct from conditionReason, which only appears on failure
+            conditionMet    = runnable,
             conditionReason = reason,
             errorTrace      = errorTrace,
             userEnabled     = userEnabled,
             active          = active,
             ranEnable       = ranEnable,
-            -- Requirement state, read by the panel's header: whether the
+            -- Condition state, read by the panel's header: whether the
             -- force-active override should be offered at all (forceable),
             -- whether it would help (depsHardMet), and where it stands.
             forceable       = module.forceable == true,
@@ -404,7 +366,7 @@ local function MigrateRenames()
     end
 end
 
--- Runs a module despite unmet SOFT requirements. Saved but not applied until
+-- Runs a module despite unmet SOFT conditions. Saved but not applied until
 -- reload, for the same reason enabling is: Enable() already ran or did not.
 function AniMods.SetModuleForced(name, forced)
     if not modules[name] then return false end

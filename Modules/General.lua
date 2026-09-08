@@ -15,7 +15,7 @@ local General = {
     -- including the minimap button and compartment entry that are two of the
     -- three ways back into this panel.
     essential = true,
-    -- No dependencies. This listed LibDataBroker, which was simply wrong --
+    -- No conditions. This listed LibDataBroker, which was simply wrong --
     -- left over from an early plan to build the minimap button on LibDBIcon.
     -- The button is hand-rolled and everything here is plain Blizzard API, so
     -- claiming a requirement would have shown a red badge for a library this

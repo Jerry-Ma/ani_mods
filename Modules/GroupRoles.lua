@@ -54,7 +54,7 @@ local GroupRoles = {
     -- works anywhere. EllesmereUIQoL is OPTIONAL -- it enables the docked
     -- badge, which is one of this module's two surfaces, so its absence
     -- disables half the module rather than breaking it.
-    dependencies = {
+    conditions = {
         { text = "EllesmereUIQoL installed",
           optional = true,
           help = "Enables the count badge docked under EllesmereUI's Raid Tools "

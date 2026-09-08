@@ -50,16 +50,7 @@ local function NDuiChatModuleActive()
     return not (C and C.db and C.db["Chat"] and C.db["Chat"]["Disable"])
 end
 
-ChatContextSwitch.condition = {
-    check = function()
-        if NDuiChatModuleActive() then
-            return false, "NDui is loaded and its Chat module is enabled (NDui already provides this)"
-        end
-        return true
-    end,
-}
-
-ChatContextSwitch.dependencies = {
+ChatContextSwitch.conditions = {
     { text = "NDui chat module off",
       help = "NDui's chat module installs the same Tab hook. Only one can own "
           .. "it, so this stands down while that is on.",

@@ -24,7 +24,7 @@
 local SoundSwitch = {
     title = "Sound Switch",
     description = "Switch your sound output device.",
-    -- No dependencies: Blizzard's own sound output API, nothing else.
+    -- No conditions: Blizzard's own sound output API, nothing else.
 }
 
 local Broker = AniMods.Broker

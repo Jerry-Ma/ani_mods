@@ -44,7 +44,7 @@ local SocialStatus = {
     -- copied from, not where any of its information comes from. The effect
     -- was that a stock UI -- or even EllesmereUI installed without its
     -- Minimap module -- lost working friend counts for no reason.
-    -- No dependencies: everything here is plain Blizzard API, and
+    -- No conditions: everything here is plain Blizzard API, and
     -- EllesmereUIMinimap only informs the popup's styling. Listing it would
     -- make an unmet entry, which now means an inactive module.
 }

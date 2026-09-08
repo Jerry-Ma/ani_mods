@@ -40,7 +40,7 @@ local Bar = {
     -- Its "you already have a data bar" requirement is advisory, so the panel
     -- offers a Run anyway switch when that is the only thing holding it back.
     forceable = true,
-    dependencies = {
+    conditions = {
         { text = "LibDataBroker available",
           help = "The library data brokers publish through. Shipped by EllesmereUI "
               .. "and most data bars.",

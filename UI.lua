@@ -509,7 +509,7 @@ end
 
 -- ── Per-module tab content ───────────────────────────────────────────────────
 
--- name -> { blocks, sections, titleFS, stateBadge, toggle, depBadges, ... }
+-- name -> { blocks, sections, titleFS, stateBadge, conditionBadges, ... }
 local tabCache = {}
 local scrollPos = {}   -- name -> saved scroll offset
 
@@ -534,17 +534,17 @@ local scrollPos = {}   -- name -> saved scroll offset
 -- hand-picked strings did. And the distinction is real: "Not met" in red says
 -- something is wrong, which is false for an absent optional dependency --
 -- nothing is broken, a feature is simply not switched on.
-local function RefreshDepRows(entry, cache)
-    local badges = cache.depBadges
+local function RefreshConditionRows(entry, cache)
+    local badges = cache.conditionBadges
     if not badges then return end
-    local deps = entry.dependencies
+    local deps = entry.conditions
     if type(deps) ~= "table" then return end
 
     for i, dep in ipairs(deps) do
         local badge = badges[i]
         if badge then
             -- An entry with no `met` counts as satisfied, matching
-            -- Core's EvaluateDependencies. The two have to agree, or the
+            -- Core's EvaluateConditions. The two have to agree, or the
             -- panel would show "Not met" for something Core is happily
             -- treating as fine -- and pcall(nil) would silently produce
             -- exactly that.
@@ -594,7 +594,7 @@ local function ApplyLiveValues(entry, cache)
             (entry.depsHardMet and not entry.depsAllMet) and W.TEXT_DIM_A or 0.25)
     end
 
-    RefreshDepRows(entry, cache)
+    RefreshConditionRows(entry, cache)
 
     if cache.reasonText then
         if cache.hasError then
@@ -701,15 +701,19 @@ local function BuildTabContent(name)
 
     cache.blocks[#cache.blocks + 1] = { frame = titleFrame, gap = BLOCK_GAP }
 
-    -- Requirements card: one row per condition, each with its own badge, so
+    -- Conditions card: one row per condition, each with its own badge, so
     -- "why is this inactive" is answered by scanning a column of colours
     -- rather than by reading prose.
-    local deps = entry.dependencies
+    --
+    -- "Conditions" rather than "Dependencies" or "Requirements", because each
+    -- row is a STATEMENT that is true or false -- "EllesmereUI installed",
+    -- "NDui chat module off" -- not the name of a thing. A noun header over a
+    -- column of statements reads as a mislabel, and neither of the earlier
+    -- names covered the optional entries, which are not required.
+    local deps = entry.conditions
     if type(deps) == "table" and deps[1] then
-        -- "Dependencies", not "Requirements": the list now also carries
-        -- optional entries, which are not required by definition.
-        local card = W.Card(content, "Dependencies")
-        cache.depBadges = {}
+        local card = W.Card(content, "Conditions")
+        cache.conditionBadges = {}
         W.ResetStack(card.body, 0)
 
         for i, dep in ipairs(deps) do
@@ -727,13 +731,13 @@ local function BuildTabContent(name)
 
             local badge = W.Badge(row)
             badge.frame:SetPoint("RIGHT", row, "RIGHT", 0, 0)
-            cache.depBadges[i] = badge
+            cache.conditionBadges[i] = badge
 
             W.Stack(card.body, row, 18, 2)
         end
 
         card:Finish()
-        cache.depCard = card
+        cache.conditionCard = card
         cache.blocks[#cache.blocks + 1] = { frame = card.frame, gap = BLOCK_GAP }
     end
 
