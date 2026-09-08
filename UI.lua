@@ -195,6 +195,20 @@ local function CheckboxLabel(descriptor)
     return label
 end
 
+-- Attaches the "?" marker to a row when its descriptor carries `help`.
+--
+-- Right-aligned rather than tucked against the label, so the markers line up
+-- in a column down the card and the eye can find "the one with an
+-- explanation" without reading every label. `help` is for the reasoning
+-- behind a setting; the short qualifier that belongs beside the label is
+-- `note`.
+local function AttachHelp(rowFrame, descriptor)
+    if not descriptor.help then return nil end
+    local help = W.Help(rowFrame, descriptor.help)
+    help.frame:SetPoint("RIGHT", rowFrame, "RIGHT", -4, 0)
+    return help
+end
+
 -- Builds one row into `parent`, returning { kind, widget } for later in-place
 -- updates. `sectionIndex` tags a dropdown's open/close so a rebuild knows
 -- whether it owns the currently-open menu.
@@ -202,9 +216,13 @@ local function BuildRow(parent, descriptor, sectionIndex, stripeIndex)
     local kind = RowKind(descriptor)
 
     if kind == "section" then
-        local heading = W.Heading(parent)
-        heading:SetText(descriptor.section)
-        return { kind = kind, widget = heading }, heading.frame, 4
+        -- The card's own header carries the title now (FillSection sets it),
+        -- so the descriptor contributes no visible row -- but it still
+        -- occupies its slot, because the pool and the shape signature are
+        -- indexed 1:1 against the slice.
+        local spacer = CreateFrame("Frame", nil, parent)
+        spacer:SetHeight(1)
+        return { kind = kind, widget = { SetText = function() end } }, spacer, 0
 
     elseif kind == "options" then
         local row = CreateFrame("Frame", nil, parent)
@@ -258,6 +276,7 @@ local function BuildRow(parent, descriptor, sectionIndex, stripeIndex)
             end
         end
 
+        AttachHelp(row, descriptor)
         return { kind = kind, widget = dd, icons = icons }, row, ROW_GAP
 
     elseif kind == "min" then
@@ -276,6 +295,7 @@ local function BuildRow(parent, descriptor, sectionIndex, stripeIndex)
             descriptor.set(value)
             if AniMods.RefreshUI then AniMods.RefreshUI() end
         end)
+        AttachHelp(row, descriptor)
         return { kind = kind, widget = slider }, row, ROW_GAP
 
     elseif kind == "checkbox" then
@@ -286,6 +306,7 @@ local function BuildRow(parent, descriptor, sectionIndex, stripeIndex)
             descriptor.set(value)
             if AniMods.RefreshUI then AniMods.RefreshUI() end
         end)
+        AttachHelp(check.frame, descriptor)
         return { kind = kind, widget = check }, check.frame, ROW_GAP
 
     else
@@ -334,7 +355,8 @@ end
 -- flips between shapes -- 1 row solo, 4 rows grouped, back again -- reuses
 -- what it already made instead of leaking a new set every time.
 local function FillSection(section, slice, sectionIndex)
-    local container = section.container
+    local card = section.card
+    local container = card.body
     W.ResetStack(container, 0)
 
     section.pool = section.pool or {}
@@ -345,6 +367,7 @@ local function FillSection(section, slice, sectionIndex)
     for i, descriptor in ipairs(slice) do
         local kind = RowKind(descriptor)
         if kind == "value" then stripe = stripe + 1 end
+        if kind == "section" then card:SetTitle(descriptor.section) end
 
         local entry = pool[i]
         if entry and entry.kind == kind then
@@ -383,32 +406,43 @@ local function FillSection(section, slice, sectionIndex)
         if pool[i] then pool[i].frame:Hide() end
     end
 
+    -- The card wraps whatever the body ended up being. A slice always starts
+    -- with its {section=...} descriptor when it has one, so that row's own
+    -- widget is what names the card; an unnamed leading slice keeps the
+    -- generic title set when the card was built.
+    card:Finish()
+
     section.shape = BuildShape(slice)
     section.cache = cache
 end
 
 -- ── Per-module tab content ───────────────────────────────────────────────────
 
--- name -> { blocks, sections, titleFS, depRows, reasonText, enabledCheck, ... }
+-- name -> { blocks, sections, titleFS, depLine, reasonText, enabledCheck, ... }
 local tabCache = {}
 local scrollPos = {}   -- name -> saved scroll offset
 
+-- Renders the whole requirement list into one wrapped line: a coloured dot
+-- per entry followed by its text, separated by a muted divider. Green = met,
+-- red = not met, grey = purely informational (no `met` check to run).
 local function RefreshDepRows(entry, cache)
+    local line = cache.depLine
+    if not line then return end
     local deps = entry.dependencies
     if type(deps) ~= "table" or not deps[1] then return end
+
+    local parts = {}
     for i, dep in ipairs(deps) do
-        local line = cache.depRows[i]
-        if line then
-            local dotColor
-            if dep.met then
-                local ok, result = pcall(dep.met)
-                dotColor = (ok and result) and "59ff59" or "ff5555"
-            else
-                dotColor = "888888"
-            end
-            line:SetText(("  |cff%s%s|r %s"):format(dotColor, DOT, dep.text))
+        local dotColor
+        if dep.met then
+            local ok, result = pcall(dep.met)
+            dotColor = (ok and result) and "59ff59" or "ff5555"
+        else
+            dotColor = "888888"
         end
+        parts[i] = ("|cff%s%s|r %s"):format(dotColor, DOT, dep.text)
     end
+    line:SetText(table.concat(parts, "   |cff4a4a4a|||r   "))
 end
 
 -- Everything above the info-row sections whose content is live: the title's
@@ -473,7 +507,7 @@ local function BuildTabContent(name)
         return
     end
 
-    local cache = { blocks = {}, sections = {}, depRows = {} }
+    local cache = { blocks = {}, sections = {} }
     tabCache[name] = cache
 
     -- Title + state badge.
@@ -489,21 +523,17 @@ local function BuildTabContent(name)
     desc:SetText(entry.description or "|cff888888(no description)|r")
     cache.blocks[#cache.blocks + 1] = { frame = desc.frame, text = desc, gap = BLOCK_GAP }
 
-    -- "Depends on:" checklist.
-    local depHeader = W.Text(content, 12, W.TEXT_SECTION_A)
-    depHeader:SetText("Depends on:")
-    cache.blocks[#cache.blocks + 1] = { frame = depHeader.frame, text = depHeader, gap = 1 }
-
+    -- Requirements, as ONE line.
+    --
+    -- This used to be a "Depends on:" caption followed by a bulleted line per
+    -- entry -- four lines of chrome above every tab to say something that is
+    -- usually "nothing is missing". Now the dots run inline and separated, so
+    -- a satisfied module costs one muted line and an unsatisfied one still
+    -- shows exactly which entry is red.
     local deps = entry.dependencies
     if type(deps) == "table" and deps[1] then
-        for i in ipairs(deps) do
-            local line = W.Text(content, 12, W.TEXT_DIM_A)
-            cache.depRows[i] = line
-            cache.blocks[#cache.blocks + 1] = { frame = line.frame, text = line, gap = 1 }
-        end
-    else
         local line = W.Text(content, 12, W.TEXT_DIM_A)
-        line:SetText("  |cff888888(not documented)|r")
+        cache.depLine = line
         cache.blocks[#cache.blocks + 1] = { frame = line.frame, text = line, gap = BLOCK_GAP }
     end
 
@@ -537,11 +567,13 @@ local function BuildTabContent(name)
     local groups = SplitIntoSections(rows)
     cache.groupCount = #groups
     for gi, slice in ipairs(groups) do
-        local container = CreateFrame("Frame", nil, content)
-        local section = { container = container }
+        -- "Settings" is the fallback title for a leading slice that has no
+        -- {section=...} descriptor of its own.
+        local card = W.Card(content, "Settings")
+        local section = { card = card }
         cache.sections[gi] = section
         FillSection(section, slice, gi)
-        cache.blocks[#cache.blocks + 1] = { frame = container, gap = BLOCK_GAP }
+        cache.blocks[#cache.blocks + 1] = { frame = card.frame, gap = BLOCK_GAP }
     end
 
     -- Enabled toggle.

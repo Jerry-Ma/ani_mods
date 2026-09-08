@@ -17,7 +17,7 @@
 
 local Skin = {
     title = "Skin",
-    description = "Re-skins extra Blizzard UI elements EllesmereUI doesn't skin itself. Each entry below can be toggled independently.",
+    description = "Restyles elements EllesmereUI leaves alone.",
     dependencies = {
         { text = "EllesmereUI loaded", met = function() return AniMods.IsAddOnLoaded("EllesmereUI") end },
     },

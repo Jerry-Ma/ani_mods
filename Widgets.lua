@@ -337,6 +337,100 @@ function W.Heading(parent)
     return o
 end
 
+-- ── Help marker ─────────────────────────────────────────────────────────────
+-- A small accent "?" that reveals the long explanation on hover.
+--
+-- The point is what it takes OFF the panel. Every setting worth explaining
+-- used to carry its reasoning inline, which turned each tab into a wall of
+-- muted paragraphs that nobody reads twice and that buries the controls. A
+-- short label plus a "?" keeps the panel scannable and still leaves the
+-- detail one hover away -- the pattern PIHelper's options use throughout.
+--
+-- Corollary for callers: the label must stand alone. "Coalesce events" with
+-- the reasoning behind it in the tooltip is right; "Coalesce" with the whole
+-- explanation hidden is not.
+function W.Help(parent, text)
+    local f = CreateFrame("Button", nil, parent)
+    f:SetSize(14, 14)
+
+    local mark = W.Font(f, 11, nil, 1)
+    mark:SetPoint("CENTER")
+    mark:SetText("?")
+    local ar, ag, ab = W.Accent()
+    mark:SetTextColor(ar, ag, ab, 0.75)
+    W.RegisterAccent(mark, "text", 0.75)
+
+    local o = { frame = f, fs = mark, text = text }
+
+    f:SetScript("OnEnter", function(self)
+        if not o.text or o.text == "" then return end
+        mark:SetTextColor(1, 1, 1, 1)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        -- The trailing `true` is wrapText; without it a long explanation
+        -- renders as one unreadable line running off the screen.
+        GameTooltip:SetText(o.text, 1, 1, 1, 1, true)
+        GameTooltip:Show()
+    end)
+    f:SetScript("OnLeave", function()
+        GameTooltip:Hide()
+        local r, g, b = W.Accent()
+        mark:SetTextColor(r, g, b, 0.75)
+    end)
+
+    function o:SetText(t) o.text = t end
+    function o:SetShown(v) f:SetShown(v and o.text ~= nil and o.text ~= "") end
+
+    o:SetShown(true)
+    return o
+end
+
+-- ── Card ────────────────────────────────────────────────────────────────────
+-- A titled panel that groups related rows.
+--
+-- Replaces a bare accent caption with a hairline rule. A rule separates but
+-- does not enclose: with several sections stacked, everything read as one
+-- undifferentiated column and the eye had nothing to group on. A filled,
+-- bordered card makes each group a visible object, which is what
+-- EllesmereUI's options and PIHelper's both do.
+--
+-- Callers stack into `.body` and call `:Finish()` once, which sizes the card
+-- around whatever the body ended up being. `.body` is a child, per the
+-- restrip rule at the top of this file.
+local CARD_PAD = 10
+local CARD_HEADER_H = 17
+
+function W.Card(parent, titleText)
+    local f = W.Panel(parent)
+
+    local inner = CreateFrame("Frame", nil, f)
+    inner:SetPoint("TOPLEFT", CARD_PAD, -CARD_PAD)
+    inner:SetPoint("TOPRIGHT", -CARD_PAD, -CARD_PAD)
+    inner:SetHeight(1)
+
+    -- Uppercase and small: a section title should register as a label, not
+    -- compete with the content under it.
+    local header = W.Font(inner, 11, nil, 1)
+    header:SetPoint("TOPLEFT")
+    header:SetText(string.upper(titleText or ""))
+    local ar, ag, ab = W.Accent()
+    header:SetTextColor(ar, ag, ab, 1)
+    W.RegisterAccent(header, "text")
+
+    local body = CreateFrame("Frame", nil, inner)
+    body:SetPoint("TOPLEFT", inner, "TOPLEFT", 0, -CARD_HEADER_H)
+    body:SetPoint("TOPRIGHT", inner, "TOPRIGHT", 0, -CARD_HEADER_H)
+    body:SetHeight(1)
+
+    local o = { frame = f, body = body, header = header }
+
+    function o:SetTitle(t) header:SetText(string.upper(t or "")) end
+    function o:Finish()
+        f:SetHeight((body:GetHeight() or 0) + CARD_HEADER_H + CARD_PAD * 2)
+    end
+
+    return o
+end
+
 -- ── Checkbox ────────────────────────────────────────────────────────────────
 -- A real CheckButton skinned by the engine: S.Checkbox strips the Blizzard
 -- art, lays the house dark box with a 1px border, and tints the check itself

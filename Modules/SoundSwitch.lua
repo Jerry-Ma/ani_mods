@@ -23,7 +23,7 @@
 
 local SoundSwitch = {
     title = "Sound Switch",
-    description = "Switch sound output device from a databar. Left-click cycles, right-click opens this tab.",
+    description = "Switch your sound output device.",
     dependencies = {
         -- No `met`: purely informational, nothing to check.
         { text = "None -- uses Blizzard's own sound output API" },

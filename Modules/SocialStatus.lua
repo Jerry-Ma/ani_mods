@@ -32,7 +32,7 @@
 
 local SocialStatus = {
     title = "Social Status",
-    description = "Online guild/friend counts as a broker (LDB) plugin, mirroring EllesmereUIMinimap's own friends button.",
+    description = "Online guild and friend counts.",
     -- No `condition`: nothing here needs another addon. The roster gathering
     -- below is a port that calls only Blizzard APIs (GetGuildRosterInfo,
     -- C_BattleNet, C_FriendList), and the broker is a plain LibDataBroker

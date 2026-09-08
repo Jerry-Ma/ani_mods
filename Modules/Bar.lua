@@ -36,7 +36,7 @@
 
 local Bar = {
     title = "Data Bar",
-    description = "A minimal bar for LibDataBroker widgets, for setups with no other data bar. Off by default.",
+    description = "A bar for LibDataBroker widgets. Off by default.",
     dependencies = {
         { text = "None -- displays any LibDataBroker plugin" },
     },
@@ -461,7 +461,9 @@ function Bar:GetInfoRows()
     rows[#rows + 1] = { label = "LibDataBroker", value = ldb and "Available" or "Not available" }
     rows[#rows + 1] = {
         label = "Show the bar",
-        note  = "off by default -- use a real data bar if you have one",
+        help  = "Off by default. If you already run EllesmereUIDataBars, Titan, "
+             .. "ChocolateBar or similar, use that instead -- this bar exists for "
+             .. "setups that have none.",
         get   = IsBarEnabled,
         set   = function(v)
             ModuleDB().enabled = v and true or false
@@ -491,7 +493,10 @@ function Bar:GetInfoRows()
     }
     rows[#rows + 1] = {
         label = "Strip plugin colors",
-        note  = "hands text color back to the bar",
+        help  = "Plugins colour their own text, which overrides anything the bar "
+             .. "applies. Stripping hands that control back to the bar. Off by "
+             .. "default because AniMods' own widgets use colour to carry meaning "
+             .. "-- role counts, guild versus friends.",
         get   = function() return ModuleDB().stripColors == true end,
         set   = function(v)
             ModuleDB().stripColors = v and true or false
@@ -506,6 +511,9 @@ function Bar:GetInfoRows()
     rows[#rows + 1] = {
         label = "Max widget width",
         note  = "0 = unlimited",
+        help  = "Caps how wide any single widget may get, ellipsizing past that. "
+             .. "A plugin can publish arbitrarily long text, and without a cap one "
+             .. "of them can push everything else off the bar.",
         min   = 0, max = 400, step = 10,
         get   = function() return ModuleDB().maxWidth or 0 end,
         set   = function(v)

@@ -36,7 +36,7 @@
 
 local GroupRoles = {
     title = "Group Roles",
-    description = "Tank/Healer/DPS role counts, docked onto EllesmereUI's Raid Tools icon.",
+    description = "Tank/Healer/DPS counts for your group.",
     -- No `condition`: the counts come from UnitGroupRolesAssigned, a plain
     -- Blizzard call, and the broker is a LibDataBroker object any data bar
     -- can show. Only the DOCKED BADGE needs EllesmereUIQoL, and that is
