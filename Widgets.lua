@@ -100,9 +100,21 @@ function W.OnLooksChanged(fn)
     if type(fn) == "function" then looksFns[#looksFns + 1] = fn end
 end
 
-local function RefreshLooks()
+-- Repaints everything registered for accent changes.
+--
+-- Public, because two different things have to be able to trigger it and only
+-- one of them is the provider: the host theme changing (EllesmereUI calls
+-- this through S.OnLooksChanged) and AniMods' own accent setting changing.
+-- The second used to call AniMods.RefreshStockLooks, which walks the STOCK
+-- provider's callback list -- empty whenever EllesmereUI is the provider, so
+-- picking a swatch saved the colour and repainted nothing.
+--
+-- Reads W.Accent, not S.GetAccentColor. The provider's accent is only the
+-- default; using it here would have repainted in the host's colour and
+-- discarded the user's choice even once the repaint did fire.
+function W.RefreshLooks()
     if not S then return end
-    local r, g, b = S.GetAccentColor()
+    local r, g, b = W.Accent()
     for tex, a in pairs(accentTex) do tex:SetColorTexture(r, g, b, a) end
     for fs, a in pairs(accentText) do fs:SetTextColor(r, g, b, a) end
     for i = 1, #looksFns do
@@ -118,7 +130,7 @@ end
 AniMods.AcquireSkin(function(facade)
     S = facade
     W.S = facade
-    S.OnLooksChanged(RefreshLooks)
+    S.OnLooksChanged(W.RefreshLooks)
     for i = 1, #readyQueue do
         -- Isolated per entry: one module's bad layout must not stop the
         -- rest of the addon from coming up.

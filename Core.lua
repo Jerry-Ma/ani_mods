@@ -439,65 +439,20 @@ end)
 
 -- ── Slash commands ────────────────────────────────────────────────────────────
 
--- Module names are registered CamelCase ("GroupRoles"), but nobody
--- wants to have to type them that way -- resolve case-insensitively, and
--- return the real registered name so messages echo it back properly.
-local function ResolveModuleName(input)
-    if input == "" then return nil end
-    if modules[input] then return input end
-    local wanted = input:lower()
-    for moduleName in pairs(modules) do
-        if moduleName:lower() == wanted then return moduleName end
-    end
-    return nil
-end
-
-_G.SLASH_ANIMODS1 = "/animods"
-_G.SLASH_ANIMODS2 = "/ani"
-_G.SlashCmdList["ANIMODS"] = function(msg)
-    -- Only the command word is lowercased -- lowercasing the whole message
-    -- (as this used to) also mangled the module name, so `/ani enable
-    -- GroupRoles` looked up "grouproles" and always reported
-    -- "Unknown module".
-    local cmd, name = strtrim(msg or ""):match("^(%S*)%s*(.-)$")
-    cmd = (cmd or ""):lower()
-    name = strtrim(name or "")
-
-    if cmd == "" then
-        if AniMods.ToggleUI then AniMods.ToggleUI() end
-
-    elseif cmd == "list" then
-        print("|cffffff00AniMods|r modules:")
-        local names = {}
-        for moduleName in pairs(status) do names[#names + 1] = moduleName end
-        table.sort(names)
-        for _, moduleName in ipairs(names) do
-            local entry = status[moduleName]
-            local state
-            if entry.active then
-                state = "|cff44ff44active|r"
-            elseif not entry.userEnabled then
-                state = "|cff888888disabled|r"
-            else
-                state = "|cffff4444inactive|r"
-            end
-            local suffix = entry.conditionReason and (" (" .. entry.conditionReason .. ")") or ""
-            print(("  %s: %s%s"):format(moduleName, state, suffix))
-        end
-
-    elseif cmd == "enable" or cmd == "disable" then
-        local resolved = ResolveModuleName(name)
-        if not resolved then
-            print("|cffff4444AniMods:|r Unknown module: " .. tostring(name))
-            return
-        end
-        AniMods.SetModuleEnabled(resolved, cmd == "enable")
-        print(("|cffffff00AniMods:|r %s %s. |cff888888/reload|r to apply.")
-            :format(resolved, cmd == "enable" and "enabled" or "disabled"))
-
-    else
-        print("|cffffff00AniMods|r commands: |cffffd700/animods|r (status panel), |cffffd700list|r, |cffffd700enable <name>|r, |cffffd700disable <name>|r")
-    end
+-- One command, one job: /ani opens the panel.
+--
+-- `list`, `enable` and `disable` are gone. They existed before the panel did
+-- and duplicated it afterwards -- worse, they duplicated it badly: `list`
+-- printed a state the sidebar's status dots already show at a glance, and
+-- `enable`/`disable` wrote the same saved variable as the module switch while
+-- reporting "/reload to apply" whether or not that was true, which the switch
+-- now determines properly.
+--
+-- The parsing they needed is gone with them, including its own bug history
+-- (a lowercased message once mangled module names).
+_G.SLASH_ANIMODS1 = "/ani"
+_G.SlashCmdList["ANIMODS"] = function()
+    if AniMods.ToggleUI then AniMods.ToggleUI() end
 end
 
 -- ── Addon compartment ─────────────────────────────────────────────────────────
@@ -533,7 +488,7 @@ end
 
 _G.AniMods_OnAddonCompartmentClick = function()
     if not CompartmentEnabled() then
-        print("|cffffff00AniMods:|r compartment entry is switched off in General. Use |cffffd700/animods|r.")
+        print("|cffffff00AniMods:|r compartment entry is switched off in General. Use |cffffd700/ani|r.")
         return
     end
     if AniMods.ToggleUI then AniMods.ToggleUI() end

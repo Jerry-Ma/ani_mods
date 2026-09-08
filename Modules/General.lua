@@ -271,8 +271,12 @@ local function SetAccent(key)
         end
     end
 
-    -- Repaints everything registered for accent changes, without a reload.
-    if AniMods.RefreshStockLooks then AniMods.RefreshStockLooks() end
+    -- W.RefreshLooks, not AniMods.RefreshStockLooks: the latter walks the
+    -- STOCK provider's callback list, which is empty whenever EllesmereUI is
+    -- the provider -- so under EllesmereUI this saved the colour and repainted
+    -- nothing. W owns the registry the widgets actually register with, and it
+    -- is the same one under either provider.
+    AniMods.W.RefreshLooks()
 end
 
 -- ---------------------------------------------------------------------------

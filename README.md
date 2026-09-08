@@ -252,7 +252,7 @@ modules leaves the displayed numbers unchanged, that no-op repaint was the commo
 
 ## UI
 
-`/animods` opens the status panel: one tab per registered module, drawn with
+`/ani` opens the status panel: one tab per registered module, drawn with
 `AniMods.W` (`Widgets.lua`) on EllesmereUI's public skinning API, so it wears the same
 window dress as the rest of the suite and follows the user's theme live. Each
 tab's title is prefixed with a colored status dot (green = active, gray = user-disabled,
@@ -355,12 +355,17 @@ colour now comes from the theme, so there is no copied palette left to drift. On
 
 ## Commands
 
-`/animods` (or the shorter `/ani`):
+`/ani` — open the panel. That is the whole surface.
 
-- `/ani` — open the status panel
-- `/ani list` — print module states to chat
-- `/ani enable <name>` / `/ani disable <name>` — toggle a module (takes effect after
-  `/reload`)
+`list`, `enable` and `disable` existed before the panel did and duplicated it
+afterwards — badly: `list` printed a state the sidebar's status dots already show at a
+glance, and `enable`/`disable` wrote the same saved variable as the module switch while
+always reporting "/reload to apply", whether or not that was true. The switch now
+determines that properly (see `SetModuleEnabled`), so the commands were removed rather
+than fixed twice.
+
+The panel is also reachable from the minimap button and the addon compartment entry,
+both toggleable in **General**.
 
 ## Current modules
 

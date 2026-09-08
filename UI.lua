@@ -1,4 +1,4 @@
--- AniMods status/config panel. `/animods` (or `/ani`) toggles it.
+-- AniMods status/config panel. `/ani` toggles it.
 --
 -- Drawn with AniMods.W (Widgets.lua) -- hand-rolled chrome matching
 -- EllesmereUI's look, using EUI's own public primitives when it's loaded.
@@ -560,7 +560,7 @@ end
 
 -- Everything above the info-row sections whose content is live: the title's
 -- state badge, the dependency checklist's dots, the reason line, and the
--- Enabled checkbox (which `/ani enable` can change from outside the panel).
+-- module switch.
 -- Shared by both paths on purpose -- when only the refresh path applied
 -- these, a freshly built tab showed an empty title and blank dependency
 -- lines until something happened to trigger a refresh.
@@ -995,7 +995,7 @@ local function BuildUI()
         icon = "Interface\\AddOns\\AniMods\\Media\\icon.png",
         footer = true,
     })
-    frame.footerLeft:SetText("/animods  |cff4a4a4a|||r  /ani list  |cff4a4a4a|||r  /ani enable <module>")
+    frame.footerLeft:SetText("/ani")
     frame.footerRight:SetText("v" .. (AniMods.GetAddOnVersion("AniMods") or "?"))
 
     -- `content` is the window's own child, below S.Shell's title band.
