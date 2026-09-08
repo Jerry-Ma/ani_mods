@@ -197,43 +197,78 @@ end
 -- and cover what an accent is for.
 --
 -- Only reachable when EllesmereUI is absent; with it loaded, its accent wins.
+-- Hues only, no names. Naming them was the previous version's mistake: it
+-- called 0.047/0.824/0.616 "Green" when it is a mint, and carried a separate
+-- "Teal" that was nearly the same colour. A swatch shows what it is.
+--
+-- "auto" is first and is the default -- it means follow the host theme, and
+-- its swatch renders in whatever that currently resolves to, so the choice
+-- previews itself. Selecting it clears the override rather than storing a
+-- copy, so it keeps tracking a theme that later changes.
 local ACCENTS = {
-    green  = { r = 0.047, g = 0.824, b = 0.616, label = "Green" },
-    blue   = { r = 0.204, g = 0.596, b = 0.859, label = "Blue" },
-    purple = { r = 0.608, g = 0.349, b = 0.714, label = "Purple" },
-    gold   = { r = 0.902, g = 0.729, b = 0.231, label = "Gold" },
-    red    = { r = 0.906, g = 0.298, b = 0.235, label = "Red" },
-    teal   = { r = 0.102, g = 0.737, b = 0.612, label = "Teal" },
-    class  = { label = "Class color" },   -- resolved live, see ResolveAccent
+    { key = "auto" },                                  -- follows the provider
+    { key = "mint",    rgb = { 0.047, 0.824, 0.616 } },
+    { key = "green",   rgb = { 0.298, 0.780, 0.353 } },
+    { key = "cyan",    rgb = { 0.204, 0.741, 0.890 } },
+    { key = "blue",    rgb = { 0.204, 0.541, 0.890 } },
+    { key = "purple",  rgb = { 0.608, 0.400, 0.859 } },
+    { key = "magenta", rgb = { 0.890, 0.353, 0.639 } },
+    { key = "red",     rgb = { 0.906, 0.298, 0.235 } },
+    { key = "orange",  rgb = { 0.949, 0.573, 0.204 } },
+    { key = "gold",    rgb = { 0.937, 0.788, 0.271 } },
+    { key = "class" },                                 -- resolved live
 }
-local ACCENT_ORDER = { "green", "blue", "teal", "purple", "gold", "red", "class" }
 
-local ACCENT_LABEL = {}
-for key, def in pairs(ACCENTS) do ACCENT_LABEL[key] = def.label end
+local ACCENT_ORDER = {}
+for i, def in ipairs(ACCENTS) do ACCENT_ORDER[i] = def.key end
 
-local function CurrentAccentKey()
-    return ModuleDB().accentKey or "green"
+local function ClassColor()
+    local _, class = UnitClass("player")
+    local c = class and RAID_CLASS_COLORS and RAID_CLASS_COLORS[class]
+    if c then return { c.r, c.g, c.b } end
+    local d = AniMods.ACCENT_DEFAULT
+    return { d.r, d.g, d.b }
 end
 
--- Writes the resolved rgb into the DB, because that is what Compat's
--- GetAccentColor reads -- keeping the resolution here means the provider stays
--- a plain getter with no knowledge of presets or class colours.
-local function ResolveAccent(key)
-    local def = ACCENTS[key]
-    if key == "class" then
-        local _, class = UnitClass("player")
-        local c = class and RAID_CLASS_COLORS and RAID_CLASS_COLORS[class]
-        if c then return { r = c.r, g = c.g, b = c.b } end
-        return AniMods.ACCENT_DEFAULT
+-- Swatch colours, rebuilt per call so "auto" and "class" show what they
+-- currently resolve to rather than a value captured at load.
+local function AccentSwatchColors()
+    local out = {}
+    for _, def in ipairs(ACCENTS) do
+        if def.key == "auto" then
+            local r, g, b = AniMods.W.ProviderAccent()
+            out.auto = { r, g, b }
+        elseif def.key == "class" then
+            out.class = ClassColor()
+        else
+            out[def.key] = def.rgb
+        end
     end
-    if def and def.r then return { r = def.r, g = def.g, b = def.b } end
-    return AniMods.ACCENT_DEFAULT
+    return out
+end
+
+local function CurrentAccentKey()
+    return ModuleDB().accentKey or "auto"
 end
 
 local function SetAccent(key)
     local db = ModuleDB()
     db.accentKey = key
-    db.accent = ResolveAccent(key)
+
+    if key == "auto" then
+        db.accent = nil
+    elseif key == "class" then
+        local c = ClassColor()
+        db.accent = { r = c[1], g = c[2], b = c[3] }
+    else
+        for _, def in ipairs(ACCENTS) do
+            if def.key == key and def.rgb then
+                db.accent = { r = def.rgb[1], g = def.rgb[2], b = def.rgb[3] }
+                break
+            end
+        end
+    end
+
     -- Repaints everything registered for accent changes, without a reload.
     if AniMods.RefreshStockLooks then AniMods.RefreshStockLooks() end
 end
@@ -265,26 +300,16 @@ function General:GetInfoRows()
     }
 
     rows[#rows + 1] = { section = "Appearance" }
-    if AniMods.AccentIsForeign() then
-        -- Shown, not hidden: the setting exists, it is just not ours to set
-        -- here. Hiding it would leave no explanation for why the panel is the
-        -- colour it is.
-        rows[#rows + 1] = {
-            label = "Accent color",
-            value = "EllesmereUI",
-            help  = "Follows your EllesmereUI accent. Change it in EllesmereUI's "
-                 .. "own settings.",
-        }
-    else
-        rows[#rows + 1] = {
-            label   = "Accent color",
-            help    = "Used for headings, highlights and the module switches.",
-            options = ACCENT_LABEL,
-            order   = ACCENT_ORDER,
-            get     = CurrentAccentKey,
-            set     = SetAccent,
-        }
-    end
+    rows[#rows + 1] = {
+        label    = "Accent color",
+        help     = AniMods.AccentIsForeign()
+            and "Used for headings, highlights and switches. The first swatch follows your EllesmereUI accent."
+            or  "Used for headings, highlights and switches. The first swatch is the default.",
+        swatches = AccentSwatchColors(),
+        order    = ACCENT_ORDER,
+        get      = CurrentAccentKey,
+        set      = SetAccent,
+    }
 
     rows[#rows + 1] = { section = "Modules" }
     local active, total = 0, 0

@@ -144,10 +144,37 @@ end
 
 -- ── Theme reads ─────────────────────────────────────────────────────────────
 
--- The user's live accent colour.
+-- The accent AniMods draws with.
+--
+-- An explicit AniMods setting wins; otherwise the provider's answer, which is
+-- EllesmereUI's live theme accent when EllesmereUI is there.
+--
+-- The override exists because "follow the host" is the right DEFAULT but the
+-- wrong rule: EllesmereUI's accent can be pale, and a pale accent leaves this
+-- panel's title, headings and switches near-white. Following the theme by
+-- default and allowing a local override costs one saved colour and removes
+-- the whole class of "AniMods is unreadable in my theme".
 function W.Accent()
+    local g = AniModsDB and AniModsDB.general
+    local a = g and g.accent
+    if a and a.r then return a.r, a.g, a.b end
+
     local s = Need()
-    if not s then return 1, 1, 1 end
+    if not s then
+        local d = AniMods.ACCENT_DEFAULT
+        return d.r, d.g, d.b
+    end
+    return s.GetAccentColor()
+end
+
+-- The provider's own accent, ignoring any AniMods override -- what the
+-- "follow the theme" swatch shows, so that choice previews itself.
+function W.ProviderAccent()
+    local s = S
+    if not s then
+        local d = AniMods.ACCENT_DEFAULT
+        return d.r, d.g, d.b
+    end
     return s.GetAccentColor()
 end
 
@@ -572,6 +599,96 @@ function W.Badge(parent)
     end
 
     o:Set("")
+    return o
+end
+
+-- ── Colour swatches ─────────────────────────────────────────────────────────
+-- A row of clickable colour squares, the current one ringed.
+--
+-- Not a dropdown. A dropdown names colours, and names are the problem: the
+-- list this replaced called 0.047/0.824/0.616 "Green" when it is a mint, and
+-- carried a separate "Teal" that was nearly the same colour. Showing the
+-- colours removes both the naming and the question of whether the name is
+-- accurate -- you pick what you can see.
+function W.Swatches(parent, size)
+    size = size or 16
+    local GAP, RING = 6, 2
+
+    local f = CreateFrame("Frame", nil, parent)
+    f:SetHeight(size + RING * 2)
+
+    local o = { frame = f, buttons = {}, order = {}, colors = {} }
+
+    local function Paint(btn, selected, hovering)
+        btn.ring:SetShown(selected)
+        btn.swatch:SetAlpha((selected or hovering) and 1 or 0.75)
+    end
+
+    local function Repaint()
+        for key, btn in pairs(o.buttons) do
+            Paint(btn, key == o.value, btn:IsMouseOver())
+        end
+    end
+
+    -- `colors` maps key -> {r, g, b}. Rebuilt rather than pooled: the palette
+    -- is fixed and set once.
+    function o:SetList(order, colors)
+        o.order, o.colors = order or {}, colors or {}
+
+        local x = 0
+        for _, key in ipairs(o.order) do
+            local c = o.colors[key]
+            local btn = o.buttons[key]
+            if not btn then
+                btn = CreateFrame("Button", nil, f)
+                btn:SetSize(size + RING * 2, size + RING * 2)
+                btn:RegisterForClicks("AnyUp")
+
+                -- The ring is a plain backing square a little larger than the
+                -- swatch, so the selected colour reads as framed without
+                -- needing a border texture.
+                btn.ring = W.Tex(btn, "BACKGROUND", 1, 1, 1, 0.85)
+                btn.ring:SetAllPoints()
+                btn.ring:Hide()
+
+                btn.swatch = W.Tex(btn, "ARTWORK", 1, 1, 1, 1)
+                btn.swatch:SetPoint("TOPLEFT", RING, -RING)
+                btn.swatch:SetPoint("BOTTOMRIGHT", -RING, RING)
+
+                -- `swatch` rather than `self`: the enclosing SetList is a
+                -- method, so `self` here would shadow its own.
+                btn:SetScript("OnEnter", function(swatch) Paint(swatch, o.value == key, true) end)
+                btn:SetScript("OnLeave", function(swatch) Paint(swatch, o.value == key, false) end)
+                btn:SetScript("OnClick", function()
+                    o.value = key
+                    Repaint()
+                    if o._onChange then o._onChange(key) end
+                end)
+
+                o.buttons[key] = btn
+            end
+
+            if c then btn.swatch:SetColorTexture(c[1], c[2], c[3], 1) end
+            btn:ClearAllPoints()
+            btn:SetPoint("LEFT", f, "LEFT", x, 0)
+            btn:Show()
+            x = x + size + RING * 2 + GAP
+        end
+
+        f:SetWidth(math.max(x - GAP, 1))
+        Repaint()
+    end
+
+    function o:SetValue(key) o.value = key; Repaint() end
+    function o:GetValue() return o.value end
+    function o:SetOnChange(fn) o._onChange = fn end
+    -- Re-reads a colour that resolves live (the class swatch), so it stays
+    -- right if it is rebuilt after the player's class is known.
+    function o:SetColor(key, c)
+        local btn = o.buttons[key]
+        if btn and c then btn.swatch:SetColorTexture(c[1], c[2], c[3], 1) end
+    end
+
     return o
 end
 

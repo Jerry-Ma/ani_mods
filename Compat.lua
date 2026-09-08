@@ -50,8 +50,8 @@ local ADDON_LABEL = "AniMods"
 -- is not there to supply one, so both providers look like the same addon.
 AniMods.ACCENT_DEFAULT = { r = 0.047, g = 0.824, b = 0.616 }
 
--- True when the accent is EllesmereUI's rather than ours -- read by General to
--- decide whether its Accent color control applies.
+-- True when a host theme is supplying the accent, so General can label its
+-- "follow the theme" swatch with what is actually being followed.
 function AniMods.AccentIsForeign()
     return (EllesmereUI and EllesmereUI.RegisterSkin) and true or false
 end
@@ -173,20 +173,13 @@ function AniMods.BuildStockSkin()
     -- claiming one of theirs.
     function S.GetStyle() return "stock" end
 
-    -- The accent, from AniMods' own setting (General -> Accent color).
-    --
-    -- EllesmereUI's provider answers this from the user's EUI theme, so when
-    -- EUI is loaded that is what the panel follows and this setting does not
-    -- apply -- General says so rather than offering a control that would be
-    -- silently overridden.
-    --
-    -- Default is EllesmereUI's green, so the two providers look like the same
-    -- addon out of the box.
+    -- This provider has no host theme to follow, so its accent is simply the
+    -- default. A user preference is layered on top of BOTH providers by
+    -- W.Accent, not here -- that keeps the override in one place instead of
+    -- each provider re-implementing it.
     function S.GetAccentColor()
-        local g = AniModsDB and AniModsDB.general
-        local a = g and g.accent
-        if a and a.r then return a.r, a.g, a.b end
-        return AniMods.ACCENT_DEFAULT.r, AniMods.ACCENT_DEFAULT.g, AniMods.ACCENT_DEFAULT.b
+        local d = AniMods.ACCENT_DEFAULT
+        return d.r, d.g, d.b
     end
 
     function S.GetPanelColor()

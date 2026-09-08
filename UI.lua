@@ -179,6 +179,7 @@ end
 
 local function RowKind(descriptor)
     if descriptor.section then return "section" end
+    if descriptor.swatches then return "swatches" end
     if descriptor.options then return "options" end
     if descriptor.min then return "min" end
     if descriptor.get then return "checkbox" end
@@ -325,6 +326,26 @@ local function BuildRow(parent, descriptor, sectionIndex, stripeIndex)
         AttachHelp(row, descriptor)
         return { kind = kind, widget = dd, icons = icons }, row, ROW_GAP
 
+    elseif kind == "swatches" then
+        local row = CreateFrame("Frame", nil, parent)
+        row:SetHeight(26)
+
+        local label = W.Font(row, 12, nil, W.TEXT_DIM_A)
+        label:SetPoint("LEFT", row, "LEFT", 8, 0)
+        label:SetText(descriptor.label or "")
+
+        local sw = W.Swatches(row, 14)
+        sw.frame:SetPoint("LEFT", row, "LEFT", 150, 0)
+        sw:SetList(descriptor.order, descriptor.swatches)
+        sw:SetValue(descriptor.get())
+        sw:SetOnChange(function(value)
+            descriptor.set(value)
+            if AniMods.RefreshUI then AniMods.RefreshUI() end
+        end)
+
+        AttachHelp(row, descriptor)
+        return { kind = kind, widget = sw }, row, ROW_GAP
+
     elseif kind == "min" then
         -- Wrapped in a full-width row so the slider itself keeps
         -- CONTROL_WIDTH: stacking it directly would anchor it left AND
@@ -376,6 +397,12 @@ local function RefreshRowsInPlace(rows, cache)
             c.widget:SetLabel(CheckboxLabel(descriptor))
         elseif c and c.kind == "value" then
             c.widget:Set(descriptor.label, tostring(descriptor.value or ""))
+        elseif c and c.kind == "swatches" then
+            -- Re-push the colours as well as the selection: the "follow the
+            -- theme" swatch renders whatever that currently resolves to, so
+            -- it has to move when the theme does.
+            c.widget:SetList(descriptor.order, descriptor.swatches)
+            c.widget:SetValue(descriptor.get())
         elseif c and c.kind == "options" then
             -- The selection itself (in case something changed it from
             -- outside this dropdown) and, more importantly, the preview
