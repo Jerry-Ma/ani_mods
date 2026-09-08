@@ -178,7 +178,7 @@ function MyFeature:GetInfoRows()
         { section = "Status" },                                                  -- section header
         { label = "Some live value", value = tostring(someState) },              -- status
         { section = "Options" },
-        { label = "Include X", get = GetX, set = SetX, note = "active now" },    -- checkbox (boolean)
+        { label = "Include X", get = GetX, set = SetX, note = "Active" },        -- checkbox + status badge
         { label = "Style", options = { a = "Style A", b = "Style B" },
           order = { "a", "b" }, get = GetStyle, set = SetStyle,
           atlas = { "some-atlas-1", "some-atlas-2" } },                          -- dropdown, w/ optional icon preview(s)

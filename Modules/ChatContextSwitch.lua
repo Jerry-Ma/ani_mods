@@ -238,7 +238,7 @@ function ChatContextSwitch:GetInfoRows()
             label = def.label,
             get   = function() return IsChannelEnabled(def.key) end,
             set   = function(v) SetChannelEnabled(def.key, v) end,
-            note  = IsEligibleNow(def) and "active now" or nil,
+            note  = IsEligibleNow(def) and "Active" or nil,
         }
     end
 

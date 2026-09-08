@@ -224,7 +224,7 @@ function SoundSwitch:GetInfoRows()
                 label = name,
                 get   = function() return IsInCycle(name) end,
                 set   = function(v) SetInCycle(name, v) end,
-                note  = (name == current) and "current" or nil,
+                note  = (name == current) and "Current" or nil,
             }
         end
     end

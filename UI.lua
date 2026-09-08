@@ -178,7 +178,7 @@ end
 -- A module's GetInfoRows() (optional) returns an ordered list of rows:
 --   { section = "Status" }                                                -- header, starts a new section
 --   { label = "Tanks", value = "2" }                                      -- status
---   { label = "Party", get = fn, set = fn, note = "active now" }          -- toggle, w/ status badge
+--   { label = "Party", get = fn, set = fn, note = "Active" }              -- toggle, w/ status badge
 --   { label = "Bar color", color = true, get = fn, set = fn, reset = fn } -- colour swatch (RGB + alpha)
 --   { label = "Style", options = {k="Name",...}, order = {...},
 --     get = fn, set = fn, atlas = "some-atlas" }                          -- dropdown, w/ optional icon preview
@@ -253,9 +253,13 @@ local function SplitIntoSections(rows)
     return groups
 end
 
--- A row's `note` is a live STATUS about that row -- "active now" for a chat
--- channel currently eligible, "current" for the sound device in use -- not a
--- qualifier on its name.
+-- A row's `note` is a live STATUS about that row -- "Active" for a chat channel
+-- currently eligible, "Current" for the sound device in use -- not a qualifier
+-- on its name.
+--
+-- One word, capitalised, matching the condition badges. "active now" was
+-- written as prose to be read inline with the label it was glued to; as a badge
+-- it is a state, and states here are single words.
 --
 -- So it renders as a badge, in the same green as every other affirmative state
 -- in the panel, rather than as accent-coloured text appended to the label. The
@@ -517,8 +521,13 @@ local function BuildRow(parent, descriptor, sectionIndex, stripeIndex)
         local check = W.CheckBox(parent)
         local help = AttachHelp(check.frame, descriptor, check.labelFS)
 
+        -- Immediately after the label -- or after its "?" when it has one --
+        -- rather than against the row's right edge. The badge qualifies THIS
+        -- row's label, and parked on the far side of the row it read as
+        -- belonging to the column of controls instead. Same reasoning that
+        -- moved the "?" marker back beside its label.
         local note = W.Badge(check.frame)
-        note.frame:SetPoint("RIGHT", check.frame, "RIGHT", -4, 0)
+        note.frame:SetPoint("LEFT", help and help.frame or check.labelFS, "RIGHT", 6, 0)
         note.frame:Hide()
 
         local built = { kind = kind, widget = check, help = help, note = note }
