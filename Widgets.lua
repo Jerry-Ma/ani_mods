@@ -559,6 +559,15 @@ function W.Toggle(parent)
     end
     function o:SetOnClick(fn) o._onClick = fn end
 
+    -- Greyed and unclickable, for a switch that exists but cannot be used --
+    -- forcing a module past a HARD requirement, which would not help. Shown
+    -- rather than hidden so the option is discoverable once it does apply.
+    function o:SetEnabled(on)
+        o.disabled = not on
+        f:EnableMouse(on and true or false)
+        f:SetAlpha(on and 1 or 0.35)
+    end
+
     Apply(false)
     return o
 end
@@ -749,18 +758,23 @@ function W.CheckBox(parent)
     local f = CreateFrame("Button", nil, parent)
     f:SetHeight(20)
 
+    -- 20, not 24: S.Checkbox insets its box 4px inside the frame, so a 24px
+    -- CheckButton draws a 16px box that crowded the 20px row. At 20 the box
+    -- is 12px and the row breathes.
     local box = CreateFrame("CheckButton", nil, f, "UICheckButtonTemplate")
-    box:SetSize(24, 24)
+    box:SetSize(20, 20)
     box:SetPoint("LEFT", f, "LEFT", 4, 0)
     box:EnableMouse(false)   -- the whole row is the hit area, not just the box
     W.OnReady(function(s) s.Checkbox(box) end)
 
+    -- Anchored LEFT only, so the FontString sizes to its text. That is what
+    -- lets a "?" marker sit immediately after the label instead of at the far
+    -- side of the row -- a right anchor would stretch it across the width.
     local label = W.Font(f, 12, nil, W.TEXT_DIM_A)
     label:SetPoint("LEFT", box, "RIGHT", 4, 0)
-    label:SetPoint("RIGHT", f, "RIGHT", -8, 0)
     label:SetJustifyH("LEFT")
 
-    local o = { frame = f, checked = false }
+    local o = { frame = f, checked = false, labelFS = label }
 
     local function ApplyVisual(hovering)
         box:SetChecked(o.checked)
@@ -1011,7 +1025,7 @@ function W.Slider(parent, width)
     thumb:SetSize(6, 14)
     slider:SetThumbTexture(thumb)
 
-    local o = { frame = f, slider = slider }
+    local o = { frame = f, slider = slider, labelFS = label }
 
     local function Redraw()
         local minV, maxV = slider:GetMinMaxValues()

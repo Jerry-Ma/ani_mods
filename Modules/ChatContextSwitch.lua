@@ -60,7 +60,11 @@ ChatContextSwitch.condition = {
 }
 
 ChatContextSwitch.dependencies = {
-    { text = "NDui's Chat module not active", met = function() return not NDuiChatModuleActive() end },
+    { text = "NDui chat module",
+      help = "NDui's chat module installs the same Tab hook. Only one can own "
+          .. "it, so this stands down while that is on.",
+      met = function() return not NDuiChatModuleActive() end,
+      metText = "Off", unmetText = "On" },
 }
 
 -- ---------------------------------------------------------------------------

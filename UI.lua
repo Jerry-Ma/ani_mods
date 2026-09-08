@@ -248,10 +248,20 @@ end
 -- explanation" without reading every label. `help` is for the reasoning
 -- behind a setting; the short qualifier that belongs beside the label is
 -- `note`.
-local function AttachHelp(rowFrame, descriptor)
+-- Attaches the "?" marker directly after a row's label.
+--
+-- It used to be right-aligned, on the theory that a column of markers scans
+-- better. In practice it separated the marker from the thing it explains by
+-- the whole width of the row, so it read as belonging to the control on the
+-- right rather than the label on the left.
+local function AttachHelp(rowFrame, descriptor, anchorTo)
     if not descriptor.help then return nil end
     local help = W.Help(rowFrame, descriptor.help)
-    help.frame:SetPoint("RIGHT", rowFrame, "RIGHT", -4, 0)
+    if anchorTo then
+        help.frame:SetPoint("LEFT", anchorTo, "RIGHT", 4, 0)
+    else
+        help.frame:SetPoint("LEFT", rowFrame, "LEFT", 8, 0)
+    end
     return help
 end
 
@@ -323,7 +333,7 @@ local function BuildRow(parent, descriptor, sectionIndex, stripeIndex)
             end
         end
 
-        AttachHelp(row, descriptor)
+        AttachHelp(row, descriptor, label)
         return { kind = kind, widget = dd, icons = icons }, row, ROW_GAP
 
     elseif kind == "swatches" then
@@ -343,7 +353,7 @@ local function BuildRow(parent, descriptor, sectionIndex, stripeIndex)
             if AniMods.RefreshUI then AniMods.RefreshUI() end
         end)
 
-        AttachHelp(row, descriptor)
+        AttachHelp(row, descriptor, label)
         return { kind = kind, widget = sw }, row, ROW_GAP
 
     elseif kind == "min" then
@@ -362,7 +372,7 @@ local function BuildRow(parent, descriptor, sectionIndex, stripeIndex)
             descriptor.set(value)
             if AniMods.RefreshUI then AniMods.RefreshUI() end
         end)
-        AttachHelp(row, descriptor)
+        AttachHelp(row, descriptor, slider.labelFS)
         return { kind = kind, widget = slider }, row, ROW_GAP
 
     elseif kind == "checkbox" then
@@ -374,7 +384,7 @@ local function BuildRow(parent, descriptor, sectionIndex, stripeIndex)
             if descriptor.reload then AniMods.PromptReload(descriptor.label) end
             if AniMods.RefreshUI then AniMods.RefreshUI() end
         end)
-        AttachHelp(check.frame, descriptor)
+        AttachHelp(check.frame, descriptor, check.labelFS)
         return { kind = kind, widget = check }, check.frame, ROW_GAP
 
     else
@@ -533,7 +543,26 @@ end
 local function ApplyLiveValues(entry, cache)
     local stateLabel, r, g, b = GetStateInfo(entry)
     cache.stateBadge:Set(stateLabel, { r, g, b })
-    cache.toggle:SetChecked(entry.userEnabled)
+    if cache.toggle then cache.toggle:SetChecked(entry.userEnabled) end
+
+    if cache.pendingBadge then
+        if cache.pendingReload then
+            cache.pendingBadge:Set("Reload needed", W.BADGE_WARN)
+            cache.pendingBadge.frame:Show()
+        else
+            cache.pendingBadge.frame:Hide()
+        end
+    end
+
+    if cache.forceToggle then
+        cache.forceToggle:SetChecked(entry.forced)
+        -- Only usable when forcing would actually achieve something: every
+        -- unmet requirement is soft. With a hard one missing the module cannot
+        -- run regardless, so the switch stays visible but inert.
+        cache.forceToggle:SetEnabled(entry.depsHardMet and not entry.depsAllMet)
+        cache.forceLabel:SetTextColor(1, 1, 1,
+            (entry.depsHardMet and not entry.depsAllMet) and W.TEXT_DIM_A or 0.25)
+    end
 
     RefreshDepRows(entry, cache)
 
@@ -611,21 +640,49 @@ local function BuildTabContent(name)
     stateBadge.frame:SetPoint("LEFT", titleHelp.frame, "RIGHT", 8, 0)
     cache.stateBadge = stateBadge
 
-    local toggle = W.Toggle(titleFrame)
-    toggle.frame:SetPoint("RIGHT", titleFrame, "RIGHT", -4, 0)
-    toggle:SetOnClick(function(value)
-        -- Only prompts when the change genuinely did not take -- prompting on
-        -- every toggle teaches people to dismiss the prompt, which makes it
-        -- useless for the cases that actually need it.
-        local applied = AniMods.SetModuleEnabled(name, value)
-        if not applied then AniMods.PromptReload(entry.title) end
-    end)
-    cache.toggle = toggle
+    -- Essential modules get no master switch: General holds AniMods' own
+    -- settings, so switching it off would hide the controls for the addon.
+    local toggle
+    if not entry.essential then
+        toggle = W.Toggle(titleFrame)
+        toggle.frame:SetPoint("RIGHT", titleFrame, "RIGHT", -4, 0)
+        toggle:SetOnClick(function(value)
+            -- Only prompts when the change genuinely did not take --
+            -- prompting on every toggle teaches people to dismiss the prompt,
+            -- which makes it useless for the cases that actually need it.
+            local applied = AniMods.SetModuleEnabled(name, value)
+            cache.pendingReload = not applied
+            if not applied then AniMods.PromptReload(entry.title) end
+            if AniMods.RefreshUI then AniMods.RefreshUI() end
+        end)
+        cache.toggle = toggle
 
-    local toggleHelp = W.Help(titleFrame, entry.liveToggle
-        and "Applies immediately. While off, the module does not load at login."
-        or  "Needs a UI reload to fully apply. While off, the module does not load at login.")
-    toggleHelp.frame:SetPoint("RIGHT", toggle.frame, "LEFT", -6, 0)
+        -- A badge, not a "?" explaining what the switch does. The switch is
+        -- self-evident; what is not is whether the change has actually taken
+        -- -- so the space says that, and only when there is something to say.
+        local pendingBadge = W.Badge(titleFrame)
+        pendingBadge.frame:SetPoint("RIGHT", toggle.frame, "LEFT", -8, 0)
+        pendingBadge.frame:Hide()
+        cache.pendingBadge = pendingBadge
+    end
+
+    -- Force-active switch, for a module held back only by SOFT requirements.
+    -- Sits next to the state badge because it is about that state.
+    local forceToggle, forceLabel
+    if entry.forceable then
+        forceToggle = W.Toggle(titleFrame)
+        forceToggle.frame:SetPoint("LEFT", stateBadge.frame, "RIGHT", 10, 0)
+        forceToggle:SetOnClick(function(value)
+            AniMods.SetModuleForced(name, value)
+            AniMods.PromptReload(entry.title)
+        end)
+
+        forceLabel = W.Font(titleFrame, 11, nil, W.TEXT_DIM_A)
+        forceLabel:SetPoint("LEFT", forceToggle.frame, "RIGHT", 5, 0)
+        forceLabel:SetText("Run anyway")
+
+        cache.forceToggle, cache.forceLabel = forceToggle, forceLabel
+    end
 
     cache.blocks[#cache.blocks + 1] = { frame = titleFrame, gap = BLOCK_GAP }
 

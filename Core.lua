@@ -157,6 +157,50 @@ local function EvaluateCondition(condition)
 end
 AniMods.EvaluateCondition = EvaluateCondition
 
+-- ── Requirements ──────────────────────────────────────────────────────────────
+
+-- A module's `dependencies` are not documentation: an unmet one makes the
+-- module inactive.
+--
+-- Each entry is HARD by default. `soft = true` marks one the module can run
+-- without -- an advisory rather than a prerequisite. AniMods' own data bar is
+-- the case that motivated this: "you already have a data bar" is worth
+-- flagging, but it is the user's call, not a blocker.
+--
+-- Returns:
+--   allMet   every checked requirement is satisfied
+--   hardMet  every checked HARD requirement is satisfied
+--   firstUnmet  text of the first failure, for the inactive reason
+--
+-- Entries with no `met` are informational and never fail.
+function AniMods.EvaluateDependencies(deps)
+    if type(deps) ~= "table" then return true, true, nil end
+
+    local allMet, hardMet, firstUnmet = true, true, nil
+    for _, dep in ipairs(deps) do
+        if dep.met then
+            local ok, result = pcall(dep.met)
+            if not (ok and result) then
+                allMet = false
+                firstUnmet = firstUnmet or dep.text
+                if not dep.soft then hardMet = false end
+            end
+        end
+    end
+    return allMet, hardMet, firstUnmet
+end
+
+-- Whether a module may run given its requirements and the user's override.
+-- Forcing can only ever get past SOFT failures -- a missing hard requirement
+-- means the module genuinely cannot work, so the override stays unavailable
+-- rather than letting it fail loudly.
+local function RequirementsSatisfied(module, deps, forced)
+    local allMet, hardMet = AniMods.EvaluateDependencies(deps)
+    if allMet then return true end
+    if forced and module.forceable and hardMet then return true end
+    return false
+end
+
 -- ── Module lifecycle ──────────────────────────────────────────────────────────
 
 local function InitModules()
@@ -173,21 +217,42 @@ local function InitModules()
         local module = modules[name]
         local conditionMet, reason = EvaluateCondition(module.condition)
 
-        local userEnabled = db.modules[name]
-        if userEnabled == nil then
-            userEnabled = true -- default: on
-            db.modules[name] = true
+        local userEnabled
+        if module.essential then
+            -- Not switchable, and not stored: a saved `false` from before a
+            -- module became essential must not keep it off.
+            userEnabled = true
+        else
+            userEnabled = db.modules[name]
+            if userEnabled == nil then
+                userEnabled = true -- default: on
+                db.modules[name] = true
+            end
         end
+
+        db.forced = db.forced or {}
+        local forced = db.forced[name] == true
+
+        -- Requirements gate activation alongside `condition`. The two answer
+        -- different questions: `condition` is "does this patch apply to this
+        -- install at all", requirements are "is what it needs present".
+        local depsAllMet, depsHardMet, firstUnmet = AniMods.EvaluateDependencies(module.dependencies)
+        local reqOK = RequirementsSatisfied(module, module.dependencies, forced)
+        if conditionMet and not reqOK then
+            reason = firstUnmet and ("requires: " .. firstUnmet) or "a requirement is not met"
+        end
+
+        local runnable = conditionMet and reqOK
 
         local active = false
         local ranEnable = false
         local errorTrace
-        if conditionMet and userEnabled and not module.Enable then
+        if runnable and userEnabled and not module.Enable then
             -- A module with nothing to run at login (registration alone is
             -- its whole job) is active, not failed -- without this it would
             -- fall through to the UI's "Failed" state with no error to show.
             active = true
-        elseif conditionMet and userEnabled then
+        elseif runnable and userEnabled then
             -- xpcall (not pcall) so ErrorHandler runs while the stack is
             -- still live: that's what makes debugstack() useful here, rather
             -- than just the "file:line: message" a caught pcall error gives
@@ -219,6 +284,7 @@ local function InitModules()
             -- addon's own settings sit above the patches rather than
             -- alphabetically among them.
             order           = module.order or 100,
+            essential       = module.essential == true,
             description     = module.description,
             dependencies    = module.dependencies, -- always-visible "Depends on" checklist ({ text, met } entries), distinct from conditionReason (which only shows on failure)
             conditionMet    = conditionMet,
@@ -227,6 +293,13 @@ local function InitModules()
             userEnabled     = userEnabled,
             active          = active,
             ranEnable       = ranEnable,
+            -- Requirement state, read by the panel's header: whether the
+            -- force-active override should be offered at all (forceable),
+            -- whether it would help (depsHardMet), and where it stands.
+            forceable       = module.forceable == true,
+            forced          = forced,
+            depsAllMet      = depsAllMet,
+            depsHardMet     = depsHardMet,
             -- Whether the on/off switch takes effect immediately. Read by the
             -- panel to decide whether to offer a reload.
             liveToggle      = (not module.Enable) or (ranEnable and module.SetEnabled ~= nil),
@@ -317,6 +390,17 @@ local function MigrateRenames()
             db[oldKey] = nil
         end
     end
+end
+
+-- Runs a module despite unmet SOFT requirements. Saved but not applied until
+-- reload, for the same reason enabling is: Enable() already ran or did not.
+function AniMods.SetModuleForced(name, forced)
+    if not modules[name] then return false end
+    db.forced = db.forced or {}
+    db.forced[name] = forced and true or false
+    if status[name] then status[name].forced = forced and true or false end
+    if AniMods.RefreshUI then AniMods.RefreshUI() end
+    return false
 end
 
 -- ── Events ─────────────────────────────────────────────────────────────────

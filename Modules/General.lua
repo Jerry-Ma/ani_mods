@@ -8,16 +8,18 @@
 
 local General = {
     title = "General",
-    description = "AniMods' own settings: how you reach the panel.",
+    description = "Settings for AniMods itself.",
     order = 0,
-    dependencies = {
-        { text = "LibDataBroker",
-          help = "Shipped by EllesmereUI and most data bars. Only the data-bar "
-              .. "modules need it.",
-          met = function()
-              return (_G.LibStub and _G.LibStub:GetLibrary("LibDataBroker-1.1", true)) and true or false
-          end },
-    },
+    -- No master switch. This tab holds the settings that control AniMods
+    -- itself, so switching it off would hide the controls for the addon --
+    -- including the minimap button and compartment entry that are two of the
+    -- three ways back into this panel.
+    essential = true,
+    -- No dependencies. This listed LibDataBroker, which was simply wrong --
+    -- left over from an early plan to build the minimap button on LibDBIcon.
+    -- The button is hand-rolled and everything here is plain Blizzard API, so
+    -- claiming a requirement would have shown a red badge for a library this
+    -- module never touches.
 }
 
 local MINIMAP_ICON = "Interface\\AddOns\\AniMods\\Media\\icon.png"
@@ -283,7 +285,7 @@ function General:GetInfoRows()
     rows[#rows + 1] = { section = "Access" }
     rows[#rows + 1] = {
         label = "Minimap button",
-        help  = "Drag it around the ring to reposition.",
+        help  = "Drag it around the ring to move it.",
         get   = function() return ModuleDB().minimap ~= false end,
         set   = function(v)
             ModuleDB().minimap = v and true or false
@@ -293,8 +295,7 @@ function General:GetInfoRows()
     rows[#rows + 1] = {
         label = "Addon compartment entry",
         reload = true,
-        help  = "AniMods' entry in Blizzard's addon dropdown by the minimap. "
-             .. "Blizzard builds that list at startup, so this needs a reload.",
+        help  = "AniMods' entry in Blizzard's addon dropdown by the minimap.",
         get   = function() return ModuleDB().compartment ~= false end,
         set   = function(v) ModuleDB().compartment = v and true or false end,
     }
@@ -303,8 +304,8 @@ function General:GetInfoRows()
     rows[#rows + 1] = {
         label    = "Accent color",
         help     = AniMods.AccentIsForeign()
-            and "Used for headings, highlights and switches. The first swatch follows your EllesmereUI accent."
-            or  "Used for headings, highlights and switches. The first swatch is the default.",
+            and "Headings, highlights and switches. The first swatch follows EllesmereUI."
+            or  "Headings, highlights and switches. The first swatch is the default.",
         swatches = AccentSwatchColors(),
         order    = ACCENT_ORDER,
         get      = CurrentAccentKey,

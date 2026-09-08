@@ -50,11 +50,11 @@ local GroupRoles = {
     -- surface, and suppressing a databar widget because an unrelated addon
     -- happens to show similar numbers somewhere else is the user's call to
     -- make by switching the module off, not ours to make for them.
-    dependencies = {
-        { text = "None -- uses Blizzard's own role API" },
-        { text = "EllesmereUIQoL loaded (enables the docked badge)",
-          met = function() return AniMods.IsAddOnLoaded("EllesmereUIQoL") end },
-    },
+    -- No dependencies. `dependencies` now gates activation -- any unmet entry
+    -- makes the module inactive -- so it may only hold things that are
+    -- genuinely required. Nothing here is: the counts are plain Blizzard API,
+    -- and EllesmereUIQoL only enables the docked badge, which the Integration
+    -- section reports as status rather than as a failed requirement.
 }
 
 local ROLES = { "TANK", "HEALER", "DAMAGER" }

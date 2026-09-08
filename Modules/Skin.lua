@@ -19,7 +19,9 @@ local Skin = {
     title = "Skin",
     description = "Restyles elements EllesmereUI leaves alone.",
     dependencies = {
-        { text = "EllesmereUI loaded", met = function() return AniMods.IsAddOnLoaded("EllesmereUI") end },
+        { text = "EllesmereUI",
+          help = "This module restyles EllesmereUI's own elements, so it needs it.",
+          met = function() return AniMods.IsAddOnLoaded("EllesmereUI") end },
     },
     condition = {
         requires = { "EllesmereUI" },

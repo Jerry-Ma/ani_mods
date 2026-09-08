@@ -36,7 +36,10 @@
 
 local Bar = {
     title = "Data Bar",
-    description = "A bar for LibDataBroker widgets. Off by default.",
+    description = "A simple bar for LibDataBroker widgets.",
+    -- Its "you already have a data bar" requirement is advisory, so the panel
+    -- offers a Run anyway switch when that is the only thing holding it back.
+    forceable = true,
     dependencies = {
         { text = "LibDataBroker",
           help = "The library data brokers publish through. Shipped by EllesmereUI "
@@ -45,9 +48,12 @@ local Bar = {
               return (_G.LibStub and _G.LibStub:GetLibrary("LibDataBroker-1.1", true)) and true or false
           end,
           metText = "Available", unmetText = "Missing" },
-        { text = "Another data bar",
-          help = "This bar is for setups with none. If you have one, use it "
-              .. "instead -- it does more.",
+        { text = "No other data bar",
+          -- Soft: advice, not a prerequisite. Running both is the user's call,
+          -- so this one can be overridden with Run anyway.
+          soft = true,
+          help = "Use your existing bar instead -- it does more. Turn on Run "
+              .. "anyway to run both.",
           met = function()
               return not (AniMods.IsAddOnLoaded("EllesmereUIDataBars")
                        or AniMods.IsAddOnLoaded("Titan")
@@ -80,8 +86,10 @@ local WATCHED = {
 -- left edge, right from its right, centre is centred on the whole bar. This
 -- is why the bar has an explicit width rather than hugging its content --
 -- "right-aligned" is meaningless on a frame that shrinks to fit.
-local SECTION_LABEL = { hidden = "Hidden", left = "Left", center = "Center", right = "Right" }
-local SECTION_ORDER = { "hidden", "left", "center", "right" }
+-- No "hidden" entry: whether a widget is on the bar is the checkbox's job
+-- now, so this dropdown only answers where.
+local SECTION_LABEL = { left = "Left", center = "Center", right = "Right" }
+local SECTION_ORDER = { "left", "center", "right" }
 
 local bar, itemHost
 local items = {}          -- objName -> { button, fs, icon, text, hasIcon }
@@ -408,7 +416,6 @@ local function ApplyLock()
 end
 
 local function SetWidgetSection(name, section)
-    if section == "hidden" then section = nil end
     ModuleDB().widgets[name] = section or false
     shown[name] = section
     -- Goes through ApplyVisibility rather than calling Refresh/Relayout
@@ -545,21 +552,69 @@ function Bar:GetInfoRows()
         end,
     }
 
-    rows[#rows + 1] = { section = "Widgets" }
-    local names = AllBrokerNames()
-    if #names == 0 then
-        rows[#rows + 1] = { label = "Plugins", value = "None registered" }
-    else
-        for _, name in ipairs(names) do
-            local obj = ldb:GetDataObjectByName(name)
-            rows[#rows + 1] = {
-                label   = (obj and obj.label) or name,
-                note    = ((obj and obj.label) and name) or nil,
+    -- Widgets: AniMods' own first, then everyone else's behind a fold.
+    --
+    -- Ours are the ones you came here to arrange, and on a busy install they
+    -- were buried alphabetically among a dozen third-party brokers. Splitting
+    -- them also lets the long list start collapsed, which is what keeps this
+    -- tab a readable length.
+    local function WidgetRows(name, obj)
+        local out = {}
+        -- On/off is a checkbox rather than a four-way section dropdown: the
+        -- question "is this on the bar" is a different one from "where", and
+        -- answering both through one control meant Hidden was a position.
+        out[#out + 1] = {
+            label = (obj and obj.label) or name,
+            note  = ((obj and obj.label) and name) or nil,
+            get   = function() return WidgetSection(name) ~= nil end,
+            set   = function(v) SetWidgetSection(name, v and "left" or nil) end,
+        }
+        -- Position follows the switch, and only while it is on -- an alignment
+        -- for something not on the bar is noise.
+        if WidgetSection(name) then
+            out[#out + 1] = {
+                label   = "Position",
                 options = SECTION_LABEL,
                 order   = SECTION_ORDER,
-                get     = function() return WidgetSection(name) or "hidden" end,
+                get     = function() return WidgetSection(name) or "left" end,
                 set     = function(v) SetWidgetSection(name, v) end,
             }
+        end
+        return out
+    end
+
+    local mine, others = {}, {}
+    for _, name in ipairs(AllBrokerNames()) do
+        local list = name:match("^AniMods") and mine or others
+        list[#list + 1] = name
+    end
+
+    rows[#rows + 1] = { section = "Widgets" }
+    if #mine == 0 and #others == 0 then
+        rows[#rows + 1] = { label = "Plugins", value = "None registered" }
+    end
+    for _, name in ipairs(mine) do
+        for _, r in ipairs(WidgetRows(name, ldb:GetDataObjectByName(name))) do
+            rows[#rows + 1] = r
+        end
+    end
+
+    if #others > 0 then
+        rows[#rows + 1] = { section = ("Other addons (%d)"):format(#others) }
+        rows[#rows + 1] = {
+            label = "Show these widgets",
+            get   = function() return ModuleDB().showOthers == true end,
+            set   = function(v)
+                ModuleDB().showOthers = v and true or false
+                if AniMods.RefreshUI then AniMods.RefreshUI() end
+            end,
+        }
+        if ModuleDB().showOthers then
+            for _, name in ipairs(others) do
+                for _, r in ipairs(WidgetRows(name, ldb:GetDataObjectByName(name))) do
+                    rows[#rows + 1] = r
+                end
+            end
         end
     end
 
