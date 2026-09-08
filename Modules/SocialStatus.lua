@@ -602,9 +602,8 @@ function SocialStatus:GetInfoRows()
     local guildCount, friendCount = CountOnline()
     rows[#rows + 1] = { label = "Guild online", value = tostring(guildCount) }
     rows[#rows + 1] = { label = "Friends online", value = tostring(friendCount) }
-    rows[#rows + 1] = { label = "Broker (LDB) plugin", value = ldbObject and "Registered" or "Not available" }
 
-    for _, row in ipairs(Broker.DisplayRows(ModuleDB, UpdateBroker)) do
+    for _, row in ipairs(Broker.SectionRows(ModuleDB, UpdateBroker, "AniModsSocialStatus")) do
         rows[#rows + 1] = row
     end
 

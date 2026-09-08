@@ -211,7 +211,6 @@ function SoundSwitch:GetInfoRows()
 
     rows[#rows + 1] = { section = "Status" }
     rows[#rows + 1] = { label = "Current device", value = CurrentDeviceName() or "Unknown" }
-    rows[#rows + 1] = { label = "Broker (LDB) plugin", value = ldbObject and "Registered" or "Not available" }
 
     rows[#rows + 1] = { section = "Devices in the cycle" }
     local devices = GetDevices()
@@ -230,7 +229,7 @@ function SoundSwitch:GetInfoRows()
         end
     end
 
-    for _, row in ipairs(Broker.DisplayRows(ModuleDB, UpdateBroker)) do
+    for _, row in ipairs(Broker.SectionRows(ModuleDB, UpdateBroker, "AniModsSoundSwitch")) do
         rows[#rows + 1] = row
     end
 

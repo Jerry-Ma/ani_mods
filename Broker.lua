@@ -93,24 +93,52 @@ function Broker.SetText(obj, text)
     obj.text = text
 end
 
--- The standard "Broker Display" section for a module's GetInfoRows(): a
--- Style dropdown (Icon + Text / Text Only) plus a Colored text toggle.
--- `onChange` is called after either setting changes, so the module can
--- rebuild its broker text immediately.
-function Broker.DisplayRows(getDB, onChange)
-    return {
-        { section = "Broker Display" },
+-- The whole "Broker widget" section for a module's GetInfoRows(): whether the
+-- widget was published, under what name, and how it draws.
+--
+-- Status and display options live together because they are one feature. They
+-- used to be split -- a "Broker (LDB) plugin: Registered" line among a
+-- module's Status rows, and a separate "Broker Display" section further down
+-- -- which read as two unrelated things and left the display options with no
+-- visible connection to what they styled.
+--
+-- It also puts LibDataBroker in the right place. It is not a dependency of
+-- these MODULES, which work without it; it is what this one feature needs. A
+-- red requirement row would have said the module was broken when only its
+-- broker was unavailable.
+--
+-- `objectName` is reported verbatim, because that is the string to look for
+-- in a data bar's widget picker -- more use than a yes/no.
+function Broker.SectionRows(getDB, onChange, objectName)
+    local ldb = _G.LibStub and _G.LibStub:GetLibrary("LibDataBroker-1.1", true)
+    local published = ldb and objectName and ldb:GetDataObjectByName(objectName)
+
+    local rows = {
+        { section = "Broker widget" },
         {
+            label = "Published as",
+            value = published and objectName or "Not published",
+            help  = published
+                and "Pick this name in your data bar's widget list."
+                or  "Needs LibDataBroker, which EllesmereUI and most data bars ship.",
+        },
+    }
+
+    -- Display options only matter once there is something to display.
+    if published then
+        rows[#rows + 1] = {
             label   = "Style",
             options = Broker.DISPLAY_MODE_LABEL,
             order   = Broker.DISPLAY_MODE_ORDER,
             get     = function() return Broker.GetDisplayMode(getDB) end,
             set     = function(v) getDB().brokerDisplayMode = v; onChange() end,
-        },
-        {
+        }
+        rows[#rows + 1] = {
             label = "Colored text",
             get   = function() return getDB().brokerColoredText ~= false end,
             set   = function(v) getDB().brokerColoredText = v; onChange() end,
-        },
-    }
+        }
+    end
+
+    return rows
 end

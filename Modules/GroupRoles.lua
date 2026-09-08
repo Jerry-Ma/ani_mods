@@ -539,9 +539,8 @@ function GroupRoles:GetInfoRows()
         get     = GetTooltipAnchor,
         set     = function(v) ModuleDB().dockedTooltipAnchor = v end,
     }
-    rows[#rows + 1] = { label = "Broker (LDB) plugin", value = ldbObject and "Registered" or "Not available" }
 
-    for _, row in ipairs(Broker.DisplayRows(ModuleDB, UpdateCounts)) do
+    for _, row in ipairs(Broker.SectionRows(ModuleDB, UpdateCounts, "AniModsGroupRoles")) do
         rows[#rows + 1] = row
     end
 
