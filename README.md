@@ -65,7 +65,8 @@ every site, and a checker that cries wolf on the core idiom is one nobody reads.
 there are deliberately loose (`any`): these are foreign, undocumented, version-dependent
 objects, and pretending to know their shape would invent a contract nothing enforces.
 The one place a warning is suppressed inline rather than by configuration is
-`Skin.lua`'s `FindFlyoutToggle`, where probing EUI's private `_norm`/`_pushed`/`_hl`
+`EllesmereUIMisc.lua`'s `FindFlyoutToggle`, where probing EUI's private
+`_norm`/`_pushed`/`_hl`
 fields *is* the identification — suppressed at that single line, not loosened globally.
 
 `.luacheckrc` is a **generated artifact and is gitignored** — it is the ~44,000-entry
@@ -387,7 +388,7 @@ referenced by the source but not shipped in the addon folders — the engine is 
 `W.OnReady(fn)` runs `fn` when the facade arrives, or immediately if it already has.
 EllesmereUI dispatches at `PLAYER_LOGIN` *after its own boot*, so that callback is the
 first moment both the skin engine and EllesmereUI's frames are guaranteed to exist —
-which is why `Skin:Enable()` now hangs its first pass off `OnReady` instead of firing
+which is why `EllesmereUIMisc:Enable()` now hangs its first pass off `OnReady` instead of firing
 during `PLAYER_LOGIN` and relying on a retry ladder to catch up. The ladder that remains
 covers only what EllesmereUI genuinely creates later.
 
@@ -536,18 +537,26 @@ both toggleable in **General**.
     **NDui_Plus: ToxiUI White**, **NDui_Plus: ToxiUI New**.
 
   Selecting a style applies live, no reload needed.
-- **Skin** — re-skins extra Blizzard UI elements EllesmereUI doesn't skin itself; a
-  landing spot for one-off "it should look like it belongs" fixes, each its own entry
+- **EllesmereUI Misc** — the bag for small EllesmereUI-only tweaks: one-off "it should
+  look like it belongs" fixes too slight to be modules of their own, each its own entry
   that can be independently enabled/disabled from the panel (unlike the rest of
   AniMods' modules, which are all-or-nothing) — its detail pane has one section per
-  entry, each with its own "Enabled" checkbox, "Available" status (whether that
+  entry, each with its own "Enabled" checkbox, "Available" statement (whether that
   entry's own prerequisites are currently met, independent of the toggle), and
-  "Applied" status. Both entries below are cheap, genuinely reversible tweaks (unlike
-  most of AniMods' other hooksecurefunc-based patches), so — unlike the framework's
-  usual "no `Disable()` contract, toggle takes effect next reload" convention (see
-  above) — these actually apply/revert live:
+  "In effect" statement.
 
-  - **TTS Button** — EllesmereUIChat hides several Blizzard chat chrome buttons it
+  It was called **Skin**, which named the technique rather than the subject and would
+  have been wrong the moment something in the bag didn't restyle anything. What every
+  entry actually has in common is that it needs EllesmereUI.
+
+  The bar for adding an entry: it touches EllesmereUI specifically, it's small enough
+  that a whole module would be ceremony, and it's **reversible**. That last one isn't
+  decoration — these apply and revert live, which is what exempts this module from the
+  framework's usual "no `Disable()` contract, toggle takes effect next reload"
+  convention (see above), and one irreversible entry would quietly take that property
+  away from every other entry in the bag:
+
+  - **Chat Read Aloud** — EllesmereUIChat hides several Blizzard chat chrome buttons it
     replaces with its own sidebar icons (`QuickJoinToastButton`, `ChatFrameMenuButton`,
     `ChatFrameChannelButton`, the voice mute/deafen buttons), but not
     `TextToSpeechButton` (Blizzard's built-in "read chat aloud" toggle), so it's
@@ -579,20 +588,23 @@ both toggleable in **General**.
     module is enabled (`EllesmereUI._ModuleNS["EllesmereUIChat"].ECHAT.DB().enabled`)
     — installed but toggled off means none of this (the sidebar, TextToSpeechButton's
     default position) is EUI's to redesign in the first place.
-  - **Minimap Addon Button Icon** — Blizzard's addon-button collector
-    (`AddonCompartmentFrame`, the button near the minimap that groups addons with no
-    dedicated minimap icon into a dropdown) keeps its default raised/colorful icon
-    look even under EllesmereUIMinimap, which only repositions/reparents it (its
-    "Addon Compartment" section — `_ParkAddonCompartment`/`_PositionAddonCompartment`/
-    `_ApplyAddonCompartment`), never re-skinning the icon texture itself. This
-    desaturates + tints it (`AddonCompartmentFrame.Icon`, or the first plain `Texture`
-    region found on it if that field isn't there) to match, using the same treatment
-    EllesmereUIMinimap's own neighboring addon-button-flyout toggle already uses
-    (`CreateFlyoutToggle`: `SetDesaturated(true)` + `SetVertexColor(accent)`) — the
-    closest visual sibling, since it's literally the other addon-button icon on the
-    same minimap. Tints with the user's live EUI accent color
-    (`EllesmereUI.RegAccent`) when available, a plain light gray otherwise. Available
-    only when EllesmereUIMinimap is loaded.
+  - **Minimap Group Button** — EllesmereUIMinimap's own "group button": the toggle in
+    its extra-button row just outside the minimap that collapses addon minimap icons
+    into a flyout (`CreateFlyoutToggle`; its config key is literally
+    `hideExtraBtns.groupButton`). It draws with the `Map-Filter-Button` atlas — a map
+    *filter* funnel, which reads as borrowed rather than designed for this — tinted in
+    the accent. This offers a different icon (Gear/Group/Bag) and a light tint instead.
+
+    The button is unnamed (`CreateFrame("Button", nil, Minimap)`) and its reference is
+    a file-local, so it's found by *structure*: the only child of `Minimap` carrying
+    all three of `_norm`/`_pushed`/`_hl` (the indicator buttons in the same row use
+    `_icon`/`_upAtlas`/`_indicatorKey`). That probe is the one inline diagnostic
+    suppression in the addon, noted under Checks above.
+
+    Not to be confused with Blizzard's `AddonCompartmentFrame`, the addon *collector*
+    in `MinimapCluster` — an earlier version of this entry skinned that one by mistake,
+    and this documented the mistake for a while after the code stopped making it.
+    Available only when EllesmereUIMinimap is loaded.
 - **SocialStatus** — online guild/friend counts as a broker (LDB) plugin, mirroring
   EllesmereUIMinimap's own "friends" button (the one in its minimap extra button group
   that shows online friends/guildies on hover). That button and its tooltip function

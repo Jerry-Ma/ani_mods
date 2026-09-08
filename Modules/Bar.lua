@@ -66,6 +66,7 @@ local Bar = {
 local LDB_NAME = "LibDataBroker-1.1"
 
 local BAR_H       = 22
+local GRIP_W      = 12   -- the unlocked-only drag handle, outside the left edge
 local EDGE_PAD    = 6
 local SLOT_PAD    = 4    -- breathing room inside a widget's own slot
 local FONT_SIZE   = 12
@@ -621,33 +622,63 @@ local function BuildBar()
     -- overlap a widget or have to be subtracted from the layout -- which would
     -- make the bar's contents shift every time it was locked or unlocked.
     barGrip = CreateFrame("Frame", nil, bar)
-    barGrip:SetSize(10, BAR_H)
+    barGrip:SetSize(GRIP_W, BAR_H)
     barGrip:SetPoint("RIGHT", bar, "LEFT", -2, 0)
     barGrip:EnableMouse(true)
     barGrip:RegisterForDrag("LeftButton")
     barGrip:SetScript("OnDragStart", function() bar:StartMoving() end)
     barGrip:SetScript("OnDragStop", StopAndSave)
 
+    -- The handle carries its OWN dark plate rather than floating loose.
+    --
+    -- The first version was three 1px accent rules on a transparent frame, and
+    -- it was nearly invisible: it sits outside the bar, so its backdrop is
+    -- whatever the game world happens to be behind it -- grass, snow, a fire --
+    -- and thin lines have nothing to hold contrast against. A dark plate gives
+    -- the marks a constant background, which is the same reason the bar itself
+    -- has a fill instead of drawing its text straight onto the world.
+    local gripBg = barGrip:CreateTexture(nil, "BACKGROUND")
+    gripBg:SetAllPoints()
+    gripBg:SetColorTexture(0, 0, 0, 0.75)
+
+    local gripEdges = {}
+    for i = 1, 4 do gripEdges[i] = barGrip:CreateTexture(nil, "BORDER") end
+    gripEdges[1]:SetPoint("TOPLEFT");    gripEdges[1]:SetPoint("TOPRIGHT");    gripEdges[1]:SetHeight(1)
+    gripEdges[2]:SetPoint("BOTTOMLEFT"); gripEdges[2]:SetPoint("BOTTOMRIGHT"); gripEdges[2]:SetHeight(1)
+    gripEdges[3]:SetPoint("TOPLEFT");    gripEdges[3]:SetPoint("BOTTOMLEFT");  gripEdges[3]:SetWidth(1)
+    gripEdges[4]:SetPoint("TOPRIGHT");   gripEdges[4]:SetPoint("BOTTOMRIGHT"); gripEdges[4]:SetWidth(1)
+    for i = 1, 4 do gripEdges[i]:SetColorTexture(1, 1, 1, 0.18) end
+
     -- Three short rules, accent-coloured: the conventional "grab here" mark.
-    -- Painted here AND registered -- RegisterAccent only repaints on a theme
-    -- change, so a texture that is never given a colour of its own starts out
-    -- invisible and stays that way until the user happens to retheme.
+    -- 2px tall and full strength now -- at 1px and 0.8 alpha they read as
+    -- artefacts rather than as a control.
+    --
+    -- Painted here AND registered: RegisterAccent only repaints on a theme
+    -- change, so a texture never given a colour of its own starts out invisible
+    -- and stays that way until the user happens to retheme.
     local gr, gg, gb = AniMods.W.Accent()
     for i = 1, 3 do
         local line = barGrip:CreateTexture(nil, "OVERLAY")
-        line:SetSize(8, 1)
-        line:SetPoint("CENTER", barGrip, "CENTER", 0, (2 - i) * 3)
-        line:SetColorTexture(gr, gg, gb, 0.8)
-        AniMods.W.RegisterAccent(line, "vertex", 0.8)
+        line:SetSize(GRIP_W - 4, 2)
+        line:SetPoint("CENTER", barGrip, "CENTER", 0, (2 - i) * 5)
+        line:SetColorTexture(gr, gg, gb, 1)
+        AniMods.W.RegisterAccent(line, "vertex", 1)
     end
 
     barGrip:SetScript("OnEnter", function(self)
+        gripBg:SetColorTexture(0, 0, 0, 0.9)
+        for i = 1, 4 do gripEdges[i]:SetColorTexture(1, 1, 1, 0.35) end
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
         GameTooltip:SetText("Drag to move the bar", 1, 1, 1, 1, true)
-        GameTooltip:AddLine("Lock it in the AniMods panel", 0.6, 0.6, 0.6)
+        GameTooltip:AddLine("Lock it in the AniMods panel to hide this handle",
+            0.6, 0.6, 0.6, true)
         GameTooltip:Show()
     end)
-    barGrip:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    barGrip:SetScript("OnLeave", function()
+        gripBg:SetColorTexture(0, 0, 0, 0.75)
+        for i = 1, 4 do gripEdges[i]:SetColorTexture(1, 1, 1, 0.18) end
+        GameTooltip:Hide()
+    end)
 
     -- Widgets go on a child, never on `bar` itself: W.Panel hands the frame
     -- to S.Panel, and under the EllesmereUI provider that enrols it in a

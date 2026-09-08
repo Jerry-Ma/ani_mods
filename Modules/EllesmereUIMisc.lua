@@ -1,26 +1,34 @@
--- Skin
--- Re-skins extra Blizzard UI elements EllesmereUI doesn't skin itself -- a
--- landing spot for one-off "it should look like it belongs" fixes, each its
--- own independently enable/disable-able entry (see ENTRIES below) rather
--- than one bundled all-or-nothing module. Two so far:
+-- EllesmereUI Misc
+-- The bag for small EllesmereUI-only tweaks -- one-off "it should look like it
+-- belongs" fixes that are too slight to be modules of their own, each an
+-- independently switchable ENTRY (see ENTRIES below) rather than one bundled
+-- all-or-nothing setting. Two so far:
 --
---   TTS Button -- Blizzard's chat "read aloud" toggle (TextToSpeechButton),
---   re-homed into EllesmereUIChat's sidebar icon row.
---   Minimap Group Button Icon -- the icon on EllesmereUIMinimap's own group
---   button (the addon-icon flyout toggle in the row outside the minimap),
---   swappable and re-tinted light rather than accent-green.
+--   Chat Read Aloud -- Blizzard's chat "read aloud" toggle
+--   (TextToSpeechButton), re-homed into EllesmereUIChat's sidebar icon row.
+--   Minimap Group Button -- the icon on EllesmereUIMinimap's own group button
+--   (the addon-icon flyout toggle in the row outside the minimap), swappable
+--   and re-tinted light rather than accent-green.
 --
--- Both entries are cheap and genuinely reversible (unlike most of AniMods'
--- other hooksecurefunc-based patches), so unlike the rest of the framework's
--- "no Disable() contract, toggle takes effect next reload" convention (see
--- README), these actually apply/revert live.
+-- It was called "Skin", which named the technique rather than the subject and
+-- would have been wrong the moment something in here did not restyle anything
+-- -- which is the point of a bag. What every entry has in common is that it
+-- needs EllesmereUI, so that is what the module is named for.
+--
+-- The bar for adding an entry here: it touches EllesmereUI specifically, it is
+-- small enough that a whole module would be ceremony, and it is REVERSIBLE.
+-- That last one is not decoration -- these apply and revert live, which is why
+-- this module escapes the framework's usual "toggling takes effect next
+-- reload" rule (see README), and an irreversible entry would quietly take that
+-- property away from every other entry in the bag.
 
-local Skin = {
-    title = "Skin",
-    description = "Restyles elements EllesmereUI leaves alone.",
+local EUIMisc = {
+    title = "EllesmereUI Misc",
+    description = "Small tweaks to EllesmereUI's own elements.",
     conditions = {
         { text = "EllesmereUI installed",
-          help = "This module restyles EllesmereUI's own elements, so it needs it.",
+          help = "Everything here adjusts EllesmereUI's own elements, so it "
+              .. "needs EllesmereUI.",
           met = function() return AniMods.IsAddOnLoaded("EllesmereUI") end },
     },
 }
@@ -33,15 +41,15 @@ local Skin = {
 -- in EntryDB). Declared up here because Lua only closes over locals declared
 -- BEFORE the function that uses them -- defined further down, every earlier
 -- reference would silently resolve to a nil global instead.
-local function SkinDB()
-    AniModsDB.skin = AniModsDB.skin or {}
-    return AniModsDB.skin
+local function MiscDB()
+    AniModsDB.euiMisc = AniModsDB.euiMisc or {}
+    return AniModsDB.euiMisc
 end
 
 local function EntryDB()
-    AniModsDB.skin = AniModsDB.skin or {}
-    AniModsDB.skin.entries = AniModsDB.skin.entries or {}
-    return AniModsDB.skin.entries
+    local db = MiscDB()
+    db.entries = db.entries or {}
+    return db.entries
 end
 
 local function IsEntryEnabled(key)
@@ -200,11 +208,13 @@ end
 -- EllesmereUIChat's thin line-art sidebar icons. Hiding it is the default --
 -- that is what EUI itself does with every other Blizzard chat chrome button
 -- it doesn't want (QuickJoinToastButton, ChatFrameMenuButton, ...).
-local TTS_MODE_LABEL = { hide = "Hide it", sidebar = "Move to EUI sidebar" }
+-- "EUI" spelled out: the panel says EllesmereUI everywhere else, and one
+-- abbreviation in one dropdown reads as a different thing being named.
+local TTS_MODE_LABEL = { hide = "Hide", sidebar = "Move to chat sidebar" }
 local TTS_MODE_ORDER = { "hide", "sidebar" }
 
 local function GetTTSMode()
-    local mode = SkinDB().ttsMode
+    local mode = MiscDB().ttsMode
     if mode and TTS_MODE_LABEL[mode] then return mode end
     return "hide"
 end
@@ -215,13 +225,19 @@ local ApplyTTS
 
 local TTSEntry = {
     key = "tts",
-    name = "TTS Button",
+    -- Named for what it is to the player, not for the API. "TTS Button" was the
+    -- Blizzard frame's name; nobody looking for this thinks of it that way.
+    name = "Chat Read Aloud",
+    -- Reasons are whole sentences: they are the "?" tooltip on the Available
+    -- row now, not a parenthetical crammed into a value.
     Available = function()
         if not AniMods.IsAddOnLoaded("EllesmereUIChat") then
-            return false, "EllesmereUIChat not loaded"
+            return false, "EllesmereUIChat is not loaded, so there is no chat "
+                       .. "sidebar to move the button into."
         end
         if ChatModuleEnabled() == false then
-            return false, "EllesmereUI's chat module is disabled"
+            return false, "EllesmereUI's chat module is switched off, so it "
+                       .. "builds no sidebar."
         end
         return true
     end,
@@ -260,19 +276,21 @@ local TTSEntry = {
     GetInfoRows = function()
         local rows = {
             {
-                label = "Blizzard button found",
+                label = "Blizzard's button found",
                 state = _G.TextToSpeechButton and true or false,
                 help  = (not _G.TextToSpeechButton)
-                    and "Blizzard's TextToSpeechButton does not exist in this client."
+                    and "This client has no TextToSpeechButton to re-home."
                     or nil,
             },
             {
-                label   = "Mode",
+                -- "Mode" said nothing on its own. The label names the thing
+                -- being decided about, and the options say what happens to it.
+                label   = "Blizzard's button",
                 options = TTS_MODE_LABEL,
                 order   = TTS_MODE_ORDER,
                 get     = GetTTSMode,
                 set     = function(v)
-                    SkinDB().ttsMode = v
+                    MiscDB().ttsMode = v
                     if ApplyTTS then ApplyTTS() end
                 end,
             },
@@ -282,7 +300,7 @@ local TTSEntry = {
         -- it asks -- a question that does not apply yet is better not asked.
         if GetTTSMode() == "sidebar" and ttsProxy then
             rows[#rows + 1] = {
-                label = "Icon copied from Blizzard's button",
+                label = "Icon copied from Blizzard",
                 state = ttsIconFound,
                 help  = (not ttsIconFound)
                     and "Blizzard's button had no icon texture to copy, so the "
@@ -351,7 +369,7 @@ local function UsableFlyoutIcons()
 end
 
 local function GetFlyoutIcon()
-    local key = SkinDB().flyoutIcon
+    local key = MiscDB().flyoutIcon
     if key and AniMods.W.AtlasExists(FLYOUT_ICON_ATLAS[key]) then return key end
     -- Fall back to the first that resolves, preferring the configured
     -- default; "filter" (EUI's own) is last-resort since it always works.
@@ -367,7 +385,7 @@ local function GetFlyoutIcon()
 end
 
 local function GetFlyoutTint()
-    local key = SkinDB().flyoutTint
+    local key = MiscDB().flyoutTint
     if key and FLYOUT_TINT_LABEL[key] then return key end
     return "light"
 end
@@ -426,10 +444,13 @@ end
 
 local GroupButtonEntry = {
     key = "minimapGroupButton",
-    name = "Minimap Group Button Icon",
+    -- "Icon" dropped from the name: the entry's own rows already say Icon and
+    -- Tint, so the section header only has to say which button.
+    name = "Minimap Group Button",
     Available = function()
         if not AniMods.IsAddOnLoaded("EllesmereUIMinimap") then
-            return false, "EllesmereUIMinimap not loaded"
+            return false, "EllesmereUIMinimap is not loaded, so its group "
+                       .. "button does not exist."
         end
         return true
     end,
@@ -492,7 +513,7 @@ local GroupButtonEntry = {
             options = FLYOUT_ICON_LABEL,
             order   = UsableFlyoutIcons(),
             get     = GetFlyoutIcon,
-            set     = function(v) SkinDB().flyoutIcon = v; ApplyFlyoutSkin() end,
+            set     = function(v) MiscDB().flyoutIcon = v; ApplyFlyoutSkin() end,
             atlas   = FLYOUT_ICON_ATLAS[GetFlyoutIcon()],
         }
         rows[#rows + 1] = {
@@ -500,7 +521,7 @@ local GroupButtonEntry = {
             options = FLYOUT_TINT_LABEL,
             order   = FLYOUT_TINT_ORDER,
             get     = GetFlyoutTint,
-            set     = function(v) SkinDB().flyoutTint = v; ApplyFlyoutSkin() end,
+            set     = function(v) MiscDB().flyoutTint = v; ApplyFlyoutSkin() end,
         }
         return rows
     end,
@@ -540,7 +561,7 @@ local function SetEntryEnabled(key, enabled)
     end
 end
 
-function Skin:GetInfoRows()
+function EUIMisc:GetInfoRows()
     local rows = {}
 
     for _, entry in ipairs(ENTRIES) do
@@ -559,18 +580,20 @@ function Skin:GetInfoRows()
                 help  = reason or "A prerequisite for this entry is not met.",
             }
         else
-            local appliedHelp
+            local effectHelp
             if not entryApplied[entry.key] then
-                -- "Disabled" is distinct from "waiting": nothing is being waited
-                -- on, the entry is simply switched off by the row above.
-                appliedHelp = (not IsEntryEnabled(entry.key))
-                    and "Switched off above."
-                    or  "Waiting for the frame this skins to appear."
+                -- "Switched off" is distinct from "waiting": nothing is being
+                -- waited on, the entry is simply off by the row above.
+                effectHelp = (not IsEntryEnabled(entry.key))
+                    and "Switched off by the setting above."
+                    or  "Waiting for the EllesmereUI frame it attaches to."
             end
             rows[#rows + 1] = {
-                label = "Applied",
+                -- "Applied" described what the code did. "In effect" describes
+                -- what the player can see, which is what they came to check.
+                label = "In effect",
                 state = entryApplied[entry.key] and true or false,
-                help  = appliedHelp,
+                help  = effectHelp,
             }
             if entry.GetInfoRows then
                 for _, r in ipairs(entry.GetInfoRows()) do
@@ -583,7 +606,7 @@ function Skin:GetInfoRows()
     return rows
 end
 
-function Skin:Enable()
+function EUIMisc:Enable()
     local function PollAll()
         for _, entry in ipairs(ENTRIES) do
             PollEntry(entry)
@@ -605,4 +628,4 @@ function Skin:Enable()
     end)
 end
 
-AniMods.RegisterModule("Skin", Skin)
+AniMods.RegisterModule("EllesmereUIMisc", EUIMisc)

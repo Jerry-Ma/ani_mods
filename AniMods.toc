@@ -20,7 +20,7 @@ UI.lua
 Modules\General.lua
 Modules\Bar.lua
 Modules\ChatContextSwitch.lua
+Modules\EllesmereUIMisc.lua
 Modules\GroupRoles.lua
-Modules\Skin.lua
 Modules\SocialStatus.lua
 Modules\SoundSwitch.lua

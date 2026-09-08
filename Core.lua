@@ -351,6 +351,7 @@ end
 local MODULE_RENAMES = {
     -- oldModuleName -> { newModuleName, oldDBKey, newDBKey }
     RaidComposition = { "GroupRoles", "raidComposition", "groupRoles" },
+    Skin            = { "EllesmereUIMisc", "skin", "euiMisc" },
 }
 
 local function MigrateRenames()
