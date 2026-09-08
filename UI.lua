@@ -84,6 +84,42 @@ local function SortedModuleNames()
     return names
 end
 
+-- ── Reload prompt ────────────────────────────────────────────────────────────
+
+-- Asks whether to reload now, for the settings that cannot fully apply until
+-- the UI restarts.
+--
+-- Deferred by a frame and guarded, so flipping several such settings in a row
+-- -- switching three modules off, say -- asks once at the end rather than
+-- stacking a dialog per click. `reason` names what is waiting, since by the
+-- time the dialog appears the user may have clicked more than one thing.
+local reloadPending, reloadReasons = false, {}
+
+function AniMods.PromptReload(reason)
+    if reason then reloadReasons[reason] = true end
+    if reloadPending then return end
+    reloadPending = true
+
+    C_Timer.After(0, function()
+        reloadPending = false
+
+        local names = {}
+        for r in pairs(reloadReasons) do names[#names + 1] = r end
+        reloadReasons = {}
+        table.sort(names)
+
+        local what = (#names > 0) and table.concat(names, ", ") or "A setting"
+        W.Confirm({
+            message = ("%s needs a UI reload to take effect.\n\n"
+                .. "The change is saved either way -- reloading now just applies it "
+                .. "immediately instead of at your next login."):format(what),
+            confirmText = "Reload UI",
+            cancelText  = "Later",
+            onConfirm   = function() ReloadUI() end,
+        })
+    end)
+end
+
 -- ── Copy-to-clipboard popup (for full Enable() error tracebacks) ─────────────
 
 local errorPopup
@@ -247,6 +283,7 @@ local function BuildRow(parent, descriptor, sectionIndex, stripeIndex)
         dd:SetValue(descriptor.get())
         dd:SetOnChange(function(value)
             descriptor.set(value)
+            if descriptor.reload then AniMods.PromptReload(descriptor.label) end
             if AniMods.RefreshUI then AniMods.RefreshUI() end
         end)
         dd:SetOnOpened(function() openDropdownSection = sectionIndex end)
@@ -313,6 +350,7 @@ local function BuildRow(parent, descriptor, sectionIndex, stripeIndex)
         check:SetChecked(descriptor.get())
         check:SetOnClick(function(value)
             descriptor.set(value)
+            if descriptor.reload then AniMods.PromptReload(descriptor.label) end
             if AniMods.RefreshUI then AniMods.RefreshUI() end
         end)
         AttachHelp(check.frame, descriptor)
@@ -549,16 +587,24 @@ local function BuildTabContent(name)
     local toggle = W.Toggle(titleFrame)
     toggle.frame:SetPoint("RIGHT", titleFrame, "RIGHT", -4, 0)
     toggle:SetOnClick(function(value)
-        AniMods.SetModuleEnabled(name, value)
+        -- Only prompts when the change genuinely did not take -- prompting on
+        -- every toggle teaches people to dismiss the prompt, which makes it
+        -- useless for the cases that actually need it.
+        local applied = AniMods.SetModuleEnabled(name, value)
+        if not applied then AniMods.PromptReload(entry.title) end
     end)
     cache.toggle = toggle
 
-    local toggleHelp = W.Help(titleFrame,
-        "Turns the whole module off. A disabled module's Enable() never runs at "
-        .. "login, so none of its code executes and it costs nothing.\n\n"
-        .. "Switching it off mid-session stops it doing new work, but hooks it "
-        .. "already installed cannot be removed -- WoW has no way to undo "
-        .. "hooksecurefunc. Reload to apply fully.")
+    local toggleHelp = W.Help(titleFrame, entry.liveToggle
+        and ("Turns the module off. This one stops and starts cleanly, so the "
+            .. "change applies straight away.\n\n"
+            .. "While off, its Enable() is skipped at login and none of its code runs.")
+        or ("Turns the module off. This one needs a UI reload to fully apply, and "
+            .. "will offer one.\n\n"
+            .. "While off, its Enable() is skipped at login and none of its code "
+            .. "runs -- but switching off mid-session cannot undo what it already "
+            .. "did, because WoW gives no way to remove a hooksecurefunc hook or "
+            .. "withdraw a data broker once registered."))
     toggleHelp.frame:SetPoint("RIGHT", toggle.frame, "LEFT", -6, 0)
 
     cache.blocks[#cache.blocks + 1] = { frame = titleFrame, gap = BLOCK_GAP }

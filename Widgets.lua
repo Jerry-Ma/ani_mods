@@ -384,6 +384,63 @@ function W.Help(parent, text)
     return o
 end
 
+-- ── Confirm popup ───────────────────────────────────────────────────────────
+-- A small two-button dialog, built once and reused.
+--
+-- EllesmereUI has its own (EllesmereUI:ShowConfirmPopup) and it would have
+-- been one call, but reaching for it would put back exactly the coupling
+-- Compat.lua removed: it is not part of the skinning facade, so the dialog
+-- would exist with EllesmereUI loaded and be missing without it. Ours is
+-- built from the same primitives as everything else and works either way.
+--
+-- Not a Blizzard StaticPopup for the same reason plus one more: those carry
+-- Blizzard's own art and would be the one part of this panel that does not
+-- follow the user's theme.
+
+local confirmPopup
+
+function W.Confirm(spec)
+    spec = spec or {}
+
+    if not confirmPopup then
+        local f = W.Window("AniModsConfirmPopup", "AniMods", 380, 150)
+        f:SetFrameStrata("FULLSCREEN_DIALOG")
+
+        local host = f.content
+        local msg = W.Text(host, 12, 0.85)
+        msg.frame:SetPoint("TOPLEFT", host, "TOPLEFT", 14, -10)
+        msg.frame:SetPoint("TOPRIGHT", host, "TOPRIGHT", -14, -10)
+        msg:Resize(352)
+
+        local confirm = W.Button(host, 120, 22)
+        confirm.frame:SetPoint("BOTTOMRIGHT", host, "BOTTOMRIGHT", -14, 14)
+
+        local cancel = W.Button(host, 100, 22)
+        cancel.frame:SetPoint("BOTTOMRIGHT", confirm.frame, "BOTTOMLEFT", -8, 0)
+
+        confirmPopup = { frame = f, msg = msg, confirm = confirm, cancel = cancel }
+    end
+
+    local p = confirmPopup
+    p.msg:SetText(spec.message or "")
+    p.msg:Resize(352)
+    p.confirm:SetText(spec.confirmText or "OK")
+    p.cancel:SetText(spec.cancelText or "Cancel")
+
+    p.confirm:SetOnClick(function()
+        p.frame:Hide()
+        if spec.onConfirm then spec.onConfirm() end
+    end)
+    p.cancel:SetOnClick(function()
+        p.frame:Hide()
+        if spec.onCancel then spec.onCancel() end
+    end)
+
+    p.frame:Show()
+    p.frame:Raise()
+    return p
+end
+
 -- ── Toggle switch ───────────────────────────────────────────────────────────
 -- A sliding switch, for the one control per tab that turns the whole module
 -- on or off.

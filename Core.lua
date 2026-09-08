@@ -180,6 +180,7 @@ local function InitModules()
         end
 
         local active = false
+        local ranEnable = false
         local errorTrace
         if conditionMet and userEnabled and not module.Enable then
             -- A module with nothing to run at login (registration alone is
@@ -194,6 +195,11 @@ local function InitModules()
             local ok, err = xpcall(module.Enable, ErrorHandler, module)
             if ok then
                 active = true
+                -- Records that this module actually started this session,
+                -- which is what makes a later live toggle meaningful --
+                -- SetEnabled resumes something running, it cannot start
+                -- something that never ran.
+                ranEnable = true
             else
                 errorTrace = err
                 -- ErrorHandler joins "<message>\n<stack>" - the part before
@@ -220,6 +226,10 @@ local function InitModules()
             errorTrace      = errorTrace,
             userEnabled     = userEnabled,
             active          = active,
+            ranEnable       = ranEnable,
+            -- Whether the on/off switch takes effect immediately. Read by the
+            -- panel to decide whether to offer a reload.
+            liveToggle      = (not module.Enable) or (ranEnable and module.SetEnabled ~= nil),
         }
     end
 
@@ -227,14 +237,51 @@ local function InitModules()
 end
 
 -- Used by the UI panel and by the enable/disable slash commands.
+--
+-- Returns true when the change took effect immediately, false when it is
+-- saved but needs a reload. The caller uses that to decide whether to offer
+-- one -- prompting for every toggle trains people to dismiss the prompt, so
+-- it has to be accurate.
+--
+-- A module can be toggled live only if it says so, by defining
+-- SetEnabled(self, on). That is a capability declaration rather than a flag
+-- to keep in sync: a module that can genuinely stop has to implement the
+-- stopping somewhere, and this is that somewhere.
+--
+-- Most cannot, and the reason is structural rather than laziness --
+-- hooksecurefunc has no inverse in the WoW API, and a LibDataBroker object,
+-- once registered, cannot be withdrawn. Modules built out of those two things
+-- are only fully switchable at load.
+--
+-- Turning a module ON also needs a reload when its Enable() never ran this
+-- session: SetEnabled resumes a module that started, it cannot retroactively
+-- start one that did not.
 function AniMods.SetModuleEnabled(name, enabled)
-    if not modules[name] then return end
+    local module = modules[name]
+    if not module then return false end
+
     enabled = enabled and true or false
     db.modules[name] = enabled
-    if status[name] then
-        status[name].userEnabled = enabled
+
+    local entry = status[name]
+    if entry then entry.userEnabled = enabled end
+
+    local applied = false
+    if not module.Enable then
+        -- Nothing ever ran, so there is nothing to start or stop.
+        applied = true
+    elseif entry and entry.ranEnable and module.SetEnabled then
+        local ok, err = pcall(module.SetEnabled, module, enabled)
+        if ok then
+            applied = true
+            entry.active = enabled and entry.conditionMet and true or false
+        elseif err then
+            geterrorhandler()(err)
+        end
     end
+
     if AniMods.RefreshUI then AniMods.RefreshUI() end
+    return applied
 end
 
 -- ── Saved-variable migrations ─────────────────────────────────────────────────

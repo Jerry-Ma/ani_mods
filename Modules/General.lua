@@ -141,7 +141,7 @@ function General:GetInfoRows()
     }
     rows[#rows + 1] = {
         label = "Addon compartment entry",
-        note  = "/reload to apply",
+        reload = true,
         help  = "The entry in Blizzard's addon-compartment dropdown, next to the "
              .. "minimap. Blizzard reads this from the .toc once at startup, so "
              .. "removing it needs a reload -- AniMods writes the preference now "
@@ -167,6 +167,16 @@ function General:Enable()
     -- building on the minimap earlier can land under whatever a minimap addon
     -- rearranges at login.
     AniMods.W.OnReady(ApplyMinimap)
+end
+
+-- Toggles cleanly: the only thing it owns is a minimap button of its own
+-- making, which hides on demand. Nothing hooked, nothing registered.
+function General:SetEnabled(on)
+    if on then
+        ApplyMinimap()
+    elseif button then
+        button:Hide()
+    end
 end
 
 AniMods.RegisterModule("General", General)

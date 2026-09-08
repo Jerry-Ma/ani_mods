@@ -624,4 +624,19 @@ function Bar:Enable()
     AniMods.W.OnReady(ApplyVisibility)
 end
 
+-- Toggles cleanly, so the panel applies the switch without offering a reload.
+--
+-- This module can, where most cannot, because everything it owns is its own:
+-- one frame it created, and LDB callbacks that are cheap no-ops while the bar
+-- is hidden (the handler returns immediately once `shown` is empty of visible
+-- work). It installs no hooks on anyone else's frames and registers no data
+-- object of its own -- the two things that cannot be undone.
+function Bar:SetEnabled(on)
+    if on then
+        ApplyVisibility()
+    elseif bar then
+        bar:Hide()
+    end
+end
+
 AniMods.RegisterModule("Bar", Bar)
