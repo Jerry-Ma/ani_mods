@@ -4,6 +4,9 @@
 ## Author: Ani
 ## Version: 1.0.0
 ## IconTexture: Interface\AddOns\AniMods\Media\icon.png
+## AddonCompartmentFunc: AniMods_OnAddonCompartmentClick
+## AddonCompartmentFuncOnEnter: AniMods_OnAddonCompartmentEnter
+## AddonCompartmentFuncOnLeave: AniMods_OnAddonCompartmentLeave
 ## SavedVariables: AniModsDB
 ## OptionalDeps: EllesmereUI, EllesmereUIBlizzardSkin, EllesmereUIQoL, EllesmereUIChat, EllesmereUIMinimap, NDui
 

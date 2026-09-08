@@ -351,3 +351,52 @@ _G.SlashCmdList["ANIMODS"] = function(msg)
         print("|cffffff00AniMods|r commands: |cffffd700/animods|r (status panel), |cffffd700list|r, |cffffd700enable <name>|r, |cffffd700disable <name>|r")
     end
 end
+
+-- ── Addon compartment ─────────────────────────────────────────────────────────
+
+-- The minimap's addon-compartment dropdown, wired via ## AddonCompartmentFunc
+-- (plus the OnEnter/OnLeave variants) in the .toc. The entry's icon is the
+-- ## IconTexture we already ship, so this is what makes that icon reachable
+-- rather than only visible in the AddOns list.
+--
+-- Contract, read off Blizzard's own AddonCompartment.lua rather than guessed:
+--   _G[func](addonName, buttonName)   -- click
+--   _G[func](addonName, menuButton)   -- OnEnter / OnLeave
+--
+-- Blizzard calls forceinsecure() before invoking these, deliberately: "Must
+-- taint otherwise addons would be able to arbitrarily run global functions
+-- untainted." So NOTHING PROTECTED MAY BE CALLED FROM HERE. Showing our own
+-- non-secure panel is fine; anything touching secure frames or protected
+-- actions would fail, and would fail only for players who opened it this way,
+-- which is exactly the kind of bug that never reproduces.
+--
+-- Defined through _G rather than as bare globals, matching the SLASH_ pattern
+-- above -- the assignment is then a table field rather than a new global,
+-- which is what the linter wants to see.
+
+_G.AniMods_OnAddonCompartmentClick = function()
+    if AniMods.ToggleUI then AniMods.ToggleUI() end
+end
+
+_G.AniMods_OnAddonCompartmentEnter = function(_, menuButton)
+    if not menuButton then return end
+
+    local active, total = 0, 0
+    for _, entry in pairs(status) do
+        total = total + 1
+        if entry.active then active = active + 1 end
+    end
+
+    GameTooltip:SetOwner(menuButton, "ANCHOR_LEFT")
+    GameTooltip:AddLine("AniMods", 1, 0.82, 0)
+    -- The same count the panel's tab dots convey, so the compartment answers
+    -- "is everything up?" without opening anything.
+    GameTooltip:AddLine(("%d of %d modules active"):format(active, total), 0.8, 0.8, 0.8)
+    GameTooltip:AddLine(" ")
+    GameTooltip:AddLine("Click to open the panel", 0.6, 0.6, 0.6)
+    GameTooltip:Show()
+end
+
+_G.AniMods_OnAddonCompartmentLeave = function()
+    GameTooltip:Hide()
+end
