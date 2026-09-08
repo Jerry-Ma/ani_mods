@@ -492,9 +492,8 @@ function GroupRoles:GetInfoRows()
     local rows = {}
 
     rows[#rows + 1] = { section = "Status" }
-    if not IsInGroup() then
-        rows[#rows + 1] = { label = "Status", value = "N/A (not in a group)" }
-    else
+    rows[#rows + 1] = { label = "In group", state = IsInGroup() }
+    if IsInGroup() then
         local counts = CountRoles()
         rows[#rows + 1] = { label = "Group type", value = IsInRaid() and "Raid" or "Party" }
         rows[#rows + 1] = { label = "Tanks",      value = tostring(counts.TANK) }
@@ -503,20 +502,26 @@ function GroupRoles:GetInfoRows()
     end
 
     rows[#rows + 1] = { section = "Integration" }
-    local dockStatus
-    if docked then
-        dockStatus = "Yes"
-    else
+    -- The reason lives in the "?" rather than in the answer. It used to be a
+    -- parenthetical inside the value -- "No (Raid Tools disabled, mode: never)"
+    -- -- which is how a yes/no row grows into a sentence nobody can scan.
+    local dockHelp
+    if not docked then
         local mode = GetEUIRaidToolsMode()
         if mode == "never" then
-            dockStatus = "No (Raid Tools disabled, mode: never)"
+            dockHelp = "EllesmereUI's Raid Tools is set to Never, so it builds no "
+                    .. "icon to dock onto."
         elseif not mode then
-            dockStatus = "No (Raid Tools not configured yet)"
+            dockHelp = "EllesmereUI's Raid Tools has not been configured yet."
         else
-            dockStatus = "No (waiting for its icon to appear)"
+            dockHelp = "Waiting for Raid Tools' icon to appear."
         end
     end
-    rows[#rows + 1] = { label = "Docked to EllesmereUI icon", value = dockStatus }
+    rows[#rows + 1] = {
+        label = "Docked to EllesmereUI icon",
+        state = docked,
+        help  = dockHelp,
+    }
     rows[#rows + 1] = {
         label = "Show docked badge",
         get   = ShowDockedBadge,

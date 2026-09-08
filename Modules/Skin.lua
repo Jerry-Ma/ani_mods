@@ -259,7 +259,13 @@ local TTSEntry = {
     end,
     GetInfoRows = function()
         local rows = {
-            { label = "Blizzard TextToSpeechButton", value = _G.TextToSpeechButton and "Found" or "Not found" },
+            {
+                label = "Blizzard button found",
+                state = _G.TextToSpeechButton and true or false,
+                help  = (not _G.TextToSpeechButton)
+                    and "Blizzard's TextToSpeechButton does not exist in this client."
+                    or nil,
+            },
             {
                 label   = "Mode",
                 options = TTS_MODE_LABEL,
@@ -271,10 +277,17 @@ local TTSEntry = {
                 end,
             },
         }
-        if GetTTSMode() == "sidebar" then
+        -- Only once there is a proxy to have copied an icon ONTO. This row used
+        -- to render "N/A" in that gap, which is not an answer to the question
+        -- it asks -- a question that does not apply yet is better not asked.
+        if GetTTSMode() == "sidebar" and ttsProxy then
             rows[#rows + 1] = {
                 label = "Icon copied from Blizzard's button",
-                value = ttsProxy and (ttsIconFound and "Yes" or "No (showing a \"T\" label instead)") or "N/A",
+                state = ttsIconFound,
+                help  = (not ttsIconFound)
+                    and "Blizzard's button had no icon texture to copy, so the "
+                     .. "sidebar entry shows a \"T\" label instead."
+                    or nil,
             }
         end
         return rows
@@ -463,7 +476,14 @@ local GroupButtonEntry = {
     end,
     GetInfoRows = function()
         local rows = {
-            { label = "EllesmereUI group button", value = flyoutBtn and "Found" or "Not found yet" },
+            {
+                label = "EllesmereUI group button found",
+                state = flyoutBtn and true or false,
+                help  = (not flyoutBtn)
+                    and "Appears once EllesmereUIMinimap has built its "
+                     .. "extra-button row beside the minimap."
+                    or nil,
+            },
         }
         if not flyoutBtn then return rows end
 
@@ -533,19 +553,25 @@ function Skin:GetInfoRows()
 
         local avail, reason = entry.Available()
         if not avail then
-            rows[#rows + 1] = { label = "Available", value = "No (" .. (reason or "prerequisite not met") .. ")" }
+            rows[#rows + 1] = {
+                label = "Available",
+                state = false,
+                help  = reason or "A prerequisite for this entry is not met.",
+            }
         else
-            local applied
-            if entryApplied[entry.key] then
-                applied = "Yes"
-            elseif not IsEntryEnabled(entry.key) then
-                -- Distinct from "waiting": nothing is being waited on, the
-                -- entry is simply switched off above.
-                applied = "No (disabled)"
-            else
-                applied = "No (waiting for its target)"
+            local appliedHelp
+            if not entryApplied[entry.key] then
+                -- "Disabled" is distinct from "waiting": nothing is being waited
+                -- on, the entry is simply switched off by the row above.
+                appliedHelp = (not IsEntryEnabled(entry.key))
+                    and "Switched off above."
+                    or  "Waiting for the frame this skins to appear."
             end
-            rows[#rows + 1] = { label = "Applied", value = applied }
+            rows[#rows + 1] = {
+                label = "Applied",
+                state = entryApplied[entry.key] and true or false,
+                help  = appliedHelp,
+            }
             if entry.GetInfoRows then
                 for _, r in ipairs(entry.GetInfoRows()) do
                     rows[#rows + 1] = r

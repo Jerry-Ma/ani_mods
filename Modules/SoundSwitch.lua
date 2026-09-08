@@ -215,7 +215,11 @@ function SoundSwitch:GetInfoRows()
     rows[#rows + 1] = { section = "Devices in the cycle" }
     local devices = GetDevices()
     if #devices == 0 then
-        rows[#rows + 1] = { label = "Devices", value = "None reported" }
+        rows[#rows + 1] = {
+            label = "Output devices found",
+            state = false,
+            help  = "The game reported no sound output devices to switch between.",
+        }
     else
         local current = CurrentDeviceName()
         for _, device in ipairs(devices) do

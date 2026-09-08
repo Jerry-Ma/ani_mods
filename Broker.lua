@@ -113,16 +113,30 @@ function Broker.SectionRows(getDB, onChange, objectName)
     local ldb = _G.LibStub and _G.LibStub:GetLibrary("LibDataBroker-1.1", true)
     local published = ldb and objectName and ldb:GetDataObjectByName(objectName)
 
+    -- Two rows, because these are two facts and one of them is a yes/no. They
+    -- were one row whose value was either a name or the words "Not published",
+    -- which meant the same cell answered two different questions depending on
+    -- which answer it was giving.
     local rows = {
         { section = "Broker widget" },
         {
-            label = "Published as",
-            value = published and objectName or "Not published",
-            help  = published
-                and "Pick this name in your data bar's widget list."
-                or  "Needs LibDataBroker, which EllesmereUI and most data bars ship.",
+            label = "Published",
+            state = published and true or false,
+            help  = (not published)
+                and "Needs LibDataBroker, which EllesmereUI and most data bars ship."
+                or nil,
         },
     }
+
+    -- The name is reported verbatim, because that is the string to look for in
+    -- a data bar's widget picker.
+    if published then
+        rows[#rows + 1] = {
+            label = "Widget name",
+            value = objectName,
+            help  = "Pick this name in your data bar's widget list.",
+        }
+    end
 
     -- Display options only matter once there is something to display.
     if published then

@@ -82,6 +82,7 @@ local WATCHED = {
 
 local bar, itemHost
 local barFill, barEdges   -- the bar's own configurable background and border
+local barGrip             -- drag handle, visible only while unlocked
 local items = {}          -- objName -> { button, fs, icon, text, hasIcon, textW }
 local ldb
 local enabled = {}        -- objName -> true, a lookup over db.order
@@ -524,6 +525,9 @@ local function ApplyLock()
     else
         bar:RegisterForDrag("LeftButton")
     end
+    -- The handle IS the "unlocked" indicator: its presence is what tells you
+    -- the bar can be moved, so there is no separate state to display.
+    if barGrip then barGrip:SetShown(not locked) end
 end
 
 -- Everything below goes through ApplyVisibility rather than calling
@@ -595,13 +599,55 @@ local function BuildBar()
     bar:EnableMouse(true)
     bar:SetMovable(true)
     bar:RegisterForDrag("LeftButton")
-    bar:SetScript("OnDragStart", bar.StartMoving)
-    bar:SetScript("OnDragStop", function(self)
-        self:StopMovingOrSizing()
+    local function StopAndSave()
+        bar:StopMovingOrSizing()
         local db = ModuleDB()
-        local point, _, relPoint, x, y = self:GetPoint()
+        local point, _, relPoint, x, y = bar:GetPoint()
         db.pos = { point = point, relPoint = relPoint, x = x, y = y }
+    end
+
+    bar:SetScript("OnDragStart", bar.StartMoving)
+    bar:SetScript("OnDragStop", StopAndSave)
+
+    -- Drag handle, shown only while the bar is unlocked.
+    --
+    -- Two problems, one control. An unlocked bar looked exactly like a locked
+    -- one, so there was nothing to say it could be moved; and the widgets on it
+    -- are buttons that swallow the press, so on a full bar there was often
+    -- nowhere left to grab.
+    --
+    -- OUTSIDE the left edge, not inset into the bar. The widgets divide the
+    -- bar's whole width between them, so anything placed inside would either
+    -- overlap a widget or have to be subtracted from the layout -- which would
+    -- make the bar's contents shift every time it was locked or unlocked.
+    barGrip = CreateFrame("Frame", nil, bar)
+    barGrip:SetSize(10, BAR_H)
+    barGrip:SetPoint("RIGHT", bar, "LEFT", -2, 0)
+    barGrip:EnableMouse(true)
+    barGrip:RegisterForDrag("LeftButton")
+    barGrip:SetScript("OnDragStart", function() bar:StartMoving() end)
+    barGrip:SetScript("OnDragStop", StopAndSave)
+
+    -- Three short rules, accent-coloured: the conventional "grab here" mark.
+    -- Painted here AND registered -- RegisterAccent only repaints on a theme
+    -- change, so a texture that is never given a colour of its own starts out
+    -- invisible and stays that way until the user happens to retheme.
+    local gr, gg, gb = AniMods.W.Accent()
+    for i = 1, 3 do
+        local line = barGrip:CreateTexture(nil, "OVERLAY")
+        line:SetSize(8, 1)
+        line:SetPoint("CENTER", barGrip, "CENTER", 0, (2 - i) * 3)
+        line:SetColorTexture(gr, gg, gb, 0.8)
+        AniMods.W.RegisterAccent(line, "vertex", 0.8)
+    end
+
+    barGrip:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText("Drag to move the bar", 1, 1, 1, 1, true)
+        GameTooltip:AddLine("Lock it in the AniMods panel", 0.6, 0.6, 0.6)
+        GameTooltip:Show()
     end)
+    barGrip:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
     -- Widgets go on a child, never on `bar` itself: W.Panel hands the frame
     -- to S.Panel, and under the EllesmereUI provider that enrols it in a
@@ -794,7 +840,12 @@ function Bar:GetInfoRows()
     rows[#rows + 1] = { section = "Widgets" }
 
     if #names == 0 then
-        rows[#rows + 1] = { label = "Plugins", value = "None registered" }
+        rows[#rows + 1] = {
+            label = "Widgets available",
+            state = false,
+            help  = "Nothing has registered a LibDataBroker widget yet. AniMods' "
+                 .. "own appear once their modules are active.",
+        }
         return rows
     end
 

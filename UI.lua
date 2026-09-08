@@ -177,7 +177,8 @@ end
 -- ── Info rows ────────────────────────────────────────────────────────────────
 -- A module's GetInfoRows() (optional) returns an ordered list of rows:
 --   { section = "Status" }                                                -- header, starts a new section
---   { label = "Tanks", value = "2" }                                      -- status
+--   { label = "Tanks", value = "2" }                                      -- status (a measurement)
+--   { label = "In group", state = false, help = "why not" }               -- statement + Yes/No badge
 --   { label = "Party", get = fn, set = fn, note = "Active" }              -- toggle, w/ status badge
 --   { label = "Bar color", color = true, get = fn, set = fn, reset = fn } -- colour swatch (RGB + alpha)
 --   { label = "Style", options = {k="Name",...}, order = {...},
@@ -194,6 +195,8 @@ local function RowKind(descriptor)
     if descriptor.strip then return "strip" end
     if descriptor.picker then return "picker" end
     if descriptor.color then return "color" end
+    -- `~= nil`, not truthiness: `state = false` is the whole point of the row.
+    if descriptor.state ~= nil then return "state" end
     if descriptor.swatches then return "swatches" end
     if descriptor.options then return "options" end
     if descriptor.min then return "min" end
@@ -208,7 +211,8 @@ end
 local function BuildShape(rows)
     local shape = {}
     for i, d in ipairs(rows or {}) do
-        local sig = RowKind(d) .. ":" .. tostring(d.section or d.label)
+        local kind = RowKind(d)
+        local sig = kind .. ":" .. tostring(d.section or d.label)
         -- How MANY preview icons a dropdown row has is structural (there's
         -- one widget each), so a change in count has to rebuild the section.
         -- Whether they're atlases or texture files is NOT: swapping between
@@ -223,7 +227,11 @@ local function BuildShape(rows)
         -- the label when the row is built, so a pooled row that gains or loses
         -- one cannot be updated in place -- it has to be rebuilt or it would
         -- keep (or keep lacking) a marker that no longer matches its content.
-        if d.help then sig = sig .. ":?" end
+        --
+        -- Statement rows are exempt: they always carry a marker and simply hide
+        -- it when there is nothing to say, precisely because their reason comes
+        -- and goes with the world and rebuilding on that would be constant.
+        if d.help and kind ~= "state" then sig = sig .. ":?" end
         shape[i] = sig
     end
     return shape
@@ -279,6 +287,58 @@ local function ApplyNote(badge, descriptor)
     else
         badge.frame:Hide()
     end
+end
+
+-- ── Statement rows ──────────────────────────────────────────────────────────
+-- "<claim>  [Yes|No]  ?" -- ONE rendering for every yes/no fact in the panel.
+--
+-- The Conditions card and modules' own status rows both build with this, since
+-- they ask the same kind of question. They used to answer it four different
+-- ways: Met/Not met in the conditions card, Found/Not found in Skin,
+-- "No (Raid Tools disabled, mode: never)" in GroupRoles, and "N/A" wherever the
+-- question did not apply -- with the reason smuggled into the value as a
+-- parenthetical, which is why those values kept growing into sentences.
+--
+-- The badge is the answer. The "?" carries the why.
+--
+-- It sits AFTER the badge here, which is the opposite of an option row. On an
+-- option the marker explains the setting, so it belongs beside its name; on a
+-- statement it explains the answer, so it belongs beside the answer.
+--
+-- A false is grey by default, red only when the caller says the answer matters
+-- -- conditions do, because an unmet one stops the module. "In group: No" is
+-- not a fault, and painting it red would spend the panel's only alarm colour on
+-- a fact about the player's evening.
+local function BuildStatementRow(parent)
+    local row = CreateFrame("Frame", nil, parent)
+    row:SetHeight(18)
+
+    local label = W.Font(row, 12, nil, W.TEXT_DIM_A)
+    label:SetPoint("LEFT", row, "LEFT", 8, 0)
+    label:SetJustifyH("LEFT")
+
+    local badge = W.Badge(row)
+    badge.frame:SetPoint("LEFT", label, "RIGHT", 8, 0)
+
+    -- Always built, shown only when there is something to explain. Whether a
+    -- statement has a reason changes with the world -- "waiting for its icon"
+    -- becomes docked -- and treating that as a shape change would rebuild the
+    -- card under the cursor every time it flipped.
+    local help = W.Help(row, nil)
+    help.frame:SetPoint("LEFT", badge.frame, "RIGHT", 5, 0)
+
+    return { frame = row, label = label, badge = badge, help = help }
+end
+
+local function ApplyStatement(built, descriptor, badWhenFalse)
+    built.label:SetText(descriptor.label or "")
+    if descriptor.state then
+        built.badge:Set("Yes", W.BADGE_OK)
+    else
+        built.badge:Set("No", badWhenFalse and W.BADGE_BAD or W.BADGE_IDLE)
+    end
+    built.help:SetText(descriptor.help)
+    built.help:SetShown(true)   -- W.Help hides itself when the text is empty
 end
 
 -- Attaches the "?" marker to a row when its descriptor carries `help`.
@@ -495,6 +555,11 @@ local function BuildRow(parent, descriptor, sectionIndex, stripeIndex)
         AttachHelp(row, descriptor, label)
         return { kind = kind, widget = picker }, row, ROW_GAP
 
+    elseif kind == "state" then
+        local built = BuildStatementRow(parent)
+        ApplyStatement(built, descriptor)
+        return { kind = kind, widget = built }, built.frame, ROW_GAP
+
     elseif kind == "color" then
         local row = CreateFrame("Frame", nil, parent)
         row:SetHeight(24)
@@ -558,6 +623,8 @@ local function RefreshRowsInPlace(rows, cache)
             -- This is also what keeps the note badge live: "active now" comes
             -- and goes with the group, and nothing else repaints it.
             BindCheckbox(c, descriptor)
+        elseif c and c.kind == "state" then
+            ApplyStatement(c.widget, descriptor)
         elseif c and c.kind == "color" then
             -- Follows the theme until the user picks something, so it has to be
             -- re-read: the resolved colour can change without this row acting.
@@ -629,6 +696,8 @@ local function FillSection(section, slice, sectionIndex)
             elseif kind == "value" then
                 entry.built.widget:Set(descriptor.label, tostring(descriptor.value or ""))
                 entry.built.widget:Stripe(stripe)
+            elseif kind == "state" then
+                ApplyStatement(entry.built.widget, descriptor)
             elseif kind == "checkbox" then
                 BindCheckbox(entry.built, descriptor)
                 -- The "?" text too. Whether a row HAS one is part of the shape
@@ -699,14 +768,14 @@ local scrollPos = {}   -- name -> saved scroll offset
 -- entries are gone rather than the words: per-feature availability is reported
 -- beside the feature it governs, so every row here is once again a gate.
 local function RefreshConditionRows(entry, cache)
-    local badges = cache.conditionBadges
-    if not badges then return end
+    local builtRows = cache.conditionRows
+    if not builtRows then return end
     local deps = entry.conditions
     if type(deps) ~= "table" then return end
 
     for i, dep in ipairs(deps) do
-        local badge = badges[i]
-        if badge then
+        local built = builtRows[i]
+        if built then
             -- An entry with no `met` counts as satisfied, matching
             -- Core's EvaluateConditions. The two have to agree, or the
             -- panel would show "Not met" for something Core is happily
@@ -718,8 +787,9 @@ local function RefreshConditionRows(entry, cache)
                 satisfied = (ok and result) and true or false
             end
 
-            badge:Set(satisfied and "Yes" or "No",
-                satisfied and W.BADGE_OK or W.BADGE_BAD)
+            -- `true`: an unmet condition genuinely stops the module, so this is
+            -- one of the few places a red answer is earned.
+            ApplyStatement(built, { label = dep.text, state = satisfied, help = dep.help }, true)
         end
     end
 end
@@ -879,27 +949,16 @@ local function BuildTabContent(name)
     local deps = entry.conditions
     if type(deps) == "table" and deps[1] then
         local card = W.Card(content, "Conditions")
-        cache.conditionBadges = {}
+        cache.conditionRows = {}
         W.ResetStack(card.body, 0)
 
-        for i, dep in ipairs(deps) do
-            local row = CreateFrame("Frame", nil, card.body)
-            row:SetHeight(18)
-
-            local label = W.Font(row, 12, nil, W.TEXT_DIM_A)
-            label:SetPoint("LEFT", row, "LEFT", 0, 0)
-            label:SetText(dep.text or "")
-
-            if dep.help then
-                local h = W.Help(row, dep.help)
-                h.frame:SetPoint("LEFT", label, "RIGHT", 5, 0)
-            end
-
-            local badge = W.Badge(row)
-            badge.frame:SetPoint("RIGHT", row, "RIGHT", 0, 0)
-            cache.conditionBadges[i] = badge
-
-            W.Stack(card.body, row, 18, 2)
+        -- The same builder the modules' own status rows use, so a condition and
+        -- a module's "Docked to EllesmereUI icon" are the same object on screen
+        -- rather than two things that merely resemble each other.
+        for i in ipairs(deps) do
+            local built = BuildStatementRow(card.body)
+            cache.conditionRows[i] = built
+            W.Stack(card.body, built.frame, 18, 2)
         end
 
         card:Finish()

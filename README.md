@@ -176,7 +176,8 @@ for free:
 function MyFeature:GetInfoRows()
     return {
         { section = "Status" },                                                  -- section header
-        { label = "Some live value", value = tostring(someState) },              -- status
+        { label = "Some live value", value = tostring(someState) },              -- status (a measurement)
+        { label = "In group", state = IsInGroup(), help = "why not" },           -- statement + Yes/No badge
         { section = "Options" },
         { label = "Include X", get = GetX, set = SetX, note = "Active" },        -- checkbox + status badge
         { label = "Style", options = { a = "Style A", b = "Style B" },
@@ -191,12 +192,25 @@ function MyFeature:GetInfoRows()
 end
 ```
 
-Any row may carry `help`, which attaches a `?` marker directly after its label revealing
-the long explanation on hover. That is what keeps the panel scannable: the label states
-the setting, the reasoning lives one hover away rather than as a paragraph under every
-control. The corollary is that the label must stand alone — `note` is the short qualifier
-that belongs *beside* it ("active now", "current"), never a second name for the same
-thing.
+**Every yes/no fact is a `state` row**, and they all render identically — `<claim>
+[Yes|No] ?` — whether they come from a module's `GetInfoRows()` or from its `conditions`
+(the Conditions card builds with the same primitive). Use `value` only for a
+*measurement* ("Tanks: 2", "Version: 1.4"); a boolean dressed as a value string is what
+produced four vocabularies for one question — Met/Not met, Found/Not found, `No (Raid
+Tools disabled, mode: never)`, and `N/A` — with the reason smuggled into the value as a
+parenthetical. The reason belongs in `help`. A false answer is grey (a fact, not a
+fault); only conditions paint it red, because an unmet one actually stops the module.
+
+Any row may carry `help`, which attaches a `?` marker revealing the long explanation on
+hover. That is what keeps the panel scannable: the label states the setting, the
+reasoning lives one hover away rather than as a paragraph under every control. The
+corollary is that the label must stand alone. On an **option** row the marker sits
+straight after the label, because it explains the setting; on a **statement** row it sits
+after the badge, because it explains the answer.
+
+`note` is a live *status* about a row ("Active", "Current") and renders as the same green
+badge, beside the label — never a second name for the same thing, and never the accent
+colour, which belongs to the panel's own furniture rather than to facts about the game.
 
 A row with `section` renders as a divider header, grouping an otherwise-flat scrolling
 list into skimmable chunks (a module with several kinds of info — live status,
