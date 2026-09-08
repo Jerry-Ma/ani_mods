@@ -300,14 +300,29 @@ flat "modern" colour — and editing the Modern colour — applies with no reloa
 changes propagate through `S.OnLooksChanged` into a weak-keyed registry of the few things
 AniMods still colours by hand (the slider fill, headings, the window title).
 
-**There are deliberately no fallbacks.** A second hand-drawn rendering of the same panel
-is debt that must be maintained and can never be verified to still match. The price is an
-honest hard dependency, declared in the `.toc`: `EllesmereUI` plus
-`EllesmereUIBlizzardSkin`, with third-party skinning left enabled for AniMods in
-EllesmereUI's options. If any of those is missing, `W.OnReady`'s diagnostic names which
-one instead of failing silently.
+**There is no provider test anywhere in `Widgets.lua`.** `Compat.lua` picks one at load —
+EllesmereUI's facade when it's there, an AniMods-owned implementation of the same
+interface when it isn't — and every constructor just calls `S`. That's what keeps this
+from being the fallback pattern it replaced: the old code asked "is EllesmereUI loaded?"
+at eight call sites and carried a hand-drawn branch behind each, so every widget had two
+renderings to keep looking alike.
+
+The second rendering does still exist — a stock Blizzard UI needs one — and it's worth
+naming rather than glossing. The difference is that it's one file behind one boundary,
+implementing someone else's published contract, instead of a branch inside every widget.
+
+**Consequence: AniMods has no hard dependency on EllesmereUI.** The panel, the brokers and
+every module work on a stock UI. `Compat.lua` implements only the members `Widgets.lua`
+actually calls (`Shell`, `Panel`, `Button`, `Checkbox`, `Dropdown`, `Font`, and the five
+theme getters) — implementing the rest of EllesmereUI's facade unused would be inventing a
+contract nothing exercises. Its accent colour is the player's class colour, the one piece
+of live theming a stock UI has.
 
 #### The restrip rule
+
+This applies to EllesmereUI's provider; `Compat.lua` has no such registry. `Widgets.lua`
+follows the rule unconditionally anyway, which is what lets one set of constructors serve
+both providers — don't "optimise" it away for the stock path.
 
 `S.Panel` and `S.Shell` enrol their frame in the engine's **restrip registry**.
 `WSkin.Restrip()` is a global sweep — called from ~20 places whenever a Blizzard window
