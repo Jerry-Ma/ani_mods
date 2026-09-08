@@ -68,10 +68,19 @@ local function ClassifyReason(entry)
     return hasError, hasReason
 end
 
+-- Sidebar order: by the module's `order` first, then title. Everything
+-- defaults to order 100 and so sorts alphabetically; General claims 0 so the
+-- addon's own settings head the list instead of landing between Chat Context
+-- Switch and Group Roles.
 local function SortedModuleNames()
     local names = {}
     for name in pairs(AniMods.status) do tinsert(names, name) end
-    table.sort(names)
+    table.sort(names, function(a, b)
+        local ea, eb = AniMods.status[a], AniMods.status[b]
+        local oa, ob = ea.order or 100, eb.order or 100
+        if oa ~= ob then return oa < ob end
+        return (ea.title or a) < (eb.title or b)
+    end)
     return names
 end
 
@@ -418,31 +427,36 @@ end
 
 -- ── Per-module tab content ───────────────────────────────────────────────────
 
--- name -> { blocks, sections, titleFS, depLine, reasonText, enabledCheck, ... }
+-- name -> { blocks, sections, titleFS, stateBadge, toggle, depBadges, ... }
 local tabCache = {}
 local scrollPos = {}   -- name -> saved scroll offset
 
--- Renders the whole requirement list into one wrapped line: a coloured dot
--- per entry followed by its text, separated by a muted divider. Green = met,
--- red = not met, grey = purely informational (no `met` check to run).
+-- Updates each requirement row's badge. `met` decides the colour; the words
+-- come from the dependency, defaulting to Loaded/Not loaded since most of
+-- these are addon-presence checks. A dependency with no `met` is purely
+-- informational and gets a neutral badge -- there is nothing to check, so
+-- neither green nor red would be honest.
 local function RefreshDepRows(entry, cache)
-    local line = cache.depLine
-    if not line then return end
+    local badges = cache.depBadges
+    if not badges then return end
     local deps = entry.dependencies
-    if type(deps) ~= "table" or not deps[1] then return end
+    if type(deps) ~= "table" then return end
 
-    local parts = {}
     for i, dep in ipairs(deps) do
-        local dotColor
-        if dep.met then
-            local ok, result = pcall(dep.met)
-            dotColor = (ok and result) and "59ff59" or "ff5555"
-        else
-            dotColor = "888888"
+        local badge = badges[i]
+        if badge then
+            if dep.met then
+                local ok, result = pcall(dep.met)
+                if ok and result then
+                    badge:Set(dep.metText or "Loaded", W.BADGE_OK)
+                else
+                    badge:Set(dep.unmetText or "Not loaded", W.BADGE_BAD)
+                end
+            else
+                badge:Set(dep.idleText or "n/a", W.BADGE_IDLE)
+            end
         end
-        parts[i] = ("|cff%s%s|r %s"):format(dotColor, DOT, dep.text)
     end
-    line:SetText(table.concat(parts, "   |cff4a4a4a|||r   "))
 end
 
 -- Everything above the info-row sections whose content is live: the title's
@@ -453,7 +467,8 @@ end
 -- lines until something happened to trigger a refresh.
 local function ApplyLiveValues(entry, cache)
     local stateLabel, r, g, b = GetStateInfo(entry)
-    cache.titleFS:SetText(("%s  |cff%s[%s]|r"):format(entry.title, ColorHex(r, g, b), stateLabel))
+    cache.stateBadge:Set(stateLabel, { r, g, b })
+    cache.toggle:SetChecked(entry.userEnabled)
 
     RefreshDepRows(entry, cache)
 
@@ -465,7 +480,6 @@ local function ApplyLiveValues(entry, cache)
         end
     end
 
-    cache.enabledCheck:SetChecked(entry.userEnabled)
 end
 
 -- Re-anchors every top-level block in the content frame and resizes the
@@ -510,31 +524,77 @@ local function BuildTabContent(name)
     local cache = { blocks = {}, sections = {} }
     tabCache[name] = cache
 
-    -- Title + state badge.
+    -- Header: name, "?" for the full description, state badge, master switch.
+    --
+    -- One row carrying everything you need to know about the module as a
+    -- whole. The description used to sit under it as a paragraph and the
+    -- on/off control at the very bottom of the tab, which put the two most
+    -- important things -- is it on, is it working -- at opposite ends of a
+    -- scroll.
     local titleFrame = CreateFrame("Frame", nil, content)
-    titleFrame:SetHeight(22)
+    titleFrame:SetHeight(24)
+
     local titleFS = W.Font(titleFrame, 15, nil, 1)
     titleFS:SetPoint("LEFT")
+    titleFS:SetText(entry.title)
     cache.titleFS = titleFS
-    cache.blocks[#cache.blocks + 1] = { frame = titleFrame, gap = 2 }
 
-    -- Description.
-    local desc = W.Text(content, 12, W.TEXT_DIM_A)
-    desc:SetText(entry.description or "|cff888888(no description)|r")
-    cache.blocks[#cache.blocks + 1] = { frame = desc.frame, text = desc, gap = BLOCK_GAP }
+    local titleHelp = W.Help(titleFrame, entry.description)
+    titleHelp.frame:SetPoint("LEFT", titleFS, "RIGHT", 6, 0)
 
-    -- Requirements, as ONE line.
-    --
-    -- This used to be a "Depends on:" caption followed by a bulleted line per
-    -- entry -- four lines of chrome above every tab to say something that is
-    -- usually "nothing is missing". Now the dots run inline and separated, so
-    -- a satisfied module costs one muted line and an unsatisfied one still
-    -- shows exactly which entry is red.
+    local stateBadge = W.Badge(titleFrame)
+    stateBadge.frame:SetPoint("LEFT", titleHelp.frame, "RIGHT", 8, 0)
+    cache.stateBadge = stateBadge
+
+    local toggle = W.Toggle(titleFrame)
+    toggle.frame:SetPoint("RIGHT", titleFrame, "RIGHT", -4, 0)
+    toggle:SetOnClick(function(value)
+        AniMods.SetModuleEnabled(name, value)
+    end)
+    cache.toggle = toggle
+
+    local toggleHelp = W.Help(titleFrame,
+        "Turns the whole module off. A disabled module's Enable() never runs at "
+        .. "login, so none of its code executes and it costs nothing.\n\n"
+        .. "Switching it off mid-session stops it doing new work, but hooks it "
+        .. "already installed cannot be removed -- WoW has no way to undo "
+        .. "hooksecurefunc. Reload to apply fully.")
+    toggleHelp.frame:SetPoint("RIGHT", toggle.frame, "LEFT", -6, 0)
+
+    cache.blocks[#cache.blocks + 1] = { frame = titleFrame, gap = BLOCK_GAP }
+
+    -- Requirements card: one row per condition, each with its own badge, so
+    -- "why is this inactive" is answered by scanning a column of colours
+    -- rather than by reading prose.
     local deps = entry.dependencies
     if type(deps) == "table" and deps[1] then
-        local line = W.Text(content, 12, W.TEXT_DIM_A)
-        cache.depLine = line
-        cache.blocks[#cache.blocks + 1] = { frame = line.frame, text = line, gap = BLOCK_GAP }
+        local card = W.Card(content, "Requirements")
+        cache.depBadges = {}
+        W.ResetStack(card.body, 0)
+
+        for i, dep in ipairs(deps) do
+            local row = CreateFrame("Frame", nil, card.body)
+            row:SetHeight(18)
+
+            local label = W.Font(row, 12, nil, W.TEXT_DIM_A)
+            label:SetPoint("LEFT", row, "LEFT", 0, 0)
+            label:SetText(dep.text or "")
+
+            if dep.help then
+                local h = W.Help(row, dep.help)
+                h.frame:SetPoint("LEFT", label, "RIGHT", 5, 0)
+            end
+
+            local badge = W.Badge(row)
+            badge.frame:SetPoint("RIGHT", row, "RIGHT", 0, 0)
+            cache.depBadges[i] = badge
+
+            W.Stack(card.body, row, 18, 2)
+        end
+
+        card:Finish()
+        cache.depCard = card
+        cache.blocks[#cache.blocks + 1] = { frame = card.frame, gap = BLOCK_GAP }
     end
 
     -- Error / reason block.
@@ -575,16 +635,6 @@ local function BuildTabContent(name)
         FillSection(section, slice, gi)
         cache.blocks[#cache.blocks + 1] = { frame = card.frame, gap = BLOCK_GAP }
     end
-
-    -- Enabled toggle.
-    local enabledCheck = W.CheckBox(content)
-    enabledCheck:SetLabel("Enabled  |cff888888(/reload to apply)|r")
-    enabledCheck:SetChecked(entry.userEnabled)
-    enabledCheck:SetOnClick(function(value)
-        AniMods.SetModuleEnabled(name, value)
-    end)
-    cache.enabledCheck = enabledCheck
-    cache.blocks[#cache.blocks + 1] = { frame = enabledCheck.frame, gap = BLOCK_GAP }
 
     ApplyLiveValues(entry, cache)
     RelayoutContent(cache)
@@ -792,7 +842,12 @@ end
 local function BuildUI()
     if frame then return end
 
-    frame = W.Window("AniModsPanel", "AniMods", 700, 500)
+    frame = W.Window("AniModsPanel", "AniMods", 700, 500, {
+        icon = "Interface\\AddOns\\AniMods\\Media\\icon.png",
+        footer = true,
+    })
+    frame.footerLeft:SetText("/animods  |cff4a4a4a|||r  /ani list  |cff4a4a4a|||r  /ani enable <module>")
+    frame.footerRight:SetText("v" .. (AniMods.GetAddOnVersion("AniMods") or "?"))
 
     -- `content` is the window's own child, below S.Shell's title band.
     -- Building on `frame` directly would put these regions in EllesmereUI's

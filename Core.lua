@@ -208,6 +208,11 @@ local function InitModules()
         status[name] = {
             module          = module, -- reference for any future per-module UI needs
             title           = module.title or name,
+            -- Sidebar sort key. Everything defaults to 100 and therefore
+            -- sorts by title; only General claims a lower number, so the
+            -- addon's own settings sit above the patches rather than
+            -- alphabetically among them.
+            order           = module.order or 100,
             description     = module.description,
             dependencies    = module.dependencies, -- always-visible "Depends on" checklist ({ text, met } entries), distinct from conditionReason (which only shows on failure)
             conditionMet    = conditionMet,
@@ -374,7 +379,20 @@ end
 -- above -- the assignment is then a table field rather than a new global,
 -- which is what the linter wants to see.
 
+-- Honours the General module's "Addon compartment entry" setting. Blizzard
+-- builds the compartment list from .toc metadata at startup and gives addons
+-- no way to withdraw an entry, so the entry always exists -- switching it off
+-- makes it inert and says so, which is the closest thing available.
+local function CompartmentEnabled()
+    local g = AniModsDB and AniModsDB.general
+    return not (g and g.compartment == false)
+end
+
 _G.AniMods_OnAddonCompartmentClick = function()
+    if not CompartmentEnabled() then
+        print("|cffffff00AniMods:|r compartment entry is switched off in General. Use |cffffd700/animods|r.")
+        return
+    end
     if AniMods.ToggleUI then AniMods.ToggleUI() end
 end
 

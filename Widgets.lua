@@ -384,6 +384,107 @@ function W.Help(parent, text)
     return o
 end
 
+-- ── Toggle switch ───────────────────────────────────────────────────────────
+-- A sliding switch, for the one control per tab that turns the whole module
+-- on or off.
+--
+-- Deliberately not a checkbox. A checkbox is one of many equal settings; this
+-- is the master control that decides whether any of the others matter, and it
+-- should not look like its own contents. Same reason it lives in the tab
+-- header rather than in a card with everything else.
+--
+-- All textures sit directly on `f`, which is ours and never passed to S, so
+-- the restrip rule does not apply.
+function W.Toggle(parent)
+    local TRACK_W, TRACK_H, KNOB = 32, 14, 10
+
+    local f = CreateFrame("Button", nil, parent)
+    f:SetSize(TRACK_W, TRACK_H)
+    f:RegisterForClicks("AnyUp")
+
+    local track = W.Tex(f, "BACKGROUND", 1, 1, 1, 0.10)
+    track:SetAllPoints()
+
+    local fill = W.Tex(f, "ARTWORK", W.Accent())
+    fill:SetAllPoints()
+    fill:SetAlpha(0)
+    W.RegisterAccent(fill, "vertex")
+
+    local knob = W.Tex(f, "OVERLAY", 1, 1, 1, 0.85)
+    knob:SetSize(KNOB, KNOB)
+
+    local o = { frame = f, checked = false }
+
+    local function Apply(hovering)
+        knob:ClearAllPoints()
+        if o.checked then
+            knob:SetPoint("RIGHT", f, "RIGHT", -2, 0)
+            fill:SetAlpha(hovering and 0.85 or 0.7)
+            knob:SetColorTexture(1, 1, 1, 1)
+        else
+            knob:SetPoint("LEFT", f, "LEFT", 2, 0)
+            fill:SetAlpha(0)
+            knob:SetColorTexture(1, 1, 1, hovering and 0.7 or 0.5)
+        end
+    end
+
+    f:SetScript("OnEnter", function() Apply(true) end)
+    f:SetScript("OnLeave", function() Apply(false) end)
+    f:SetScript("OnClick", function()
+        o.checked = not o.checked
+        Apply(f:IsMouseOver())
+        if o._onClick then o._onClick(o.checked) end
+    end)
+
+    function o:SetChecked(v)
+        o.checked = v and true or false
+        Apply(false)
+    end
+    function o:SetOnClick(fn) o._onClick = fn end
+
+    Apply(false)
+    return o
+end
+
+-- ── Status badge ────────────────────────────────────────────────────────────
+-- Right-aligned pill carrying a state word, tinted by that state.
+--
+-- The colour is the point: a column of these answers "what is wrong here" at a
+-- glance, without reading any of them. Text stays a plain word ("Loaded",
+-- "Not loaded") rather than a sentence -- the reasoning belongs in the row's
+-- "?" marker.
+W.BADGE_OK   = { 0.35, 1.00, 0.35 }
+W.BADGE_BAD  = { 1.00, 0.42, 0.42 }
+W.BADGE_IDLE = { 0.60, 0.60, 0.60 }
+W.BADGE_WARN = { 1.00, 0.65, 0.25 }
+
+function W.Badge(parent)
+    local f = CreateFrame("Frame", nil, parent)
+    f:SetHeight(16)
+
+    local bg = W.Tex(f, "BACKGROUND", 1, 1, 1, 0.06)
+    bg:SetAllPoints()
+
+    local fs = W.Font(f, 11, nil, 1)
+    fs:SetPoint("CENTER")
+
+    local o = { frame = f, fs = fs }
+
+    function o:Set(text, color)
+        text = text or ""
+        fs:SetText(text)
+        local c = color or W.BADGE_IDLE
+        fs:SetTextColor(c[1], c[2], c[3], 1)
+        bg:SetColorTexture(c[1], c[2], c[3], 0.10)
+        -- Sized to its word, so badges stay pills rather than a fixed block
+        -- with ragged text inside.
+        f:SetWidth((fs:GetStringWidth() or 30) + 14)
+    end
+
+    o:Set("")
+    return o
+end
+
 -- ── Card ────────────────────────────────────────────────────────────────────
 -- A titled panel that groups related rows.
 --
@@ -876,8 +977,9 @@ end
 -- itself, because the window is restrip-registered (see the file header).
 
 local TITLE_BAR_H = 25   -- S.Shell's own top band height
+local FOOTER_H = 22
 
-function W.Window(name, titleText, width, height)
+function W.Window(name, titleText, width, height, opts)
     local s = Need()
 
     local f = CreateFrame("Frame", nil, UIParent)
@@ -899,8 +1001,19 @@ function W.Window(name, titleText, width, height)
     titleBar:SetPoint("TOPLEFT")
     titleBar:SetPoint("TOPRIGHT")
 
+    -- Addon icon, left of the name. `opts.icon` is a texture path.
+    local titleX = 12
+    if opts and opts.icon then
+        local ico = titleBar:CreateTexture(nil, "ARTWORK")
+        ico:SetSize(16, 16)
+        ico:SetPoint("LEFT", titleBar, "LEFT", 10, 0)
+        ico:SetTexture(opts.icon)
+        titleX = 32
+        f.titleIcon = ico
+    end
+
     local title = W.Font(titleBar, 14, nil, 1)
-    title:SetPoint("LEFT", titleBar, "LEFT", 12, 0)
+    title:SetPoint("LEFT", titleBar, "LEFT", titleX, 0)
     title:SetText(titleText or "")
     local ar, ag, ab = W.Accent()
     title:SetTextColor(ar, ag, ab, 1)
@@ -911,9 +1024,35 @@ function W.Window(name, titleText, width, height)
     close.frame:SetPoint("RIGHT", titleBar, "RIGHT", -6, 0)
     close:SetOnClick(function() f:Hide() end)
 
+    -- Footer strip, for the things that belong to the window rather than to
+    -- any one tab: slash commands, version. Keeping them here means no tab has
+    -- to spend rows explaining how to reach the panel it is already in.
+    local footer, footerLeft, footerRight
+    if opts and opts.footer then
+        footer = CreateFrame("Frame", nil, f)
+        footer:SetHeight(FOOTER_H)
+        footer:SetPoint("BOTTOMLEFT")
+        footer:SetPoint("BOTTOMRIGHT")
+
+        local rule = W.Tex(footer, "ARTWORK", 1, 1, 1, 0.10)
+        rule:SetHeight(1)
+        rule:SetPoint("TOPLEFT")
+        rule:SetPoint("TOPRIGHT")
+
+        footerLeft = W.Font(footer, 11, nil, 0.45)
+        footerLeft:SetPoint("LEFT", footer, "LEFT", 12, 0)
+        footerLeft:SetJustifyH("LEFT")
+
+        footerRight = W.Font(footer, 11, nil, 0.35)
+        footerRight:SetPoint("RIGHT", footer, "RIGHT", -12, 0)
+        footerRight:SetJustifyH("RIGHT")
+
+        f.footerLeft, f.footerRight = footerLeft, footerRight
+    end
+
     local content = CreateFrame("Frame", nil, f)
     content:SetPoint("TOPLEFT", f, "TOPLEFT", 0, -TITLE_BAR_H)
-    content:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", 0, 0)
+    content:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", 0, footer and FOOTER_H or 0)
     f.content = content
 
     -- Esc closes it, matching every other panel in the game.

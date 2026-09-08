@@ -17,6 +17,7 @@ Broker.lua
 Compat.lua
 Widgets.lua
 UI.lua
+Modules\General.lua
 Modules\Bar.lua
 Modules\ChatContextSwitch.lua
 Modules\GroupRoles.lua

@@ -38,7 +38,26 @@ local Bar = {
     title = "Data Bar",
     description = "A bar for LibDataBroker widgets. Off by default.",
     dependencies = {
-        { text = "None -- displays any LibDataBroker plugin" },
+        { text = "LibDataBroker",
+          help = "The library every data broker publishes through. AniMods does "
+              .. "not bundle it -- EllesmereUI and most data-bar addons ship it, "
+              .. "and one copy is shared by everyone.",
+          met = function()
+              return (_G.LibStub and _G.LibStub:GetLibrary("LibDataBroker-1.1", true)) and true or false
+          end,
+          metText = "Available", unmetText = "Missing" },
+        { text = "Another data bar",
+          help = "If you already run EllesmereUIDataBars, Titan, ChocolateBar or "
+              .. "similar, use that instead -- it will do more than this one. "
+              .. "This bar exists for setups that have none.",
+          met = function()
+              return not (AniMods.IsAddOnLoaded("EllesmereUIDataBars")
+                       or AniMods.IsAddOnLoaded("Titan")
+                       or AniMods.IsAddOnLoaded("ChocolateBar")
+                       or AniMods.IsAddOnLoaded("Bazooka")
+                       or AniMods.IsAddOnLoaded("AbstractBar"))
+          end,
+          metText = "None found", unmetText = "Already have one" },
     },
 }
 
@@ -76,7 +95,10 @@ local function ModuleDB()
     AniModsDB.bar = AniModsDB.bar or {}
     local db = AniModsDB.bar
     if db.widgets == nil then db.widgets = {} end
-    if db.enabled == nil then db.enabled = false end
+    -- Unlocked by default: a bar you just switched on has to be positionable
+    -- without hunting for the setting that allows it. Lock it once it is
+    -- where you want it.
+    if db.locked == nil then db.locked = false end
     if db.showIcons == nil then db.showIcons = true end
     -- Off by default: AniMods' own brokers colour their text deliberately
     -- (role counts, guild vs friends), and stripping would throw that away.
@@ -99,10 +121,8 @@ local function WidgetSection(name)
     return nil
 end
 
--- Default OFF: a bar that appears uninvited on top of whatever the player
--- already runs is worse than no bar.
-local function IsBarEnabled()
-    return ModuleDB().enabled == true
+local function IsLocked()
+    return ModuleDB().locked == true
 end
 
 -- ---------------------------------------------------------------------------
@@ -376,6 +396,19 @@ local QueueRefresh
 -- global read and silently do nothing.
 local ApplyVisibility
 
+-- Applies the lock to the live frame. EnableMouse stays ON either way: the
+-- widgets are buttons and must keep taking clicks. Only dragging is withdrawn.
+local function ApplyLock()
+    if not bar then return end
+    local locked = IsLocked()
+    bar:SetMovable(not locked)
+    if locked then
+        bar:RegisterForDrag()
+    else
+        bar:RegisterForDrag("LeftButton")
+    end
+end
+
 local function SetWidgetSection(name, section)
     if section == "hidden" then section = nil end
     ModuleDB().widgets[name] = section or false
@@ -428,12 +461,13 @@ local function BuildBar()
     return bar
 end
 
+-- The module being active IS the bar being shown -- the tab's own switch owns
+-- that decision, so a second "show the bar" setting inside the tab would be a
+-- duplicate control for the same state, and the two could disagree.
 ApplyVisibility = function()
-    if not IsBarEnabled() then
-        if bar then bar:Hide() end
-        return
-    end
     BuildBar()
+    if not bar then return end
+    ApplyLock()
     Refresh()
     Relayout()
     bar:Show()
@@ -457,21 +491,18 @@ end
 function Bar:GetInfoRows()
     local rows = {}
 
-    rows[#rows + 1] = { section = "Status" }
-    rows[#rows + 1] = { label = "LibDataBroker", value = ldb and "Available" or "Not available" }
+    rows[#rows + 1] = { section = "Appearance" }
     rows[#rows + 1] = {
-        label = "Show the bar",
-        help  = "Off by default. If you already run EllesmereUIDataBars, Titan, "
-             .. "ChocolateBar or similar, use that instead -- this bar exists for "
-             .. "setups that have none.",
-        get   = IsBarEnabled,
+        label = "Lock position",
+        help  = "Stops the bar being dragged. Unlocked by default so it can be "
+             .. "placed when you first switch the module on; lock it once it is "
+             .. "where you want it, so a stray click on a widget cannot move it.",
+        get   = IsLocked,
         set   = function(v)
-            ModuleDB().enabled = v and true or false
-            ApplyVisibility()
+            ModuleDB().locked = v and true or false
+            ApplyLock()
         end,
     }
-
-    rows[#rows + 1] = { section = "Appearance" }
     rows[#rows + 1] = {
         label = "Bar width",
         min   = 200, max = 1400, step = 10,

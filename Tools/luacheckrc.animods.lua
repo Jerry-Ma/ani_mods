@@ -62,6 +62,10 @@ local extraReadGlobals = {
     -- calls this unguarded (WindowEngine.lua:271, :399), which is the
     -- confirmation that it exists on this client.
     "issecretvalue",
+    -- The minimap frame itself. Present in the WoW API annotations (LuaLS
+    -- resolves it without complaint), just not in the globals list, which is
+    -- built from the documented API rather than from FrameXML's frames.
+    "Minimap",
 }
 
 for i = 1, #foreignGlobals do
