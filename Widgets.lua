@@ -592,6 +592,70 @@ function W.Toggle(parent)
     return o
 end
 
+-- ── Power button ────────────────────────────────────────────────────────────
+-- The on/off control for a module, sitting on its sidebar row.
+--
+-- Same shape and behaviour as EllesmereUI's own module toggles, deliberately:
+-- 13px, hard against the row's right edge, white at full strength when on and
+-- half-strength when off, and -- the part that is not obvious -- coloured on
+-- hover by WHAT THE CLICK WILL DO rather than by the current state. Red while
+-- enabled means "this turns it off"; green while disabled means "this turns
+-- it on". Copying the convention matters more than agreeing with it: a player
+-- who already reads EllesmereUI's sidebar should not have to learn a second
+-- meaning for the same glyph.
+--
+-- The icon is AniMods' own (Media\power.png). EllesmereUI ships one, but
+-- referencing it would put the button back on EllesmereUI being installed --
+-- and this control has to work on a stock UI like everything else.
+local POWER_ICON = "Interface\\AddOns\\AniMods\\Media\\power.png"
+local POWER_WILL_ENABLE  = { 0.212, 0.824, 0.325 }
+local POWER_WILL_DISABLE = { 0.824, 0.212, 0.212 }
+
+function W.PowerButton(parent)
+    local f = CreateFrame("Button", nil, parent)
+    f:SetSize(13, 13)
+    f:RegisterForClicks("AnyUp")
+
+    local tex = f:CreateTexture(nil, "ARTWORK")
+    tex:SetAllPoints()
+    tex:SetTexture(POWER_ICON)
+    tex:SetAlpha(0.75)
+
+    local o = { frame = f, texture = tex, checked = false }
+
+    local function Idle()
+        tex:SetVertexColor(1, 1, 1, o.checked and 1 or 0.5)
+    end
+
+    f:SetScript("OnEnter", function(self)
+        local c = o.checked and POWER_WILL_DISABLE or POWER_WILL_ENABLE
+        tex:SetVertexColor(c[1], c[2], c[3], 1)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText((o.checked and "Disable " or "Enable ") .. (o.label or "module"),
+            1, 1, 1, 1, true)
+        GameTooltip:Show()
+    end)
+    f:SetScript("OnLeave", function()
+        Idle()
+        GameTooltip:Hide()
+    end)
+    f:SetScript("OnClick", function()
+        o.checked = not o.checked
+        Idle()
+        if o._onClick then o._onClick(o.checked) end
+    end)
+
+    function o:SetChecked(v)
+        o.checked = v and true or false
+        Idle()
+    end
+    function o:SetLabel(text) o.label = text end
+    function o:SetOnClick(fn) o._onClick = fn end
+
+    Idle()
+    return o
+end
+
 -- ── Status badge ────────────────────────────────────────────────────────────
 -- Right-aligned pill carrying a state word, tinted by that state.
 --

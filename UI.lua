@@ -42,6 +42,13 @@ local currentTabName
 local openDropdownSection = nil
 local refreshPending = false
 
+-- Modules switched this session whose change has not taken effect yet, keyed
+-- by module name. Keyed rather than kept on the tab's cache because the
+-- switch now lives on the SIDEBAR row and the badge that reports it lives in
+-- the tab header -- two different frames, and the tab may not even be built
+-- when the row is clicked.
+local pendingReload = {}
+
 local function ColorHex(r, g, b)
     return ("%02x%02x%02x"):format((r or 1) * 255, (g or 1) * 255, (b or 1) * 255)
 end
@@ -567,10 +574,9 @@ end
 local function ApplyLiveValues(entry, cache)
     local stateLabel, r, g, b = GetStateInfo(entry)
     cache.stateBadge:Set(stateLabel, { r, g, b })
-    if cache.toggle then cache.toggle:SetChecked(entry.userEnabled) end
 
     if cache.pendingBadge then
-        if cache.pendingReload then
+        if pendingReload[cache.moduleName] then
             cache.pendingBadge:Set("Reload needed", W.BADGE_WARN)
             cache.pendingBadge.frame:Show()
         else
@@ -639,7 +645,7 @@ local function BuildTabContent(name)
         return
     end
 
-    local cache = { blocks = {}, sections = {} }
+    local cache = { blocks = {}, sections = {}, moduleName = name }
     tabCache[name] = cache
 
     -- Header: name, "?" for the full description, state badge, master switch.
@@ -664,31 +670,16 @@ local function BuildTabContent(name)
     stateBadge.frame:SetPoint("LEFT", titleHelp.frame, "RIGHT", 8, 0)
     cache.stateBadge = stateBadge
 
-    -- Essential modules get no master switch: General holds AniMods' own
-    -- settings, so switching it off would hide the controls for the addon.
-    local toggle
-    if not entry.essential then
-        toggle = W.Toggle(titleFrame)
-        toggle.frame:SetPoint("RIGHT", titleFrame, "RIGHT", -4, 0)
-        toggle:SetOnClick(function(value)
-            -- Only prompts when the change genuinely did not take --
-            -- prompting on every toggle teaches people to dismiss the prompt,
-            -- which makes it useless for the cases that actually need it.
-            local applied = AniMods.SetModuleEnabled(name, value)
-            cache.pendingReload = not applied
-            if not applied then AniMods.PromptReload(entry.title) end
-            if AniMods.RefreshUI then AniMods.RefreshUI() end
-        end)
-        cache.toggle = toggle
-
-        -- A badge, not a "?" explaining what the switch does. The switch is
-        -- self-evident; what is not is whether the change has actually taken
-        -- -- so the space says that, and only when there is something to say.
-        local pendingBadge = W.Badge(titleFrame)
-        pendingBadge.frame:SetPoint("RIGHT", toggle.frame, "LEFT", -8, 0)
-        pendingBadge.frame:Hide()
-        cache.pendingBadge = pendingBadge
-    end
+    -- No on/off control here: the sidebar row owns it, so the whole set is
+    -- switchable from the list without opening each tab in turn.
+    --
+    -- The header keeps the badge that reports the CONSEQUENCE, because that
+    -- belongs with the module's state rather than with the control -- and the
+    -- sidebar row has no room for it.
+    local pendingBadge = W.Badge(titleFrame)
+    pendingBadge.frame:SetPoint("RIGHT", titleFrame, "RIGHT", -4, 0)
+    pendingBadge.frame:Hide()
+    cache.pendingBadge = pendingBadge
 
     -- Force-active switch, for a module held back only by SOFT requirements.
     -- Sits next to the state badge because it is about that state.
@@ -911,15 +902,34 @@ local function CreateSidebarRow(parent)
     marker:Hide()
     W.RegisterAccent(marker, "vertex")
 
+    -- Power button on the right of the row, EllesmereUI's placement. Putting
+    -- the on/off control in the LIST rather than inside each tab means the
+    -- whole set is switchable without opening any of them, and the row's own
+    -- dimming shows the result in place.
+    local power = W.PowerButton(f)
+    power.frame:SetPoint("RIGHT", f, "RIGHT", -8, 0)
+
     local fs = W.Font(f, 12, nil, W.TEXT_DIM_A)
     fs:SetPoint("LEFT", f, "LEFT", 10, 0)
-    fs:SetPoint("RIGHT", f, "RIGHT", -6, 0)
+    fs:SetPoint("RIGHT", power.frame, "LEFT", -6, 0)
     fs:SetJustifyH("LEFT")
     -- Long module titles get an ellipsis rather than widening the sidebar or
     -- spilling into the content pane.
     fs:SetWordWrap(false)
 
-    local tab = { frame = f, fs = fs }
+    local tab = { frame = f, fs = fs, power = power }
+
+    -- Declared after `tab` so the handler can read the row's current module;
+    -- rows are pooled and re-pointed at different modules as the list is
+    -- rebuilt, so capturing a name here would go stale.
+    power:SetOnClick(function(value)
+        local name = tab.moduleName
+        if not name then return end
+        local applied = AniMods.SetModuleEnabled(name, value)
+        pendingReload[name] = not applied
+        if not applied then AniMods.PromptReload(AniMods.status[name].title) end
+        if AniMods.RefreshUI then AniMods.RefreshUI() end
+    end)
 
     function tab:SetSelected(on)
         tab.selected = on
@@ -929,6 +939,17 @@ local function CreateSidebarRow(parent)
     end
     function tab:SetText(text)
         fs:SetText(text)
+    end
+    -- Essential modules have no switch at all; the button is hidden rather
+    -- than disabled, since there is no state to convey.
+    function tab:SetPower(entry)
+        if entry.essential then
+            power.frame:Hide()
+            return
+        end
+        power.frame:Show()
+        power:SetLabel(entry.title)
+        power:SetChecked(entry.userEnabled)
     end
 
     f:SetScript("OnEnter", function()
@@ -960,6 +981,7 @@ local function RefreshTabs()
         local _, r, g, b = GetStateInfo(AniMods.status[name])
         tab:SetText(("|cff%s%s|r %s"):format(ColorHex(r, g, b), DOT, AniMods.status[name].title))
         tab:SetSelected(name == currentTabName)
+        tab:SetPower(AniMods.status[name])
 
         tab.frame:ClearAllPoints()
         tab.frame:SetPoint("TOPLEFT", tabStrip, "TOPLEFT", 0, -y)
