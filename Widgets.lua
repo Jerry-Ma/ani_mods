@@ -91,12 +91,24 @@ end
 -- released widget does not pin its frame.
 local accentTex = setmetatable({}, { __mode = "k" })   -- texture    -> alpha
 local accentText = setmetatable({}, { __mode = "k" })  -- fontstring -> alpha
+local looksFns = {}
+
+-- For widgets whose repaint is not a flat recolour of one region -- the
+-- toggle's track depends on the accent AND its on/off state, so it has to
+-- re-run its own paint function rather than be assigned a colour.
+function W.OnLooksChanged(fn)
+    if type(fn) == "function" then looksFns[#looksFns + 1] = fn end
+end
 
 local function RefreshLooks()
     if not S then return end
     local r, g, b = S.GetAccentColor()
     for tex, a in pairs(accentTex) do tex:SetColorTexture(r, g, b, a) end
     for fs, a in pairs(accentText) do fs:SetTextColor(r, g, b, a) end
+    for i = 1, #looksFns do
+        local ok, err = pcall(looksFns[i])
+        if not ok then geterrorhandler()(err) end
+    end
 end
 
 -- Which facade answered is not this file's business: Compat.lua picks the
@@ -452,45 +464,59 @@ end
 --
 -- All textures sit directly on `f`, which is ours and never passed to S, so
 -- the restrip rule does not apply.
+-- Colours are EllesmereUI's own toggle recipe (EllesmereUI.lua:102-108), which
+-- is worth copying exactly because it solves the problem the first attempt
+-- had. That version used a near-invisible white track with a separate accent
+-- layer over it, so a light accent left a white knob on a white track with no
+-- readable on-state.
+--
+-- EUI instead uses ONE track that changes colour: a solid dark grey when off,
+-- the accent when on. Contrast then comes from grey-versus-accent rather than
+-- from the accent alone, so it reads at any accent -- including a pale one.
+local TG_OFF   = { 0.267, 0.267, 0.267, 0.65 }  -- #444, track when off
+local TG_ON_A  = 0.75                           -- track alpha when on (colour = accent)
+local TG_KNOB_OFF_A = 0.5
+local TG_KNOB_ON_A  = 1
+
 function W.Toggle(parent)
-    local TRACK_W, TRACK_H, KNOB = 32, 14, 10
+    -- EUI's proportions too: 40x20 with a 2px knob pad.
+    local TRACK_W, TRACK_H, KNOB_PAD = 40, 20, 2
+    local KNOB = TRACK_H - KNOB_PAD * 2
 
     local f = CreateFrame("Button", nil, parent)
     f:SetSize(TRACK_W, TRACK_H)
     f:RegisterForClicks("AnyUp")
 
-    local track = W.Tex(f, "BACKGROUND", 1, 1, 1, 0.10)
+    local track = W.Tex(f, "BACKGROUND", TG_OFF[1], TG_OFF[2], TG_OFF[3], TG_OFF[4])
     track:SetAllPoints()
 
-    local fill = W.Tex(f, "ARTWORK", 0, 0, 0, 0)
-    fill:SetAllPoints()
-
-    local knob = W.Tex(f, "OVERLAY", 1, 1, 1, 0.85)
+    local knob = W.Tex(f, "ARTWORK", 1, 1, 1, TG_KNOB_OFF_A)
     knob:SetSize(KNOB, KNOB)
 
     local o = { frame = f, checked = false }
 
-    -- Green when on, not the accent colour.
-    --
-    -- The accent is user-chosen and can be near-white, which leaves a white
-    -- knob on a white track with no readable on-state -- which is exactly how
-    -- it first shipped. Green is unambiguous at this size whatever the theme,
-    -- and it matches the [Active] badge sitting beside it, so the two halves
-    -- of "this module is running" agree instead of using different colours.
-    local ON = W.BADGE_OK
-
+    -- Re-reads the accent on every call rather than capturing it once, so a
+    -- theme change repaints correctly (see the OnLooksChanged registration
+    -- below, which is what delivers that change).
     local function Apply(hovering)
         knob:ClearAllPoints()
         if o.checked then
-            knob:SetPoint("RIGHT", f, "RIGHT", -2, 0)
-            fill:SetColorTexture(ON[1], ON[2], ON[3], hovering and 0.85 or 0.65)
-            knob:SetColorTexture(1, 1, 1, 1)
+            local r, g, b = W.Accent()
+            knob:SetPoint("RIGHT", f, "RIGHT", -KNOB_PAD, 0)
+            track:SetColorTexture(r, g, b, hovering and 0.9 or TG_ON_A)
+            knob:SetColorTexture(1, 1, 1, TG_KNOB_ON_A)
         else
-            knob:SetPoint("LEFT", f, "LEFT", 2, 0)
-            fill:SetColorTexture(0, 0, 0, 0)
-            knob:SetColorTexture(1, 1, 1, hovering and 0.7 or 0.45)
+            knob:SetPoint("LEFT", f, "LEFT", KNOB_PAD, 0)
+            track:SetColorTexture(TG_OFF[1], TG_OFF[2], TG_OFF[3],
+                hovering and (TG_OFF[4] + 0.15) or TG_OFF[4])
+            knob:SetColorTexture(1, 1, 1, hovering and 0.75 or TG_KNOB_OFF_A)
         end
     end
+
+    -- The track's colour depends on BOTH the accent and the on/off state, so
+    -- it cannot just be registered as a vertex-recoloured region -- repainting
+    -- it means re-running Apply.
+    W.OnLooksChanged(function() Apply(false) end)
 
     f:SetScript("OnEnter", function() Apply(true) end)
     f:SetScript("OnLeave", function() Apply(false) end)

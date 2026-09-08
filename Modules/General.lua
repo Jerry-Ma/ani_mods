@@ -188,6 +188,57 @@ local function ApplyMinimap()
 end
 
 -- ---------------------------------------------------------------------------
+-- Accent
+-- ---------------------------------------------------------------------------
+-- A short preset list rather than a colour picker. Blizzard's ColorPickerFrame
+-- would give arbitrary colours but arrives wearing Blizzard's own art, which
+-- would make it the one part of this panel that ignores the theme -- and its
+-- API has moved twice in recent expansions. Presets need no new widget kind
+-- and cover what an accent is for.
+--
+-- Only reachable when EllesmereUI is absent; with it loaded, its accent wins.
+local ACCENTS = {
+    green  = { r = 0.047, g = 0.824, b = 0.616, label = "Green" },
+    blue   = { r = 0.204, g = 0.596, b = 0.859, label = "Blue" },
+    purple = { r = 0.608, g = 0.349, b = 0.714, label = "Purple" },
+    gold   = { r = 0.902, g = 0.729, b = 0.231, label = "Gold" },
+    red    = { r = 0.906, g = 0.298, b = 0.235, label = "Red" },
+    teal   = { r = 0.102, g = 0.737, b = 0.612, label = "Teal" },
+    class  = { label = "Class color" },   -- resolved live, see ResolveAccent
+}
+local ACCENT_ORDER = { "green", "blue", "teal", "purple", "gold", "red", "class" }
+
+local ACCENT_LABEL = {}
+for key, def in pairs(ACCENTS) do ACCENT_LABEL[key] = def.label end
+
+local function CurrentAccentKey()
+    return ModuleDB().accentKey or "green"
+end
+
+-- Writes the resolved rgb into the DB, because that is what Compat's
+-- GetAccentColor reads -- keeping the resolution here means the provider stays
+-- a plain getter with no knowledge of presets or class colours.
+local function ResolveAccent(key)
+    local def = ACCENTS[key]
+    if key == "class" then
+        local _, class = UnitClass("player")
+        local c = class and RAID_CLASS_COLORS and RAID_CLASS_COLORS[class]
+        if c then return { r = c.r, g = c.g, b = c.b } end
+        return AniMods.ACCENT_DEFAULT
+    end
+    if def and def.r then return { r = def.r, g = def.g, b = def.b } end
+    return AniMods.ACCENT_DEFAULT
+end
+
+local function SetAccent(key)
+    local db = ModuleDB()
+    db.accentKey = key
+    db.accent = ResolveAccent(key)
+    -- Repaints everything registered for accent changes, without a reload.
+    if AniMods.RefreshStockLooks then AniMods.RefreshStockLooks() end
+end
+
+-- ---------------------------------------------------------------------------
 -- Status panel
 -- ---------------------------------------------------------------------------
 
@@ -212,6 +263,28 @@ function General:GetInfoRows()
         get   = function() return ModuleDB().compartment ~= false end,
         set   = function(v) ModuleDB().compartment = v and true or false end,
     }
+
+    rows[#rows + 1] = { section = "Appearance" }
+    if AniMods.AccentIsForeign() then
+        -- Shown, not hidden: the setting exists, it is just not ours to set
+        -- here. Hiding it would leave no explanation for why the panel is the
+        -- colour it is.
+        rows[#rows + 1] = {
+            label = "Accent color",
+            value = "EllesmereUI",
+            help  = "Follows your EllesmereUI accent. Change it in EllesmereUI's "
+                 .. "own settings.",
+        }
+    else
+        rows[#rows + 1] = {
+            label   = "Accent color",
+            help    = "Used for headings, highlights and the module switches.",
+            options = ACCENT_LABEL,
+            order   = ACCENT_ORDER,
+            get     = CurrentAccentKey,
+            set     = SetAccent,
+        }
+    end
 
     rows[#rows + 1] = { section = "Modules" }
     local active, total = 0, 0

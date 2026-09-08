@@ -46,6 +46,16 @@ local AniMods = _G.AniMods
 
 local ADDON_LABEL = "AniMods"
 
+-- EllesmereUI's own default green. Used as AniMods' accent when EllesmereUI
+-- is not there to supply one, so both providers look like the same addon.
+AniMods.ACCENT_DEFAULT = { r = 0.047, g = 0.824, b = 0.616 }
+
+-- True when the accent is EllesmereUI's rather than ours -- read by General to
+-- decide whether its Accent color control applies.
+function AniMods.AccentIsForeign()
+    return (EllesmereUI and EllesmereUI.RegisterSkin) and true or false
+end
+
 -- ── Provider selection ──────────────────────────────────────────────────────
 
 -- Calls `fn(S)` once, with whichever facade is available.
@@ -163,15 +173,20 @@ function AniMods.BuildStockSkin()
     -- claiming one of theirs.
     function S.GetStyle() return "stock" end
 
-    -- The player's class colour, which is the one piece of live theming a
-    -- stock UI actually has. Falls back to EllesmereUI's own green so the two
-    -- providers look related when class colour is unavailable (it is nil very
-    -- early, before the player's class is known).
+    -- The accent, from AniMods' own setting (General -> Accent color).
+    --
+    -- EllesmereUI's provider answers this from the user's EUI theme, so when
+    -- EUI is loaded that is what the panel follows and this setting does not
+    -- apply -- General says so rather than offering a control that would be
+    -- silently overridden.
+    --
+    -- Default is EllesmereUI's green, so the two providers look like the same
+    -- addon out of the box.
     function S.GetAccentColor()
-        local _, class = UnitClass("player")
-        local c = class and RAID_CLASS_COLORS and RAID_CLASS_COLORS[class]
-        if c then return c.r, c.g, c.b end
-        return 0.047, 0.824, 0.616
+        local g = AniModsDB and AniModsDB.general
+        local a = g and g.accent
+        if a and a.r then return a.r, a.g, a.b end
+        return AniMods.ACCENT_DEFAULT.r, AniMods.ACCENT_DEFAULT.g, AniMods.ACCENT_DEFAULT.b
     end
 
     function S.GetPanelColor()
