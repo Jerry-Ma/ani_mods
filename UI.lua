@@ -23,6 +23,8 @@ local W = AniMods.W
 local DOT = "\226\151\143" -- U+25CF, tab status glyph and dependency bullets
 
 local PAD = 12            -- content inset
+local SIDEBAR_W = 156     -- module list column
+local SIDEBAR_ROW_H = 24
 local ROW_GAP = 2
 local BLOCK_GAP = 6
 local CONTROL_WIDTH = 220 -- dropdowns/sliders: fixed, never full-width
@@ -651,34 +653,51 @@ local function SelectTab(name)
     end
 end
 
--- A tab: status dot + module title, with an accent underline when selected.
-local function CreateTabButton(parent)
+-- A sidebar row: status dot + module title, left-aligned, with an accent bar
+-- down its left edge and a faint wash when selected.
+--
+-- This replaced a horizontal tab strip. The strip laid tabs out left to right
+-- at their natural text width, so every module added made it wider, and at
+-- six modules it already spanned most of a 700px panel with no room left --
+-- there is no wrapping and no scrolling to fall back on. A vertical list
+-- grows down a column that already scrolls, and is what EllesmereUI's own
+-- options window uses, so the panel reads as part of the same suite.
+local function CreateSidebarRow(parent)
     local f = CreateFrame("Button", nil, parent)
-    f:SetHeight(24)
+    f:SetHeight(SIDEBAR_ROW_H)
     f:RegisterForClicks("AnyUp")
 
-    local fs = W.Font(f, 12, nil, W.TEXT_DIM_A)
-    fs:SetPoint("LEFT", f, "LEFT", 8, 0)
-    fs:SetPoint("RIGHT", f, "RIGHT", -8, 0)
-    fs:SetJustifyH("CENTER")
+    -- Selection wash, behind the text. Drawn on the row itself, which is ours
+    -- and never went through S, so it is safe as a direct region.
+    local wash = W.Tex(f, "BACKGROUND", 1, 1, 1, 0.06)
+    wash:SetAllPoints()
+    wash:Hide()
 
-    local underline = W.Tex(f, "ARTWORK", W.Accent())
-    underline:SetHeight(2)
-    underline:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 6, 0)
-    underline:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -6, 0)
-    underline:Hide()
-    W.RegisterAccent(underline, "vertex")
+    local marker = W.Tex(f, "ARTWORK", W.Accent())
+    marker:SetWidth(2)
+    marker:SetPoint("TOPLEFT")
+    marker:SetPoint("BOTTOMLEFT")
+    marker:Hide()
+    W.RegisterAccent(marker, "vertex")
+
+    local fs = W.Font(f, 12, nil, W.TEXT_DIM_A)
+    fs:SetPoint("LEFT", f, "LEFT", 10, 0)
+    fs:SetPoint("RIGHT", f, "RIGHT", -6, 0)
+    fs:SetJustifyH("LEFT")
+    -- Long module titles get an ellipsis rather than widening the sidebar or
+    -- spilling into the content pane.
+    fs:SetWordWrap(false)
 
     local tab = { frame = f, fs = fs }
 
     function tab:SetSelected(on)
         tab.selected = on
-        underline:SetShown(on)
+        marker:SetShown(on)
+        wash:SetShown(on)
         fs:SetTextColor(1, 1, 1, on and 1 or W.TEXT_DIM_A)
     end
     function tab:SetText(text)
         fs:SetText(text)
-        f:SetWidth((fs:GetStringWidth() or 60) + 24)
     end
 
     f:SetScript("OnEnter", function()
@@ -692,17 +711,17 @@ local function CreateTabButton(parent)
     return tab
 end
 
--- Rebuilds the tab strip: one tab per module, title prefixed with a status
--- dot so load state is visible without opening the tab. Safe to call any
--- time -- it only touches the strip, never tab content.
+-- Rebuilds the sidebar: one row per module, title prefixed with a status dot
+-- so load state is visible without opening it. Safe to call any time -- it
+-- only touches the sidebar, never tab content.
 local function RefreshTabs()
     local names = SortedModuleNames()
 
-    local x = 0
+    local y = 0
     for i, name in ipairs(names) do
         local tab = tabButtons[i]
         if not tab then
-            tab = CreateTabButton(tabStrip)
+            tab = CreateSidebarRow(tabStrip)
             tabButtons[i] = tab
         end
         tab.moduleName = name
@@ -712,9 +731,10 @@ local function RefreshTabs()
         tab:SetSelected(name == currentTabName)
 
         tab.frame:ClearAllPoints()
-        tab.frame:SetPoint("BOTTOMLEFT", tabStrip, "BOTTOMLEFT", x, 0)
+        tab.frame:SetPoint("TOPLEFT", tabStrip, "TOPLEFT", 0, -y)
+        tab.frame:SetPoint("TOPRIGHT", tabStrip, "TOPRIGHT", 0, -y)
         tab.frame:Show()
-        x = x + tab.frame:GetWidth()
+        y = y + SIDEBAR_ROW_H
     end
 
     for i = #names + 1, #tabButtons do
@@ -748,18 +768,19 @@ local function BuildUI()
     -- window repaints (see Widgets.lua's header).
     local host = frame.content
 
+    -- Sidebar down the left, content to its right, a hairline between them.
     tabStrip = CreateFrame("Frame", nil, host)
-    tabStrip:SetHeight(24)
-    tabStrip:SetPoint("TOPLEFT", host, "TOPLEFT", PAD, -8)
-    tabStrip:SetPoint("TOPRIGHT", host, "TOPRIGHT", -PAD, -8)
+    tabStrip:SetWidth(SIDEBAR_W)
+    tabStrip:SetPoint("TOPLEFT", host, "TOPLEFT", PAD, -PAD)
+    tabStrip:SetPoint("BOTTOMLEFT", host, "BOTTOMLEFT", PAD, PAD)
 
     local rule = W.Tex(host, "ARTWORK", 1, 1, 1, 0.15)
-    rule:SetHeight(1)
-    rule:SetPoint("TOPLEFT", tabStrip, "BOTTOMLEFT")
-    rule:SetPoint("TOPRIGHT", tabStrip, "BOTTOMRIGHT")
+    rule:SetWidth(1)
+    rule:SetPoint("TOPLEFT", tabStrip, "TOPRIGHT", PAD, 0)
+    rule:SetPoint("BOTTOMLEFT", tabStrip, "BOTTOMRIGHT", PAD, 0)
 
     scrollArea = W.ScrollArea(host)
-    scrollArea.frame:SetPoint("TOPLEFT", rule, "BOTTOMLEFT", 0, -4)
+    scrollArea.frame:SetPoint("TOPLEFT", rule, "TOPRIGHT", PAD, 0)
     scrollArea.frame:SetPoint("BOTTOMRIGHT", host, "BOTTOMRIGHT", -PAD, PAD)
     content = scrollArea.content
 

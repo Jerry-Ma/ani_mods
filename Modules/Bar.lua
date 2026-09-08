@@ -59,10 +59,17 @@ local WATCHED = {
     icon = true, iconR = true, iconG = true, iconB = true, iconCoords = true,
 }
 
+-- Alignment sections, laid out independently: left anchors from the bar's
+-- left edge, right from its right, centre is centred on the whole bar. This
+-- is why the bar has an explicit width rather than hugging its content --
+-- "right-aligned" is meaningless on a frame that shrinks to fit.
+local SECTION_LABEL = { hidden = "Hidden", left = "Left", center = "Center", right = "Right" }
+local SECTION_ORDER = { "hidden", "left", "center", "right" }
+
 local bar, itemHost
-local items = {}          -- objName -> { button, fs, text }
+local items = {}          -- objName -> { button, fs, icon, text, hasIcon }
 local ldb
-local shown = {}          -- objName -> true, the user's chosen widgets
+local shown = {}          -- objName -> "left" | "center" | "right"
 local dirty = false
 
 local function ModuleDB()
@@ -70,17 +77,32 @@ local function ModuleDB()
     local db = AniModsDB.bar
     if db.widgets == nil then db.widgets = {} end
     if db.enabled == nil then db.enabled = false end
+    if db.showIcons == nil then db.showIcons = true end
+    -- Off by default: AniMods' own brokers colour their text deliberately
+    -- (role counts, guild vs friends), and stripping would throw that away.
+    -- It exists for third-party plugins whose palette clashes with the bar.
+    if db.stripColors == nil then db.stripColors = false end
+    if db.maxWidth == nil then db.maxWidth = 0 end   -- 0 = unclamped
+    if db.width == nil then db.width = 500 end
     return db
+end
+
+-- Widget placement. Stored per broker name as a section string; `false` or
+-- absent means hidden.
+--
+-- Migration: this setting used to be a boolean. `true` becomes "left", which
+-- reproduces the previous single-row layout exactly.
+local function WidgetSection(name)
+    local v = ModuleDB().widgets[name]
+    if v == true then return "left" end
+    if type(v) == "string" and SECTION_LABEL[v] and v ~= "hidden" then return v end
+    return nil
 end
 
 -- Default OFF: a bar that appears uninvited on top of whatever the player
 -- already runs is worse than no bar.
 local function IsBarEnabled()
     return ModuleDB().enabled == true
-end
-
-local function IsWidgetShown(name)
-    return ModuleDB().widgets[name] == true
 end
 
 -- ---------------------------------------------------------------------------
@@ -96,18 +118,33 @@ end
 -- it hides the real problem, which was that a plugin publishing only an ICON
 -- looked identical to a broken one. Icons are rendered separately below; an
 -- empty string here is a legitimate answer, and the icon carries the slot.
+-- Broker text arrives carrying the plugin's own colour codes, which override
+-- anything the bar would apply. Stripping hands the colour back to the bar;
+-- leaving them keeps the plugin's palette. Both escape forms are handled --
+-- the literal |cAARRGGBB and the named |cnCOLOR_NAME: variant.
+local function StripColors(str)
+    if not str then return str end
+    str = str:gsub("|c%x%x%x%x%x%x%x%x", "")
+    str = str:gsub("|cn[%a%d_]+:", "")
+    str = str:gsub("|r", "")
+    return str
+end
+
 local function ItemText(obj)
     if not obj then return "" end
+    local str
     local t = obj.text
-    if type(t) == "string" and t ~= "" then return t end
-    local v = obj.value
-    if v ~= nil then
-        local str = tostring(v)
+    if type(t) == "string" and t ~= "" then
+        str = t
+    else
+        local v = obj.value
+        if v == nil then return "" end
+        str = tostring(v)
         local suffix = obj.suffix
         if type(suffix) == "string" and suffix ~= "" then str = str .. " " .. suffix end
-        return str
     end
-    return ""
+    if ModuleDB().stripColors then str = StripColors(str) end
+    return str
 end
 
 -- Every call into a plugin is isolated. A data object is written by code we
@@ -146,6 +183,10 @@ local function EnsureItem(name)
     local fs = AniMods.W.Font(btn, FONT_SIZE, nil, 1)
     fs:SetPoint("LEFT")
     fs:SetJustifyH("LEFT")
+    -- Required for the Max Width clamp to ellipsize: with wrapping on, a
+    -- clamped FontString grows a second line and overflows the bar's height
+    -- instead of being cut.
+    fs:SetWordWrap(false)
 
     it = { button = btn, fs = fs, icon = icon, text = nil, hasIcon = false }
     items[name] = it
@@ -172,7 +213,7 @@ local function EnsureItem(name)
     btn:SetScript("OnLeave", function(self)
         local obj = ldb and ldb:GetDataObjectByName(name)
         if obj and obj.OnLeave then
-            obj.OnLeave(self)
+            Safe(obj.OnLeave, self)
         else
             GameTooltip:Hide()
         end
@@ -181,50 +222,99 @@ local function EnsureItem(name)
     return it
 end
 
--- Lays the chosen widgets left to right and sizes the bar to fit.
+-- Measures one item and positions its icon/text within its own button.
+-- Returns the width the slot occupies.
+local function SizeItem(it)
+    local textW = it.fs:GetStringWidth() or 0
+
+    it.fs:ClearAllPoints()
+    if it.hasIcon then
+        it.fs:SetPoint("LEFT", it.icon, "RIGHT", textW > 0 and ICON_GAP or 0, 0)
+    else
+        it.fs:SetPoint("LEFT")
+    end
+
+    local w = textW
+    if it.hasIcon then
+        w = ICON_SIZE + (textW > 0 and ICON_GAP or 0) + textW
+    end
+
+    -- Max Width clamp. Broker text has no shape we can predict -- a plugin can
+    -- decide to publish a whole sentence -- so this stops one widget pushing
+    -- every other off the bar. The FontString is given the remaining width and
+    -- has word wrap off, so it ellipsizes rather than wrapping into the row
+    -- below.
+    local maxW = ModuleDB().maxWidth or 0
+    if maxW > 0 and w > maxW then
+        w = maxW
+        local avail = maxW - (it.hasIcon and (ICON_SIZE + ICON_GAP) or 0)
+        it.fs:SetWidth(math.max(avail, 1))
+    else
+        it.fs:SetWidth(0)   -- 0 = size to content
+    end
+
+    it.button:SetWidth(math.max(w, 1))
+    return w
+end
+
+-- Lays the chosen widgets into their three alignment sections.
 --
 -- Only called when the SET of widgets or their WIDTHS change, never on a
 -- plain text update that happens to be the same length -- see Refresh below.
 local function Relayout()
     if not bar then return end
 
-    local names = {}
-    for name in pairs(shown) do names[#names + 1] = name end
-    table.sort(names)   -- stable order across sessions; hash order is not
+    local db = ModuleDB()
+    bar:SetWidth(math.max(db.width or 500, 80))
+    bar:SetHeight(BAR_H)
 
-    local x = EDGE_PAD
-    for _, name in ipairs(names) do
-        local it = items[name]
-        if it then
-            -- Icon (if the plugin published one) sits left of the text, and
-            -- the slot's width is both together. A plugin with an icon and no
-            -- text still gets a real width this way, instead of collapsing to
-            -- an invisible 1px button.
-            local textW = it.fs:GetStringWidth() or 0
-            local w = textW
-            if it.hasIcon then
-                it.fs:ClearAllPoints()
-                it.fs:SetPoint("LEFT", it.icon, "RIGHT", textW > 0 and ICON_GAP or 0, 0)
-                w = ICON_SIZE + (textW > 0 and ICON_GAP or 0) + textW
-            else
-                it.fs:ClearAllPoints()
-                it.fs:SetPoint("LEFT")
-            end
+    -- Bucket by section, each bucket sorted so order is stable across
+    -- sessions -- pairs() order is not.
+    local buckets = { left = {}, center = {}, right = {} }
+    for name, section in pairs(shown) do
+        local b = buckets[section]
+        if b and items[name] then b[#b + 1] = name end
+    end
+    for _, b in pairs(buckets) do table.sort(b) end
 
-            it.button:SetWidth(math.max(w, 1))
+    -- Total width of a bucket, including the gaps between its members.
+    local function Measure(b)
+        local total = 0
+        for i, name in ipairs(b) do
+            total = total + SizeItem(items[name])
+            if i > 1 then total = total + ITEM_GAP end
+        end
+        return total
+    end
+
+    -- Every bucket must be measured, because Measure is also what sizes each
+    -- button. The left section's own total is not needed for placement -- it
+    -- starts at a fixed inset -- so it is not bound.
+    Measure(buckets.left)
+    local centerW = Measure(buckets.center)
+    local rightW = Measure(buckets.right)
+
+    local function Place(b, startX)
+        local x = startX
+        for _, name in ipairs(b) do
+            local it = items[name]
             it.button:ClearAllPoints()
             it.button:SetPoint("LEFT", itemHost, "LEFT", x, 0)
             it.button:Show()
-            x = x + w + ITEM_GAP
+            x = x + (it.button:GetWidth() or 0) + ITEM_GAP
         end
     end
 
+    local barW = bar:GetWidth() or 0
+    Place(buckets.left, EDGE_PAD)
+    Place(buckets.center, (barW - centerW) / 2)
+    Place(buckets.right, barW - EDGE_PAD - rightW)
+
+    -- Anything not currently placed is hidden, including items whose section
+    -- was just cleared.
     for name, it in pairs(items) do
         if not shown[name] then it.button:Hide() end
     end
-
-    bar:SetWidth(math.max(x - ITEM_GAP + EDGE_PAD, 60))
-    bar:SetHeight(BAR_H)
 end
 
 -- Pulls current text for every shown widget. Dirty-checked per item, and a
@@ -250,7 +340,7 @@ local function Refresh()
             -- `icon` is a texture path or an atlas name; SetTexture rejects an
             -- atlas, so try the atlas form first and fall back. iconCoords and
             -- the iconR/G/B tint are part of the same LDB convention.
-            local iconRef = obj and obj.icon
+            local iconRef = ModuleDB().showIcons and obj and obj.icon or nil
             local had = it.hasIcon
             if iconRef then
                 -- Tested with GetAtlasInfo rather than branching on SetAtlas's
@@ -286,13 +376,10 @@ local QueueRefresh
 -- global read and silently do nothing.
 local ApplyVisibility
 
-local function SetWidgetShown(name, on)
-    ModuleDB().widgets[name] = on and true or false
-    if on then
-        shown[name] = true
-    else
-        shown[name] = nil
-    end
+local function SetWidgetSection(name, section)
+    if section == "hidden" then section = nil end
+    ModuleDB().widgets[name] = section or false
+    shown[name] = section
     -- Goes through ApplyVisibility rather than calling Refresh/Relayout
     -- directly: the bar may not have been built yet (it is off by default, and
     -- widgets can be ticked before it is switched on), and EnsureItem needs
@@ -382,6 +469,51 @@ function Bar:GetInfoRows()
         end,
     }
 
+    rows[#rows + 1] = { section = "Appearance" }
+    rows[#rows + 1] = {
+        label = "Bar width",
+        min   = 200, max = 1400, step = 10,
+        get   = function() return ModuleDB().width or 500 end,
+        set   = function(v)
+            ModuleDB().width = v
+            Relayout()
+        end,
+    }
+    rows[#rows + 1] = {
+        label = "Show plugin icons",
+        get   = function() return ModuleDB().showIcons ~= false end,
+        set   = function(v)
+            ModuleDB().showIcons = v and true or false
+            dirty = true
+            Refresh()
+            Relayout()
+        end,
+    }
+    rows[#rows + 1] = {
+        label = "Strip plugin colors",
+        note  = "hands text color back to the bar",
+        get   = function() return ModuleDB().stripColors == true end,
+        set   = function(v)
+            ModuleDB().stripColors = v and true or false
+            -- Text is cached per item for the dirty check, so it has to be
+            -- invalidated or the re-render is a no-op.
+            for _, it in pairs(items) do it.text = nil end
+            dirty = true
+            Refresh()
+            Relayout()
+        end,
+    }
+    rows[#rows + 1] = {
+        label = "Max widget width",
+        note  = "0 = unlimited",
+        min   = 0, max = 400, step = 10,
+        get   = function() return ModuleDB().maxWidth or 0 end,
+        set   = function(v)
+            ModuleDB().maxWidth = v
+            Relayout()
+        end,
+    }
+
     rows[#rows + 1] = { section = "Widgets" }
     local names = AllBrokerNames()
     if #names == 0 then
@@ -390,10 +522,12 @@ function Bar:GetInfoRows()
         for _, name in ipairs(names) do
             local obj = ldb:GetDataObjectByName(name)
             rows[#rows + 1] = {
-                label = (obj and obj.label) or name,
-                note  = ((obj and obj.label) and name) or nil,
-                get   = function() return IsWidgetShown(name) end,
-                set   = function(v) SetWidgetShown(name, v) end,
+                label   = (obj and obj.label) or name,
+                note    = ((obj and obj.label) and name) or nil,
+                options = SECTION_LABEL,
+                order   = SECTION_ORDER,
+                get     = function() return WidgetSection(name) or "hidden" end,
+                set     = function(v) SetWidgetSection(name, v) end,
             }
         end
     end
@@ -409,8 +543,11 @@ function Bar:Enable()
         if dirty then Refresh() end
     end)
 
-    for name, on in pairs(ModuleDB().widgets) do
-        if on then shown[name] = true end
+    -- WidgetSection also performs the boolean -> section migration, so a
+    -- saved `true` from before alignment sections existed comes back as
+    -- "left" and the bar looks exactly as it did.
+    for name in pairs(ModuleDB().widgets) do
+        shown[name] = WidgetSection(name)
     end
 
     -- The two disables below are for the WoW API annotations, not for a real
