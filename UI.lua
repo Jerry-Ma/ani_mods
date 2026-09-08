@@ -506,11 +506,20 @@ end
 local tabCache = {}
 local scrollPos = {}   -- name -> saved scroll offset
 
--- Updates each requirement row's badge. `met` decides the colour; the words
--- come from the dependency, defaulting to Loaded/Not loaded since most of
--- these are addon-presence checks. A dependency with no `met` is purely
--- informational and gets a neutral badge -- there is nothing to check, so
--- neither green nor red would be honest.
+-- Updates each requirement row's badge.
+--
+-- ONE vocabulary for every requirement, deliberately, and no per-entry
+-- override. The badges previously said Loaded/Not loaded here,
+-- Available/Missing there, None found/Already have one somewhere else -- four
+-- phrasings for the single question every row asks, which made a column of
+-- them read as unrelated facts instead of a checklist.
+--
+-- Met/Not met is the pair that stays accurate for all of them: some
+-- requirements are about an addon being present, others about one being
+-- switched off, or about nothing else claiming the same job. The SPECIFICS
+-- belong in the label, which is why each is phrased as a condition
+-- ("EllesmereUI installed", "NDui chat module off") -- the label states what
+-- must be true, the badge says whether it is.
 local function RefreshDepRows(entry, cache)
     local badges = cache.depBadges
     if not badges then return end
@@ -520,16 +529,18 @@ local function RefreshDepRows(entry, cache)
     for i, dep in ipairs(deps) do
         local badge = badges[i]
         if badge then
+            -- An entry with no `met` counts as satisfied, matching
+            -- Core's EvaluateDependencies. The two have to agree, or the
+            -- panel would show "Not met" for something Core is happily
+            -- treating as fine -- and pcall(nil) would silently produce
+            -- exactly that.
+            local satisfied = true
             if dep.met then
                 local ok, result = pcall(dep.met)
-                if ok and result then
-                    badge:Set(dep.metText or "Loaded", W.BADGE_OK)
-                else
-                    badge:Set(dep.unmetText or "Not loaded", W.BADGE_BAD)
-                end
-            else
-                badge:Set(dep.idleText or "n/a", W.BADGE_IDLE)
+                satisfied = (ok and result) and true or false
             end
+            badge:Set(satisfied and "Met" or "Not met",
+                satisfied and W.BADGE_OK or W.BADGE_BAD)
         end
     end
 end

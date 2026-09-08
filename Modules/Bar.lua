@@ -41,13 +41,12 @@ local Bar = {
     -- offers a Run anyway switch when that is the only thing holding it back.
     forceable = true,
     dependencies = {
-        { text = "LibDataBroker",
+        { text = "LibDataBroker available",
           help = "The library data brokers publish through. Shipped by EllesmereUI "
               .. "and most data bars.",
           met = function()
               return (_G.LibStub and _G.LibStub:GetLibrary("LibDataBroker-1.1", true)) and true or false
-          end,
-          metText = "Available", unmetText = "Missing" },
+          end },
         { text = "No other data bar",
           -- Soft: advice, not a prerequisite. Running both is the user's call,
           -- so this one can be overridden with Run anyway.
@@ -60,8 +59,7 @@ local Bar = {
                        or AniMods.IsAddOnLoaded("ChocolateBar")
                        or AniMods.IsAddOnLoaded("Bazooka")
                        or AniMods.IsAddOnLoaded("AbstractBar"))
-          end,
-          metText = "None found", unmetText = "Already have one" },
+          end },
     },
 }
 
