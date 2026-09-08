@@ -159,26 +159,38 @@ AniMods.EvaluateCondition = EvaluateCondition
 
 -- ── Requirements ──────────────────────────────────────────────────────────────
 
--- A module's `dependencies` are not documentation: an unmet one makes the
--- module inactive.
+-- A module's `dependencies` are not documentation: most of them gate whether
+-- it runs at all. Three kinds, and the kind decides both the consequence and
+-- how the panel words the badge:
 --
--- Each entry is HARD by default. `soft = true` marks one the module can run
--- without -- an advisory rather than a prerequisite. AniMods' own data bar is
--- the case that motivated this: "you already have a data bar" is worth
--- flagging, but it is the user's call, not a blocker.
+--   REQUIRED (the default)  unmet -> the module is inactive. It genuinely
+--                           cannot work.
+--   soft = true             unmet -> inactive, but "Run anyway" is offered.
+--                           An advisory the user may overrule. AniMods' own
+--                           data bar is the case: "you already have a data
+--                           bar" is worth saying, not worth blocking on.
+--   optional = true         never affects activation. Its presence enables
+--                           PART of the module -- GroupRoles' docked badge
+--                           needs EllesmereUIQoL, but its broker does not.
+--
+-- The optional kind exists because the alternative was deleting the
+-- information: with only required and soft, listing EllesmereUIQoL would have
+-- deactivated a module whose main surface works fine without it, so those
+-- rows were dropped and the panel stopped answering "why is part of this
+-- missing".
 --
 -- Returns:
---   allMet   every checked requirement is satisfied
---   hardMet  every checked HARD requirement is satisfied
+--   allMet   every GATING requirement is satisfied (optional ones ignored)
+--   hardMet  every gating REQUIRED one is satisfied
 --   firstUnmet  text of the first failure, for the inactive reason
 --
--- Entries with no `met` are informational and never fail.
+-- Entries with no `met` never fail.
 function AniMods.EvaluateDependencies(deps)
     if type(deps) ~= "table" then return true, true, nil end
 
     local allMet, hardMet, firstUnmet = true, true, nil
     for _, dep in ipairs(deps) do
-        if dep.met then
+        if dep.met and not dep.optional then
             local ok, result = pcall(dep.met)
             if not (ok and result) then
                 allMet = false

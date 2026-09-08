@@ -520,6 +520,13 @@ local scrollPos = {}   -- name -> saved scroll offset
 -- belong in the label, which is why each is phrased as a condition
 -- ("EllesmereUI installed", "NDui chat module off") -- the label states what
 -- must be true, the badge says whether it is.
+--
+-- OPTIONAL rows get their own pair, and this is not the drift that was just
+-- normalised away. The words follow from the row's KIND, which is a property
+-- of the data rather than a per-entry choice, so it cannot diverge the way
+-- hand-picked strings did. And the distinction is real: "Not met" in red says
+-- something is wrong, which is false for an absent optional dependency --
+-- nothing is broken, a feature is simply not switched on.
 local function RefreshDepRows(entry, cache)
     local badges = cache.depBadges
     if not badges then return end
@@ -539,8 +546,14 @@ local function RefreshDepRows(entry, cache)
                 local ok, result = pcall(dep.met)
                 satisfied = (ok and result) and true or false
             end
-            badge:Set(satisfied and "Met" or "Not met",
-                satisfied and W.BADGE_OK or W.BADGE_BAD)
+
+            if dep.optional then
+                badge:Set(satisfied and "In use" or "Not found",
+                    satisfied and W.BADGE_OK or W.BADGE_IDLE)
+            else
+                badge:Set(satisfied and "Met" or "Not met",
+                    satisfied and W.BADGE_OK or W.BADGE_BAD)
+            end
         end
     end
 end
@@ -702,7 +715,9 @@ local function BuildTabContent(name)
     -- rather than by reading prose.
     local deps = entry.dependencies
     if type(deps) == "table" and deps[1] then
-        local card = W.Card(content, "Requirements")
+        -- "Dependencies", not "Requirements": the list now also carries
+        -- optional entries, which are not required by definition.
+        local card = W.Card(content, "Dependencies")
         cache.depBadges = {}
         W.ResetStack(card.body, 0)
 

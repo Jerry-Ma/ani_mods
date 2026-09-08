@@ -50,11 +50,17 @@ local GroupRoles = {
     -- surface, and suppressing a databar widget because an unrelated addon
     -- happens to show similar numbers somewhere else is the user's call to
     -- make by switching the module off, not ours to make for them.
-    -- No dependencies. `dependencies` now gates activation -- any unmet entry
-    -- makes the module inactive -- so it may only hold things that are
-    -- genuinely required. Nothing here is: the counts are plain Blizzard API,
-    -- and EllesmereUIQoL only enables the docked badge, which the Integration
-    -- section reports as status rather than as a failed requirement.
+    -- Nothing is required: the counts are plain Blizzard API and the broker
+    -- works anywhere. EllesmereUIQoL is OPTIONAL -- it enables the docked
+    -- badge, which is one of this module's two surfaces, so its absence
+    -- disables half the module rather than breaking it.
+    dependencies = {
+        { text = "EllesmereUIQoL installed",
+          optional = true,
+          help = "Enables the count badge docked under EllesmereUI's Raid Tools "
+              .. "icon. The broker widget works without it.",
+          met = function() return AniMods.IsAddOnLoaded("EllesmereUIQoL") end },
+    },
 }
 
 local ROLES = { "TANK", "HEALER", "DAMAGER" }
