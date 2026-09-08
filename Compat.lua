@@ -173,11 +173,15 @@ function AniMods.BuildStockSkin()
     -- claiming one of theirs.
     function S.GetStyle() return "stock" end
 
-    -- This provider has no host theme to follow, so its accent is simply the
-    -- default. A user preference is layered on top of BOTH providers by
-    -- W.Accent, not here -- that keeps the override in one place instead of
-    -- each provider re-implementing it.
+    -- No host theme to follow, so THIS is where an AniMods accent setting
+    -- applies -- and the only place it does. EllesmereUI's facade answers
+    -- from the user's EllesmereUI theme and never consults our saved colour,
+    -- which is what makes "EllesmereUI wins when it is present" structural
+    -- rather than something a settings control has to remember to honour.
     function S.GetAccentColor()
+        local g = AniModsDB and AniModsDB.general
+        local a = g and g.accent
+        if a and a.r then return a.r, a.g, a.b end
         local d = AniMods.ACCENT_DEFAULT
         return d.r, d.g, d.b
     end

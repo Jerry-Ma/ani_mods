@@ -208,11 +208,18 @@ end
 -- previews itself. Selecting it clears the override rather than storing a
 -- copy, so it keeps tracking a theme that later changes.
 local ACCENTS = {
-    { key = "auto" },                                  -- follows the provider
-    -- No mint preset. 0.047/0.824/0.616 is EllesmereUI's default accent and
-    -- AniMods' own fallback, so "auto" already produces it in every ordinary
-    -- setup -- listing it again put two identical squares at the front of the
-    -- row, which reads as a bug however they are drawn.
+    -- The first entry follows the host theme; the rest are AniMods' own. The
+    -- two halves are never both live, so they cannot compete: with
+    -- EllesmereUI present its accent wins and the presets are inert, and
+    -- without it there is no theme to follow and the first entry is.
+    --
+    -- That is also why mint can sit in the list again despite being
+    -- EllesmereUI's default accent. It was removed when both halves were
+    -- selectable and it rendered identically to the first swatch; now only
+    -- one half is ever clickable, so there is no duplicate to confuse -- and
+    -- it needs to be here, because it is AniMods' own default colour.
+    { key = "auto" },
+    { key = "mint",    rgb = { 0.047, 0.824, 0.616 } },
     { key = "green",   rgb = { 0.298, 0.780, 0.353 } },
     { key = "cyan",    rgb = { 0.204, 0.741, 0.890 } },
     { key = "blue",    rgb = { 0.204, 0.541, 0.890 } },
@@ -252,8 +259,27 @@ local function AccentSwatchColors()
     return out
 end
 
+-- Which half of the row is inert. Exactly one always is: EllesmereUI's accent
+-- wins when it is there, so our presets cannot apply; without it there is no
+-- theme to follow, so the first swatch cannot.
+local function DisabledAccents()
+    local out = {}
+    if AniMods.AccentIsForeign() then
+        for _, def in ipairs(ACCENTS) do
+            if def.key ~= "auto" then out[def.key] = true end
+        end
+    else
+        out.auto = true
+    end
+    return out
+end
+
+-- Under EllesmereUI the answer is always "follow the theme", whatever is
+-- saved -- the provider ignores the saved colour, so reporting anything else
+-- would ring a swatch that is not in effect.
 local function CurrentAccentKey()
-    return ModuleDB().accentKey or "auto"
+    if AniMods.AccentIsForeign() then return "auto" end
+    return ModuleDB().accentKey or "mint"
 end
 
 local function SetAccent(key)
@@ -311,9 +337,10 @@ function General:GetInfoRows()
     rows[#rows + 1] = {
         label    = "Accent color",
         help     = AniMods.AccentIsForeign()
-            and "Headings, highlights and switches. The first swatch follows EllesmereUI."
-            or  "Headings, highlights and switches. The first swatch is the default.",
+            and "Following EllesmereUI's accent. Change it in EllesmereUI's settings."
+            or  "Headings, highlights and switches.",
         swatches = AccentSwatchColors(),
+        disabled = DisabledAccents(),
         -- Drawn as a ring, because it inherits rather than sets. It renders
         -- the host theme's accent, which is frequently a colour also in the
         -- palette below -- with EllesmereUI at its default it is exactly the

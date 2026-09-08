@@ -156,21 +156,19 @@ end
 
 -- ── Theme reads ─────────────────────────────────────────────────────────────
 
--- The accent AniMods draws with.
+-- The accent AniMods draws with -- simply whatever the provider says.
 --
--- An explicit AniMods setting wins; otherwise the provider's answer, which is
--- EllesmereUI's live theme accent when EllesmereUI is there.
+-- The provider decides whether an AniMods colour setting applies at all:
+-- EllesmereUI's facade answers with the user's EllesmereUI theme and knows
+-- nothing about our setting, while the stock provider answers with our
+-- setting or our default. So "EllesmereUI wins when present" is enforced by
+-- which provider is in play, not by a UI control remembering to defer.
 --
--- The override exists because "follow the host" is the right DEFAULT but the
--- wrong rule: EllesmereUI's accent can be pale, and a pale accent leaves this
--- panel's title, headings and switches near-white. Following the theme by
--- default and allowing a local override costs one saved colour and removes
--- the whole class of "AniMods is unreadable in my theme".
+-- An earlier version layered the override on top of BOTH providers here. It
+-- was added on the theory that EllesmereUI's accent might be too pale to
+-- read -- which turned out to be a misdiagnosis of a broken repaint path, so
+-- the reason for overriding a working theme went away with it.
 function W.Accent()
-    local g = AniModsDB and AniModsDB.general
-    local a = g and g.accent
-    if a and a.r then return a.r, a.g, a.b end
-
     local s = Need()
     if not s then
         local d = AniMods.ACCENT_DEFAULT
@@ -179,15 +177,15 @@ function W.Accent()
     return s.GetAccentColor()
 end
 
--- The provider's own accent, ignoring any AniMods override -- what the
--- "follow the theme" swatch shows, so that choice previews itself.
+-- What the "follow the theme" swatch previews: the HOST theme's accent, or
+-- nothing to follow when there is no host.
 function W.ProviderAccent()
-    local s = S
-    if not s then
-        local d = AniMods.ACCENT_DEFAULT
-        return d.r, d.g, d.b
+    if AniMods.AccentIsForeign() and EllesmereUI and EllesmereUI.GetAccentColor then
+        local ok, r, g, b = pcall(EllesmereUI.GetAccentColor)
+        if ok and r then return r, g, b end
     end
-    return s.GetAccentColor()
+    local d = AniMods.ACCENT_DEFAULT
+    return d.r, d.g, d.b
 end
 
 -- Registers a region for live accent recolouring, so the panel follows a
@@ -729,6 +727,15 @@ function W.Swatches(parent, size)
     local o = { frame = f, buttons = {}, order = {}, colors = {} }
 
     local function Paint(btn, selected, hovering)
+        if btn.disabled then
+            -- Visible but plainly inert: the choice exists, it just does not
+            -- apply here. Hiding it would leave no explanation for why the
+            -- panel is the colour it is.
+            btn.ring:Hide()
+            btn:SetAlpha(0.2)
+            return
+        end
+        btn:SetAlpha(1)
         btn.ring:SetShown(selected)
         btn.swatch:SetAlpha((selected or hovering) and 1 or 0.75)
     end
@@ -741,9 +748,11 @@ function W.Swatches(parent, size)
 
     -- `colors` maps key -> {r, g, b}. Rebuilt rather than pooled: the palette
     -- is fixed and set once.
-    -- `hollow` is a set of keys to draw as rings rather than solid squares.
-    function o:SetList(order, colors, hollow)
+    -- `hollow` is a set of keys to draw as rings rather than solid squares;
+    -- `disabled` a set to render inert.
+    function o:SetList(order, colors, hollow, disabled)
         o.order, o.colors, o.hollow = order or {}, colors or {}, hollow
+        o.disabled = disabled
 
         local x = 0
         for _, key in ipairs(o.order) do
@@ -799,7 +808,8 @@ function W.Swatches(parent, size)
                 -- method, so `self` here would shadow its own.
                 btn:SetScript("OnEnter", function(swatch) Paint(swatch, o.value == key, true) end)
                 btn:SetScript("OnLeave", function(swatch) Paint(swatch, o.value == key, false) end)
-                btn:SetScript("OnClick", function()
+                btn:SetScript("OnClick", function(swatch)
+                    if swatch.disabled then return end
                     o.value = key
                     Repaint()
                     if o._onChange then o._onChange(key) end
@@ -817,6 +827,8 @@ function W.Swatches(parent, size)
             end
             btn.swatch:SetShown(not isRing)
             for e = 1, 4 do btn.edges[e]:SetShown(isRing and true or false) end
+
+            btn.disabled = (o.disabled and o.disabled[key]) and true or false
 
             btn:ClearAllPoints()
             btn:SetPoint("LEFT", f, "LEFT", x, 0)

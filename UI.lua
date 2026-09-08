@@ -353,7 +353,7 @@ local function BuildRow(parent, descriptor, sectionIndex, stripeIndex)
 
         local sw = W.Swatches(row, 14)
         sw.frame:SetPoint("LEFT", row, "LEFT", 150, 0)
-        sw:SetList(descriptor.order, descriptor.swatches, descriptor.hollow)
+        sw:SetList(descriptor.order, descriptor.swatches, descriptor.hollow, descriptor.disabled)
         sw:SetValue(descriptor.get())
         sw:SetOnChange(function(value)
             descriptor.set(value)
@@ -418,7 +418,7 @@ local function RefreshRowsInPlace(rows, cache)
             -- Re-push the colours as well as the selection: the "follow the
             -- theme" swatch renders whatever that currently resolves to, so
             -- it has to move when the theme does.
-            c.widget:SetList(descriptor.order, descriptor.swatches, descriptor.hollow)
+            c.widget:SetList(descriptor.order, descriptor.swatches, descriptor.hollow, descriptor.disabled)
             c.widget:SetValue(descriptor.get())
         elseif c and c.kind == "options" then
             -- The selection itself (in case something changed it from
