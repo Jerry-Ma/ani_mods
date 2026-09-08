@@ -311,6 +311,11 @@ function General:GetInfoRows()
             and "Headings, highlights and switches. The first swatch follows EllesmereUI."
             or  "Headings, highlights and switches. The first swatch is the default.",
         swatches = AccentSwatchColors(),
+        -- Drawn as a ring, because it inherits rather than sets. It renders
+        -- the host theme's accent, which is frequently a colour also in the
+        -- palette below -- with EllesmereUI at its default it is exactly the
+        -- mint preset -- and two identical solid squares read as a bug.
+        hollow   = { auto = true },
         order    = ACCENT_ORDER,
         get      = CurrentAccentKey,
         set      = SetAccent,

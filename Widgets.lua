@@ -179,6 +179,14 @@ function W.Accent()
     return s.GetAccentColor()
 end
 
+-- The house panel fill, for the rare element that has to blend into a card
+-- rather than sit on it.
+function W.PanelColor()
+    local s = S
+    if not s then return 0.05, 0.07, 0.09 end
+    return s.GetPanelColor()
+end
+
 -- The provider's own accent, ignoring any AniMods override -- what the
 -- "follow the theme" swatch shows, so that choice previews itself.
 function W.ProviderAccent()
@@ -653,8 +661,9 @@ function W.Swatches(parent, size)
 
     -- `colors` maps key -> {r, g, b}. Rebuilt rather than pooled: the palette
     -- is fixed and set once.
-    function o:SetList(order, colors)
-        o.order, o.colors = order or {}, colors or {}
+    -- `hollow` is a set of keys to draw as rings rather than solid squares.
+    function o:SetList(order, colors, hollow)
+        o.order, o.colors, o.hollow = order or {}, colors or {}, hollow
 
         local x = 0
         for _, key in ipairs(o.order) do
@@ -676,6 +685,18 @@ function W.Swatches(parent, size)
                 btn.swatch:SetPoint("TOPLEFT", RING, -RING)
                 btn.swatch:SetPoint("BOTTOMRIGHT", -RING, RING)
 
+                -- Punches the centre out, turning the square into a ring.
+                -- Used for a swatch that INHERITS its colour rather than
+                -- setting one: it can render identical to a preset -- the
+                -- host theme's accent may well be a colour also in the
+                -- palette -- and two identical squares side by side read as a
+                -- mistake. Hollow versus solid says "follows something" and
+                -- "is this colour" without needing a label.
+                btn.hole = W.Tex(btn, "OVERLAY", 0, 0, 0, 0)
+                btn.hole:SetPoint("TOPLEFT", btn.swatch, "TOPLEFT", 3, -3)
+                btn.hole:SetPoint("BOTTOMRIGHT", btn.swatch, "BOTTOMRIGHT", -3, 3)
+                btn.hole:Hide()
+
                 -- `swatch` rather than `self`: the enclosing SetList is a
                 -- method, so `self` here would shadow its own.
                 btn:SetScript("OnEnter", function(swatch) Paint(swatch, o.value == key, true) end)
@@ -690,6 +711,17 @@ function W.Swatches(parent, size)
             end
 
             if c then btn.swatch:SetColorTexture(c[1], c[2], c[3], 1) end
+
+            if o.hollow and o.hollow[key] then
+                -- The hole is painted in the panel fill so it reads as a hole
+                -- rather than a black dot, whatever the card sits on.
+                local pr, pg, pb = W.PanelColor()
+                btn.hole:SetColorTexture(pr, pg, pb, 1)
+                btn.hole:Show()
+            else
+                btn.hole:Hide()
+            end
+
             btn:ClearAllPoints()
             btn:SetPoint("LEFT", f, "LEFT", x, 0)
             btn:Show()
