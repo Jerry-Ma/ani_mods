@@ -209,7 +209,10 @@ end
 -- copy, so it keeps tracking a theme that later changes.
 local ACCENTS = {
     { key = "auto" },                                  -- follows the provider
-    { key = "mint",    rgb = { 0.047, 0.824, 0.616 } },
+    -- No mint preset. 0.047/0.824/0.616 is EllesmereUI's default accent and
+    -- AniMods' own fallback, so "auto" already produces it in every ordinary
+    -- setup -- listing it again put two identical squares at the front of the
+    -- row, which reads as a bug however they are drawn.
     { key = "green",   rgb = { 0.298, 0.780, 0.353 } },
     { key = "cyan",    rgb = { 0.204, 0.741, 0.890 } },
     { key = "blue",    rgb = { 0.204, 0.541, 0.890 } },

@@ -179,14 +179,6 @@ function W.Accent()
     return s.GetAccentColor()
 end
 
--- The house panel fill, for the rare element that has to blend into a card
--- rather than sit on it.
-function W.PanelColor()
-    local s = S
-    if not s then return 0.05, 0.07, 0.09 end
-    return s.GetPanelColor()
-end
-
 -- The provider's own accent, ignoring any AniMods override -- what the
 -- "follow the theme" swatch shows, so that choice previews itself.
 function W.ProviderAccent()
@@ -623,9 +615,33 @@ function W.PowerButton(parent)
 
     local o = { frame = f, texture = tex, checked = false }
 
+    -- Accent when on, dim white when off.
+    --
+    -- EllesmereUI uses white-at-full-strength for on, and this deliberately
+    -- differs: with a column of rows, "which modules are running" is the
+    -- question the list should answer at a glance, and a hue reads faster
+    -- than an alpha difference. It also makes this the last control in the
+    -- panel that was ignoring the theme.
+    --
+    -- The hover pair stays red/green, because those mean something else --
+    -- what the click will DO, not what the state IS. Worth knowing: if the
+    -- accent is itself green, an idle-on button and a hovered-off button sit
+    -- in similar hues. They differ in brightness and only one is ever under
+    -- the cursor, so it reads, but it is the reason to keep the hover colours
+    -- saturated rather than tinting them toward the accent too.
     local function Idle()
-        tex:SetVertexColor(1, 1, 1, o.checked and 1 or 0.5)
+        if o.checked then
+            local r, g, b = W.Accent()
+            tex:SetVertexColor(r, g, b, 1)
+        else
+            tex:SetVertexColor(1, 1, 1, 0.4)
+        end
     end
+
+    -- Repaints on a theme change; the colour depends on the accent AND the
+    -- on/off state, so it re-runs its own paint rather than being registered
+    -- as a flat recoloured region.
+    W.OnLooksChanged(Idle)
 
     f:SetScript("OnEnter", function(self)
         local c = o.checked and POWER_WILL_DISABLE or POWER_WILL_ENABLE
@@ -749,17 +765,35 @@ function W.Swatches(parent, size)
                 btn.swatch:SetPoint("TOPLEFT", RING, -RING)
                 btn.swatch:SetPoint("BOTTOMRIGHT", -RING, RING)
 
-                -- Punches the centre out, turning the square into a ring.
-                -- Used for a swatch that INHERITS its colour rather than
-                -- setting one: it can render identical to a preset -- the
-                -- host theme's accent may well be a colour also in the
-                -- palette -- and two identical squares side by side read as a
-                -- mistake. Hollow versus solid says "follows something" and
-                -- "is this colour" without needing a label.
-                btn.hole = W.Tex(btn, "OVERLAY", 0, 0, 0, 0)
-                btn.hole:SetPoint("TOPLEFT", btn.swatch, "TOPLEFT", 3, -3)
-                btn.hole:SetPoint("BOTTOMRIGHT", btn.swatch, "BOTTOMRIGHT", -3, 3)
-                btn.hole:Hide()
+                -- Ring form, for a swatch that INHERITS its colour rather than
+                -- setting one: it can render identical to a preset -- the host
+                -- theme's accent may well be a colour also in the palette --
+                -- and two identical squares side by side read as a mistake.
+                -- Hollow versus solid says "follows something" and "is this
+                -- colour" without needing a label.
+                --
+                -- Four edge strips, NOT a solid square with a smaller one
+                -- painted over the middle. That first attempt drew the centre
+                -- in the panel colour at full alpha, but the card it sits on
+                -- paints its fill at the theme's panel ALPHA -- so the "hole"
+                -- came out darker than its surroundings and read as a black
+                -- dot. A hole has to be an absence, not a colour.
+                local E = 3
+                btn.edges = {}
+                for e = 1, 4 do btn.edges[e] = W.Tex(btn, "ARTWORK", 1, 1, 1, 1) end
+                btn.edges[1]:SetPoint("TOPLEFT", btn.swatch, "TOPLEFT")
+                btn.edges[1]:SetPoint("TOPRIGHT", btn.swatch, "TOPRIGHT")
+                btn.edges[1]:SetHeight(E)
+                btn.edges[2]:SetPoint("BOTTOMLEFT", btn.swatch, "BOTTOMLEFT")
+                btn.edges[2]:SetPoint("BOTTOMRIGHT", btn.swatch, "BOTTOMRIGHT")
+                btn.edges[2]:SetHeight(E)
+                btn.edges[3]:SetPoint("TOPLEFT", btn.swatch, "TOPLEFT")
+                btn.edges[3]:SetPoint("BOTTOMLEFT", btn.swatch, "BOTTOMLEFT")
+                btn.edges[3]:SetWidth(E)
+                btn.edges[4]:SetPoint("TOPRIGHT", btn.swatch, "TOPRIGHT")
+                btn.edges[4]:SetPoint("BOTTOMRIGHT", btn.swatch, "BOTTOMRIGHT")
+                btn.edges[4]:SetWidth(E)
+                for e = 1, 4 do btn.edges[e]:Hide() end
 
                 -- `swatch` rather than `self`: the enclosing SetList is a
                 -- method, so `self` here would shadow its own.
@@ -774,17 +808,15 @@ function W.Swatches(parent, size)
                 o.buttons[key] = btn
             end
 
-            if c then btn.swatch:SetColorTexture(c[1], c[2], c[3], 1) end
-
-            if o.hollow and o.hollow[key] then
-                -- The hole is painted in the panel fill so it reads as a hole
-                -- rather than a black dot, whatever the card sits on.
-                local pr, pg, pb = W.PanelColor()
-                btn.hole:SetColorTexture(pr, pg, pb, 1)
-                btn.hole:Show()
-            else
-                btn.hole:Hide()
+            -- Hollow: hide the fill and show the four edges in its place, so
+            -- whatever is behind shows through the middle.
+            local isRing = o.hollow and o.hollow[key]
+            if c then
+                btn.swatch:SetColorTexture(c[1], c[2], c[3], 1)
+                for e = 1, 4 do btn.edges[e]:SetColorTexture(c[1], c[2], c[3], 1) end
             end
+            btn.swatch:SetShown(not isRing)
+            for e = 1, 4 do btn.edges[e]:SetShown(isRing and true or false) end
 
             btn:ClearAllPoints()
             btn:SetPoint("LEFT", f, "LEFT", x, 0)
