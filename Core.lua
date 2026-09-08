@@ -112,8 +112,8 @@ end
 
 -- ── Conditions ────────────────────────────────────────────────────────────────
 
--- A module's `conditions` are not documentation: most of them gate whether it
--- runs at all. Three kinds, and the kind decides the consequence:
+-- A module's `conditions` are not documentation: every one of them gates
+-- whether it runs. Two kinds, and the kind decides the consequence:
 --
 --   REQUIRED (the default)  unmet -> the module is inactive. It genuinely
 --                           cannot work.
@@ -121,15 +121,22 @@ end
 --                           An advisory the user may overrule. AniMods' own
 --                           data bar is the case: "you already have a data
 --                           bar" is worth saying, not worth blocking on.
---   optional = true         never affects activation. Its presence enables
---                           PART of the module -- GroupRoles' docked badge
---                           needs EllesmereUIQoL, but its broker does not.
 --
--- The optional kind exists because the alternative was deleting the
--- information: with only required and soft, listing EllesmereUIQoL would have
--- deactivated a module whose main surface works fine without it, so those
--- rows were dropped and the panel stopped answering "why is part of this
--- missing".
+-- There was briefly a third kind, `optional = true`, for something that
+-- enables PART of a module -- EllesmereUIQoL and GroupRoles' docked badge.
+-- It was a category error. A condition answers "may this module run", and an
+-- entry that can never change that answer does not belong in the list: it
+-- made a gating checklist carry a row that never gates, and needed its own
+-- badge vocabulary (In use / Not found) to avoid claiming something was
+-- broken when nothing was.
+--
+-- Per-FEATURE availability belongs with the feature instead, which is where
+-- it already was: GroupRoles' Integration section reports "Docked to
+-- EllesmereUI icon" beside the docked badge's own settings, and a broker's
+-- availability is reported by Broker.SectionRows next to the broker's display
+-- options. Both say more than the condition row did -- not just whether the
+-- host is installed, but whether the feature actually attached -- and both sit
+-- next to the controls they govern.
 --
 -- Each entry's `text` is phrased as a STATEMENT that is true or false --
 -- "EllesmereUI installed", "NDui chat module off" -- which is what makes the
@@ -138,8 +145,8 @@ end
 -- things rather than for the claims being made about them.
 --
 -- Returns:
---   allMet   every GATING condition is satisfied (optional ones ignored)
---   hardMet  every gating REQUIRED one is satisfied
+--   allMet   every condition is satisfied
+--   hardMet  every REQUIRED one is satisfied
 --   firstUnmet  text of the first failure, for the inactive reason
 --
 -- Entries with no `met` never fail.
@@ -148,7 +155,7 @@ function AniMods.EvaluateConditions(deps)
 
     local allMet, hardMet, firstUnmet = true, true, nil
     for _, dep in ipairs(deps) do
-        if dep.met and not dep.optional then
+        if dep.met then
             local ok, result = pcall(dep.met)
             if not (ok and result) then
                 allMet = false
@@ -260,7 +267,7 @@ local function InitModules()
             order           = module.order or 100,
             essential       = module.essential == true,
             description     = module.description,
-            conditions      = module.conditions, -- { text, met, soft, optional, help } entries; distinct from conditionReason, which only appears on failure
+            conditions      = module.conditions, -- { text, met, soft, help } entries; distinct from conditionReason, which only appears on failure
             conditionMet    = runnable,
             conditionReason = reason,
             errorTrace      = errorTrace,

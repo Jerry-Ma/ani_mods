@@ -184,8 +184,14 @@ end
 --   { label = "Style", ..., texture = "Interface\\...\\Some" }            -- dropdown, w/ texture-file preview
 --   { label = "Spacing", min = 0, max = 4, step = 1, get = fn, set = fn } -- slider
 
+--   { strip = {"a","b"}, labels = {...}, onReorder = fn, onDrop = fn }    -- draggable order preview
+--   { label = "Widgets", picker = { {key=,text=}, {header=true,text=} },
+--     isChecked = fn, onToggle = fn, summary = "2 of 7" }                 -- multi-select dropdown
+
 local function RowKind(descriptor)
     if descriptor.section then return "section" end
+    if descriptor.strip then return "strip" end
+    if descriptor.picker then return "picker" end
     if descriptor.swatches then return "swatches" end
     if descriptor.options then return "options" end
     if descriptor.min then return "min" end
@@ -211,6 +217,11 @@ local function BuildShape(rows)
         if previews then
             sig = sig .. ":" .. (type(previews) == "table" and #previews or 1)
         end
+        -- Whether a row HAS a "?" is structural: the marker is created beside
+        -- the label when the row is built, so a pooled row that gains or loses
+        -- one cannot be updated in place -- it has to be rebuilt or it would
+        -- keep (or keep lacking) a marker that no longer matches its content.
+        if d.help then sig = sig .. ":?" end
         shape[i] = sig
     end
     return shape
@@ -240,10 +251,16 @@ local function SplitIntoSections(rows)
     return groups
 end
 
+-- A checkbox's label plus its optional `note` -- a short qualifier about THIS
+-- row ("current", "active now"), never a second name for the same thing.
+--
+-- Accent-coloured, not the hardcoded green it used to be. That green was the
+-- one remaining place where a colour was written out rather than read from the
+-- theme, which showed the moment the accent was set to anything else.
 local function CheckboxLabel(descriptor)
     local label = descriptor.label
     if descriptor.note then
-        label = label .. "  |cff59ff59" .. descriptor.note .. "|r"
+        label = label .. ("  |cff%s%s|r"):format(W.AccentHex(), descriptor.note)
     end
     return label
 end
@@ -270,6 +287,27 @@ local function AttachHelp(rowFrame, descriptor, anchorTo)
         help.frame:SetPoint("LEFT", rowFrame, "LEFT", 8, 0)
     end
     return help
+end
+
+-- Points a checkbox at a descriptor: label, state, AND the click handler.
+--
+-- The handler is the part that was missing. Row frames are pooled by position
+-- and kind, so the checkbox at index 3 is routinely re-pointed at a different
+-- setting than it held last time -- and the reuse path only refreshed the
+-- label and the tick, leaving a closure still bound to the PREVIOUS
+-- descriptor. The row then read one setting and wrote another: ticking the box
+-- next to a broker's name toggled whichever broker used to occupy that slot,
+-- which is what "the checkboxes do not work" was. Dropdowns and sliders
+-- already avoided this by refusing to be reused at all; checkboxes take the
+-- cheaper fix, since re-binding is all they need.
+local function BindCheckbox(check, descriptor)
+    check:SetLabel(CheckboxLabel(descriptor))
+    check:SetChecked(descriptor.get())
+    check:SetOnClick(function(value)
+        descriptor.set(value)
+        if descriptor.reload then AniMods.PromptReload(descriptor.label) end
+        if AniMods.RefreshUI then AniMods.RefreshUI() end
+    end)
 end
 
 -- Builds one row into `parent`, returning { kind, widget } for later in-place
@@ -382,17 +420,69 @@ local function BuildRow(parent, descriptor, sectionIndex, stripeIndex)
         AttachHelp(row, descriptor, slider.labelFS)
         return { kind = kind, widget = slider }, row, ROW_GAP
 
-    elseif kind == "checkbox" then
-        local check = W.CheckBox(parent)
-        check:SetLabel(CheckboxLabel(descriptor))
-        check:SetChecked(descriptor.get())
-        check:SetOnClick(function(value)
-            descriptor.set(value)
-            if descriptor.reload then AniMods.PromptReload(descriptor.label) end
+    elseif kind == "strip" then
+        local row = CreateFrame("Frame", nil, parent)
+        row:SetHeight(24)
+
+        local strip = W.OrderStrip(row)
+        strip.frame:SetPoint("LEFT", row, "LEFT", 8, 0)
+        strip.frame:SetPoint("RIGHT", row, "RIGHT", -8, 0)
+        strip:SetList(descriptor.strip, descriptor.labels)
+        -- Two callbacks, because a drag has two different moments. Each swap
+        -- applies to the data immediately so the real bar follows the cursor;
+        -- only the drop refreshes the panel, which would otherwise rebuild
+        -- this very widget while it is being dragged.
+        strip:SetOnReorder(function(order)
+            if descriptor.onReorder then descriptor.onReorder(order) end
+        end)
+        strip:SetOnDrop(function(order)
+            if descriptor.onDrop then descriptor.onDrop(order) end
             if AniMods.RefreshUI then AniMods.RefreshUI() end
         end)
-        AttachHelp(check.frame, descriptor, check.labelFS)
-        return { kind = kind, widget = check }, check.frame, ROW_GAP
+        return { kind = kind, widget = strip }, row, ROW_GAP
+
+    elseif kind == "picker" then
+        local row = CreateFrame("Frame", nil, parent)
+        row:SetHeight(26)
+
+        local label = W.Font(row, 12, nil, W.TEXT_DIM_A)
+        label:SetPoint("LEFT", row, "LEFT", 8, 0)
+        label:SetText(descriptor.label or "")
+
+        local picker = W.MultiSelect(row, CONTROL_WIDTH)
+        picker.frame:SetPoint("LEFT", row, "LEFT", 150, 0)
+        picker:SetItems(descriptor.picker)
+        picker:SetIsChecked(descriptor.isChecked)
+        picker:SetText(descriptor.summary or "")
+        picker:SetOnToggle(function(key, on)
+            descriptor.onToggle(key, on)
+            -- The menu is still open and the summary is behind it, so this
+            -- only has to be right by the time it closes -- but the sibling
+            -- preview strip is NOT covered, and updating it as each widget is
+            -- ticked is the point of having it there.
+            if descriptor.summarize then picker:SetText(descriptor.summarize()) end
+            if AniMods.RefreshUI then AniMods.RefreshUI() end
+        end)
+        picker:SetOnOpened(function() openDropdownSection = sectionIndex end)
+        picker:SetOnClosed(function()
+            openDropdownSection = nil
+            if refreshPending then
+                refreshPending = false
+                C_Timer.After(0, function()
+                    if AniMods.RefreshUI then AniMods.RefreshUI() end
+                end)
+            end
+        end)
+
+        AttachHelp(row, descriptor, label)
+        return { kind = kind, widget = picker }, row, ROW_GAP
+
+    elseif kind == "checkbox" then
+        local check = W.CheckBox(parent)
+        local help = AttachHelp(check.frame, descriptor, check.labelFS)
+        local built = { kind = kind, widget = check, help = help }
+        BindCheckbox(check, descriptor)
+        return built, check.frame, ROW_GAP
 
     else
         local row = W.ValueRow(parent)
@@ -411,7 +501,20 @@ local function RefreshRowsInPlace(rows, cache)
     for i, descriptor in ipairs(rows or {}) do
         local c = cache[i]
         if c and c.kind == "checkbox" then
-            c.widget:SetLabel(CheckboxLabel(descriptor))
+            -- Re-bound, not just re-labelled. The shape matching here means the
+            -- row is the same SETTING, so the old closure would usually still
+            -- be correct -- but "usually" is what made the pooled-reuse version
+            -- of this bug survive so long, and re-binding costs one closure.
+            BindCheckbox(c.widget, descriptor)
+        elseif c and c.kind == "strip" then
+            c.widget:SetList(descriptor.strip, descriptor.labels)
+        elseif c and c.kind == "picker" then
+            -- Items as well as the summary: the menu lists every broker
+            -- registered right now, and a LoadOnDemand addon can add one while
+            -- the panel is open.
+            c.widget:SetItems(descriptor.picker)
+            c.widget:SetIsChecked(descriptor.isChecked)
+            c.widget:SetText(descriptor.summary or "")
         elseif c and c.kind == "value" then
             c.widget:Set(descriptor.label, tostring(descriptor.value or ""))
         elseif c and c.kind == "swatches" then
@@ -469,8 +572,11 @@ local function FillSection(section, slice, sectionIndex)
                 entry.built.widget:Set(descriptor.label, tostring(descriptor.value or ""))
                 entry.built.widget:Stripe(stripe)
             elseif kind == "checkbox" then
-                entry.built.widget:SetLabel(CheckboxLabel(descriptor))
-                entry.built.widget:SetChecked(descriptor.get())
+                BindCheckbox(entry.built.widget, descriptor)
+                -- The "?" text too. Whether a row HAS one is part of the shape
+                -- signature, so a row that reaches this branch is guaranteed to
+                -- have a marker to update.
+                if entry.built.help then entry.built.help:SetText(descriptor.help) end
             else
                 -- Dropdown/slider carry live callbacks bound to this exact
                 -- descriptor; rebuild rather than risk a stale closure.
@@ -528,12 +634,11 @@ local scrollPos = {}   -- name -> saved scroll offset
 -- ("EllesmereUI installed", "NDui chat module off") -- the label states what
 -- must be true, the badge says whether it is.
 --
--- OPTIONAL rows get their own pair, and this is not the drift that was just
--- normalised away. The words follow from the row's KIND, which is a property
--- of the data rather than a per-entry choice, so it cannot diverge the way
--- hand-picked strings did. And the distinction is real: "Not met" in red says
--- something is wrong, which is false for an absent optional dependency --
--- nothing is broken, a feature is simply not switched on.
+-- There is exactly one pair now. A second (In use / Not found) existed for
+-- `optional` conditions, which is the vocabulary you need once a checklist
+-- about "may this run" contains a row that never affects whether it runs. The
+-- entries are gone rather than the words: per-feature availability is reported
+-- beside the feature it governs, so every row here is once again a gate.
 local function RefreshConditionRows(entry, cache)
     local badges = cache.conditionBadges
     if not badges then return end
@@ -554,13 +659,8 @@ local function RefreshConditionRows(entry, cache)
                 satisfied = (ok and result) and true or false
             end
 
-            if dep.optional then
-                badge:Set(satisfied and "In use" or "Not found",
-                    satisfied and W.BADGE_OK or W.BADGE_IDLE)
-            else
-                badge:Set(satisfied and "Met" or "Not met",
-                    satisfied and W.BADGE_OK or W.BADGE_BAD)
-            end
+            badge:Set(satisfied and "Met" or "Not met",
+                satisfied and W.BADGE_OK or W.BADGE_BAD)
         end
     end
 end
@@ -626,6 +726,14 @@ local function RelayoutContent(cache)
     end
     content:SetHeight(content._cursor + PAD)
     scrollArea:Update()
+
+    -- Anything that divides the width it is given has to be told once the width
+    -- is real. Rows built while the panel was hidden measured against zero.
+    for _, section in ipairs(cache.sections or {}) do
+        for _, built in pairs(section.cache or {}) do
+            if built.kind == "strip" then built.widget:Relayout() end
+        end
+    end
 end
 
 local function BuildTabContent(name)
@@ -708,8 +816,7 @@ local function BuildTabContent(name)
     -- "Conditions" rather than "Dependencies" or "Requirements", because each
     -- row is a STATEMENT that is true or false -- "EllesmereUI installed",
     -- "NDui chat module off" -- not the name of a thing. A noun header over a
-    -- column of statements reads as a mislabel, and neither of the earlier
-    -- names covered the optional entries, which are not required.
+    -- column of statements reads as a mislabel.
     local deps = entry.conditions
     if type(deps) == "table" and deps[1] then
         local card = W.Card(content, "Conditions")

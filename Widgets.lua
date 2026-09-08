@@ -177,6 +177,15 @@ function W.Accent()
     return s.GetAccentColor()
 end
 
+-- The accent as an |cff escape prefix, for text that is part of a larger
+-- string and so cannot be coloured by SetTextColor. Read fresh at each call:
+-- an inline colour code is baked into the string, so anything using this has
+-- to rebuild that string on a theme change rather than being repainted.
+function W.AccentHex()
+    local r, g, b = W.Accent()
+    return ("%02x%02x%02x"):format(r * 255, g * 255, b * 255)
+end
+
 -- What the "follow the theme" swatch previews: the HOST theme's accent, or
 -- nothing to follow when there is no host.
 function W.ProviderAccent()
@@ -900,30 +909,60 @@ function W.Card(parent, titleText)
     return o
 end
 
+-- ── Check mark ──────────────────────────────────────────────────────────────
+-- The box itself, with no label and no hit area: ONE rendering of "this is on"
+-- for every place that needs one -- the settings rows and the multi-select
+-- menu both build on this rather than each drawing their own.
+--
+-- Shape is EllesmereUI's, taken from where EUI draws a checkbox from scratch
+-- rather than from where it skins one (EllesmereUI_FirstInstall.lua:202-209):
+-- a dark box with an accent-coloured square filling the middle half of it. Not
+-- a checkmark glyph. S.Checkbox does tint Blizzard's check art in the accent,
+-- but that call exists to strip a Blizzard CheckButton -- and the way to get
+-- one here was to create Blizzard art purely so the engine could remove it,
+-- which also could not be reused inside a menu row.
+--
+-- Nothing is hardcoded: the box is an S inset panel, so its fill and border
+-- come from the theme, and the square is the live accent.
+function W.CheckMark(parent, size)
+    size = size or 12
+
+    local f = W.Panel(parent, { inset = true })
+    f:SetSize(size, size)
+
+    -- The fill goes on a CHILD: `f` went through S.Panel and is therefore in
+    -- the restrip registry (see the file header).
+    local inner = CreateFrame("Frame", nil, f)
+    inner:SetPoint("CENTER")
+    inner:SetSize(math.floor(size / 2), math.floor(size / 2))
+    inner:Hide()
+
+    local fill = W.Tex(inner, "OVERLAY", W.Accent())
+    fill:SetAllPoints()
+    W.RegisterAccent(fill, "vertex")
+
+    local o = { frame = f }
+    function o:SetChecked(on) inner:SetShown(on and true or false) end
+    return o
+end
+
 -- ── Checkbox ────────────────────────────────────────────────────────────────
--- A real CheckButton skinned by the engine: S.Checkbox strips the Blizzard
--- art, lays the house dark box with a 1px border, and tints the check itself
--- in the accent colour -- tracking theme changes on its own, with no
--- registration from us. The label is ours, so it follows our text tokens.
+-- W.CheckMark plus a label and a full-row hit area. The label is ours, so it
+-- follows our text tokens.
 
 function W.CheckBox(parent)
     local f = CreateFrame("Button", nil, parent)
     f:SetHeight(20)
 
-    -- 20, not 24: S.Checkbox insets its box 4px inside the frame, so a 24px
-    -- CheckButton draws a 16px box that crowded the 20px row. At 20 the box
-    -- is 12px and the row breathes.
-    local box = CreateFrame("CheckButton", nil, f, "UICheckButtonTemplate")
-    box:SetSize(20, 20)
-    box:SetPoint("LEFT", f, "LEFT", 4, 0)
-    box:EnableMouse(false)   -- the whole row is the hit area, not just the box
-    W.OnReady(function(s) s.Checkbox(box) end)
+    -- 12px box in a 20px row, EllesmereUI's own proportions.
+    local box = W.CheckMark(f, 12)
+    box.frame:SetPoint("LEFT", f, "LEFT", 6, 0)
 
     -- Anchored LEFT only, so the FontString sizes to its text. That is what
     -- lets a "?" marker sit immediately after the label instead of at the far
     -- side of the row -- a right anchor would stretch it across the width.
     local label = W.Font(f, 12, nil, W.TEXT_DIM_A)
-    label:SetPoint("LEFT", box, "RIGHT", 4, 0)
+    label:SetPoint("LEFT", box.frame, "RIGHT", 6, 0)
     label:SetJustifyH("LEFT")
 
     local o = { frame = f, checked = false, labelFS = label }
@@ -1000,6 +1039,15 @@ local function EnsureMenu()
     return menu
 end
 
+-- The check column, for menus whose items are checkable. The same W.CheckMark
+-- the settings rows use -- one rendering of "this is on" across the addon,
+-- rather than a menu-only glyph that would drift from it. It carries no hit
+-- area of its own: the whole row is the button, so there is one click target,
+-- not two that do the same thing.
+local function PaintCheck(item, on)
+    item._check:SetChecked(on)
+end
+
 local function EnsureMenuItem(index)
     if menuItems[index] then return menuItems[index] end
     local btn = CreateFrame("Button", nil, menuInner)
@@ -1016,9 +1064,11 @@ local function EnsureMenuItem(index)
     sel:Hide()
     btn._sel = sel
 
+    local check = W.CheckMark(btn, 12)
+    check.frame:SetPoint("LEFT", btn, "LEFT", 8, 0)
+    btn._check = check
+
     local fs = W.Font(btn, 12, nil, W.DD_TXT_A)
-    fs:SetPoint("LEFT", btn, "LEFT", 8, 0)
-    fs:SetPoint("RIGHT", btn, "RIGHT", -8, 0)
     fs:SetJustifyH("LEFT")
     btn._fs = fs
 
@@ -1035,7 +1085,86 @@ local function EnsureMenuItem(index)
     return btn
 end
 
-function W.Dropdown(parent, width)
+-- Applies one entry to a pooled item. Entries are
+--   { key, text, mode = "plain" | "check" | "header", checked, selected, onClick }
+-- and every field is re-applied on each open, because items are pooled by
+-- position and the item at index 3 is routinely a different thing (and a
+-- different MODE) than it was last time the menu opened.
+local CHECK_INDENT = 24
+
+local function ApplyMenuEntry(item, entry)
+    local mode = entry.mode or "plain"
+
+    item._fs:ClearAllPoints()
+    item._fs:SetPoint("LEFT", item, "LEFT", mode == "check" and CHECK_INDENT or 8, 0)
+    item._fs:SetPoint("RIGHT", item, "RIGHT", -8, 0)
+    item._fs:SetText(entry.text or "")
+    item._hl:Hide()
+    item._sel:SetShown(mode ~= "header" and entry.selected or false)
+
+    -- The box is present for every checkable item, empty or filled -- it is the
+    -- affordance that says the row is a toggle. Absent entirely for the other
+    -- two modes, which are not.
+    item._check.frame:SetShown(mode == "check")
+
+    if mode == "header" then
+        -- A caption, not a choice: mouse off, so it cannot be hovered or
+        -- clicked, and tinted like every other section title in the panel.
+        local r, g, b = W.Accent()
+        item._fs:SetTextColor(r, g, b, 0.9)
+        item:EnableMouse(false)
+        item:SetScript("OnClick", nil)
+        return
+    end
+
+    item._fs:SetTextColor(1, 1, 1, W.DD_TXT_A)
+    item:EnableMouse(true)
+    PaintCheck(item, mode == "check" and entry.checked)
+    item:SetScript("OnClick", function(self)
+        if entry.onClick then entry.onClick(self) end
+    end)
+end
+
+-- Opens the shared menu under `anchor`, populated from `entries`. Shared by
+-- both dropdown flavours: the single-select one closes on a click, the
+-- multi-select one does not, and that difference lives entirely in the
+-- entries' own onClick handlers rather than in two copies of this.
+local function OpenMenuAt(owner, anchor, entries)
+    EnsureMenu()
+    if menuOwner == owner and menu:IsShown() then
+        HideMenu()
+        return
+    end
+    HideMenu()
+    menuOwner = owner
+
+    local widest = anchor:GetWidth() or 0
+    local count = #entries
+    for i, entry in ipairs(entries) do
+        local item = EnsureMenuItem(i)
+        item:SetPoint("TOPLEFT", menuInner, "TOPLEFT", 0, -(MENU_PAD + (i - 1) * MENU_ITEM_H))
+        item:SetPoint("TOPRIGHT", menuInner, "TOPRIGHT", 0, -(MENU_PAD + (i - 1) * MENU_ITEM_H))
+        ApplyMenuEntry(item, entry)
+        item:Show()
+        local pad = (entry.mode == "check") and (CHECK_INDENT + 16) or 24
+        local w = (item._fs:GetStringWidth() or 0) + pad
+        if w > widest then widest = w end
+    end
+    for i = count + 1, #menuItems do menuItems[i]:Hide() end
+
+    menu:SetWidth(widest)
+    menu:SetHeight(MENU_PAD * 2 + count * MENU_ITEM_H)
+    menu:ClearAllPoints()
+    menu:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, -2)
+    menuCatcher:Show()
+    menu:Show()
+
+    if owner._onOpened then owner._onOpened() end
+end
+
+-- The closed-state chrome both dropdown flavours wear: house block, border,
+-- left-aligned text and a caret.
+local function BuildDropdownFace(parent, width)
     local f = CreateFrame("Button", nil, parent)
     f:SetHeight(22)
     f:SetWidth(width or 200)
@@ -1057,8 +1186,6 @@ function W.Dropdown(parent, width)
     caret:SetPoint("RIGHT", inner, "RIGHT", -8, 0)
     caret:SetText("\226\150\188") -- U+25BC
 
-    local o = { frame = f, list = {}, order = {} }
-
     local function Hover(on)
         local a = on and W.DD_TXT_HA or W.DD_TXT_A
         text:SetTextColor(1, 1, 1, a)
@@ -1066,46 +1193,30 @@ function W.Dropdown(parent, width)
     end
     f:SetScript("OnEnter", function() Hover(true) end)
     f:SetScript("OnLeave", function() Hover(false) end)
+    Hover(false)
+
+    return f, text
+end
+
+function W.Dropdown(parent, width)
+    local f, text = BuildDropdownFace(parent, width)
+
+    local o = { frame = f, list = {}, order = {} }
 
     local function OpenMenu()
-        EnsureMenu()
-        if menuOwner == o and menu:IsShown() then
-            HideMenu()
-            return
-        end
-        HideMenu()
-        menuOwner = o
-
-        local widest = f:GetWidth()
-        local count = 0
+        local entries = {}
         for i, key in ipairs(o.order) do
-            count = i
-            local item = EnsureMenuItem(i)
-            item:SetPoint("TOPLEFT", menuInner, "TOPLEFT", 0, -(MENU_PAD + (i - 1) * MENU_ITEM_H))
-            item:SetPoint("TOPRIGHT", menuInner, "TOPRIGHT", 0, -(MENU_PAD + (i - 1) * MENU_ITEM_H))
-            item._fs:SetText(o.list[key] or tostring(key))
-            item._sel:SetShown(key == o.value)
-            item._hl:Hide()
-            item._fs:SetTextColor(1, 1, 1, W.DD_TXT_A)
-            item:SetScript("OnClick", function()
-                o:SetValue(key)
-                HideMenu()
-                if o._onChange then o._onChange(key) end
-            end)
-            item:Show()
-            local w = (item._fs:GetStringWidth() or 0) + 24
-            if w > widest then widest = w end
+            entries[i] = {
+                text = o.list[key] or tostring(key),
+                selected = (key == o.value),
+                onClick = function()
+                    o:SetValue(key)
+                    HideMenu()
+                    if o._onChange then o._onChange(key) end
+                end,
+            }
         end
-        for i = count + 1, #menuItems do menuItems[i]:Hide() end
-
-        menu:SetWidth(widest)
-        menu:SetHeight(MENU_PAD * 2 + count * MENU_ITEM_H)
-        menu:ClearAllPoints()
-        menu:SetPoint("TOPLEFT", f, "BOTTOMLEFT", 0, -2)
-        menuCatcher:Show()
-        menu:Show()
-
-        if o._onOpened then o._onOpened() end
+        OpenMenuAt(o, f, entries)
     end
 
     f:SetScript("OnClick", OpenMenu)
@@ -1135,7 +1246,219 @@ function W.Dropdown(parent, width)
     function o:SetOnClosed(fn) o._onClosed = fn end
     function o:IsOpen() return menuOwner == o and menu and menu:IsShown() end
 
-    Hover(false)
+    return o
+end
+
+-- ── Multi-select dropdown ───────────────────────────────────────────────────
+-- The same face as a dropdown, but every item carries a tick and clicking one
+-- toggles it WITHOUT closing the menu -- so picking four widgets is four
+-- clicks, not four open/close cycles. EllesmereUI's data bar picks its blocks
+-- this way and it is the right shape here for the same reason: the question
+-- is "which of these", not "which one".
+--
+-- It also removes a whole class of layout churn. The list this replaced put
+-- one panel row per registered broker, so ticking a box changed the number of
+-- rows in the section and forced a rebuild of it -- with the third-party fold
+-- expanded that was a dozen rows appearing and disappearing under the cursor.
+-- Here the choices live in a popup and the panel's own shape never moves.
+--
+-- `items` is an ordered array of { key, text, header = true }. Headers are
+-- captions, not choices, which is what lets one menu carry "AniMods" and
+-- "Other addons" groups without a second control to expand either.
+function W.MultiSelect(parent, width)
+    local f, text = BuildDropdownFace(parent, width)
+
+    local o = { frame = f, items = {} }
+
+    local function OpenMenu()
+        local entries = {}
+        for i, item in ipairs(o.items) do
+            if item.header then
+                entries[i] = { mode = "header", text = item.text }
+            else
+                local key = item.key
+                entries[i] = {
+                    mode = "check",
+                    text = item.text,
+                    checked = o._isChecked and o._isChecked(key) or false,
+                    -- Repaints the tick on the clicked item in place. The menu
+                    -- stays open, so nothing else re-reads the state -- and a
+                    -- full repopulate here would rebuild the very item whose
+                    -- OnClick is still running.
+                    onClick = function(menuItem)
+                        local on = not (o._isChecked and o._isChecked(key))
+                        if o._onToggle then o._onToggle(key, on) end
+                        PaintCheck(menuItem, on)
+                    end,
+                }
+            end
+        end
+        OpenMenuAt(o, f, entries)
+    end
+
+    f:SetScript("OnClick", OpenMenu)
+    f:SetScript("OnHide", function()
+        if menuOwner == o then HideMenu() end
+    end)
+
+    function o:SetItems(items) o.items = items or {} end
+    function o:SetIsChecked(fn) o._isChecked = fn end
+    function o:SetOnToggle(fn) o._onToggle = fn end
+    function o:SetText(t) text:SetText(t or "") end
+    function o:SetOnOpened(fn) o._onOpened = fn end
+    function o:SetOnClosed(fn) o._onClosed = fn end
+    function o:IsOpen() return menuOwner == o and menu and menu:IsShown() end
+
+    return o
+end
+
+-- ── Order strip ─────────────────────────────────────────────────────────────
+-- A live preview of the data bar: one cell per widget, in bar order, dragged
+-- to reorder.
+--
+-- Cells are EQUAL WIDTH and fill the strip, because that is exactly what the
+-- bar does with them -- so this is a scale model of the result rather than a
+-- list that happens to be horizontal. Long names truncate here for the same
+-- reason they truncate there.
+--
+-- Equal width also makes the drag stable. Cells sized to their own text would
+-- re-flow on every swap, sliding the neighbours out from under the cursor and
+-- triggering the next swap on their own -- a single drag could cascade through
+-- the whole strip. Uniform cells never move when their contents change.
+--
+-- The drag is a SWAP, not a floating ghost: press on a cell, move over another,
+-- and the two exchange places. That needs no OnUpdate to follow the cursor --
+-- moving over a cell is an OnEnter, which is the event that does the work.
+-- Nothing here polls.
+local CHIP_H = 20
+local CHIP_GAP = 3
+local CHIP_MIN_W = 30
+
+function W.OrderStrip(parent)
+    local f = CreateFrame("Frame", nil, parent)
+    f:SetHeight(CHIP_H)
+
+    local o = { frame = f, chips = {}, order = {}, labels = {} }
+    local dragging = nil   -- INDEX being dragged, not a name: cells are pooled
+                           -- by position and hold whatever is at that position.
+
+    local empty = W.Font(f, 12, nil, W.TEXT_DIM_A)
+    empty:SetPoint("LEFT", f, "LEFT", 4, 0)
+    empty:SetText("No widgets on the bar")
+
+    local function Paint(chip)
+        if not chip._index then return end
+        if dragging == chip._index then
+            local r, g, b = W.Accent()
+            chip.bg:SetColorTexture(r, g, b, 0.35)
+            chip.fs:SetTextColor(1, 1, 1, 1)
+        elseif chip:IsMouseOver() then
+            chip.bg:SetColorTexture(1, 1, 1, 0.14)
+            chip.fs:SetTextColor(1, 1, 1, 1)
+        else
+            chip.bg:SetColorTexture(1, 1, 1, 0.08)
+            chip.fs:SetTextColor(1, 1, 1, W.TEXT_DIM_A)
+        end
+    end
+
+    local function PaintAll()
+        for _, chip in ipairs(o.chips) do
+            if chip:IsShown() then Paint(chip) end
+        end
+    end
+
+    local Layout
+
+    local function Swap(a, b)
+        o.order[a], o.order[b] = o.order[b], o.order[a]
+        -- The dragged item is now at `b`, so the drag follows it there. Without
+        -- this the next OnEnter would compare against a stale index and swap
+        -- the wrong pair.
+        dragging = b
+        Layout()
+        -- Applied as it happens rather than on drop, so the real bar reorders
+        -- under the cursor. Deliberately does NOT refresh the panel: that would
+        -- rebuild this strip mid-drag and the cell holding the drag would go
+        -- away before its OnDragStop could fire.
+        if o._onReorder then o._onReorder(o.order) end
+    end
+
+    local function EnsureChip(index)
+        local chip = o.chips[index]
+        if chip then return chip end
+
+        chip = CreateFrame("Button", nil, f)
+        chip:SetHeight(CHIP_H)
+        chip:RegisterForDrag("LeftButton")
+
+        chip.bg = W.Tex(chip, "BACKGROUND", 1, 1, 1, 0.08)
+        chip.bg:SetAllPoints()
+
+        chip.fs = W.Font(chip, 11, nil, W.TEXT_DIM_A)
+        chip.fs:SetPoint("CENTER")
+        chip.fs:SetJustifyH("CENTER")
+        chip.fs:SetWordWrap(false)
+
+        chip:SetScript("OnDragStart", function(self)
+            dragging = self._index
+            PaintAll()
+        end)
+        chip:SetScript("OnDragStop", function()
+            dragging = nil
+            PaintAll()
+            -- One panel refresh, at the end of the gesture.
+            if o._onDrop then o._onDrop(o.order) end
+        end)
+        chip:SetScript("OnEnter", function(self)
+            if dragging and dragging ~= self._index then
+                Swap(dragging, self._index)
+            end
+            PaintAll()
+        end)
+        chip:SetScript("OnLeave", PaintAll)
+
+        o.chips[index] = chip
+        return chip
+    end
+
+    Layout = function()
+        local n = #o.order
+        empty:SetShown(n == 0)
+
+        local total = f:GetWidth() or 0
+        -- Before the panel has resolved a width there is nothing to divide;
+        -- RelayoutContent runs again once it has.
+        local cellW = (n > 0) and math.max(CHIP_MIN_W, (total - CHIP_GAP * (n - 1)) / n) or 0
+
+        for i = 1, n do
+            local chip = EnsureChip(i)
+            chip._index = i
+            chip.fs:SetText(o.labels[o.order[i]] or o.order[i])
+            chip.fs:SetWidth(math.max(cellW - 8, 1))
+            chip:ClearAllPoints()
+            chip:SetPoint("LEFT", f, "LEFT", (i - 1) * (cellW + CHIP_GAP), 0)
+            chip:SetWidth(cellW)
+            chip:Show()
+            Paint(chip)
+        end
+        for i = n + 1, #o.chips do
+            o.chips[i]:Hide()
+            o.chips[i]._index = nil
+        end
+    end
+
+    -- Ignored while a drag is in flight: the panel refreshing underneath a
+    -- gesture would replace the order being edited with the one it was read
+    -- from.
+    function o:SetList(order, labels)
+        if dragging then return end
+        o.order, o.labels = order or {}, labels or {}
+        Layout()
+    end
+    function o:Relayout() if not dragging then Layout() end end
+    function o:SetOnReorder(fn) o._onReorder = fn end
+    function o:SetOnDrop(fn) o._onDrop = fn end
+
     return o
 end
 

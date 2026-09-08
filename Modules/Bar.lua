@@ -66,8 +66,8 @@ local Bar = {
 local LDB_NAME = "LibDataBroker-1.1"
 
 local BAR_H       = 22
-local ITEM_GAP    = 14
-local EDGE_PAD    = 10
+local EDGE_PAD    = 6
+local SLOT_PAD    = 4    -- breathing room inside a widget's own slot
 local FONT_SIZE   = 12
 local ICON_SIZE   = 14
 local ICON_GAP    = 3    -- between a plugin's icon and its text
@@ -80,49 +80,66 @@ local WATCHED = {
     icon = true, iconR = true, iconG = true, iconB = true, iconCoords = true,
 }
 
--- Alignment sections, laid out independently: left anchors from the bar's
--- left edge, right from its right, centre is centred on the whole bar. This
--- is why the bar has an explicit width rather than hugging its content --
--- "right-aligned" is meaningless on a frame that shrinks to fit.
--- No "hidden" entry: whether a widget is on the bar is the checkbox's job
--- now, so this dropdown only answers where.
-local SECTION_LABEL = { left = "Left", center = "Center", right = "Right" }
-local SECTION_ORDER = { "left", "center", "right" }
-
 local bar, itemHost
-local items = {}          -- objName -> { button, fs, icon, text, hasIcon }
+local items = {}          -- objName -> { button, fs, icon, text, hasIcon, textW }
 local ldb
-local shown = {}          -- objName -> "left" | "center" | "right"
+local enabled = {}        -- objName -> true, a lookup over db.order
 local dirty = false
 
+-- ---------------------------------------------------------------------------
+-- Settings
+-- ---------------------------------------------------------------------------
+
+-- ONE ordered list is the whole widget model: membership means the widget is
+-- on the bar, and position means where. It replaced a `widgets` map of name ->
+-- "left"/"center"/"right", which needed two controls per widget (a switch and
+-- an alignment) and still could not express "this one before that one".
 local function ModuleDB()
     AniModsDB.bar = AniModsDB.bar or {}
     local db = AniModsDB.bar
-    if db.widgets == nil then db.widgets = {} end
+
+    -- Migration off the old per-widget alignment map. Sections are read in
+    -- left/centre/right order and each sorted by name, which lands every widget
+    -- in the position it was already displayed at -- so an existing bar looks
+    -- the same after the upgrade, just reorderable.
+    if db.widgets and not db.order then
+        local order = {}
+        for _, section in ipairs({ "left", "center", "right" }) do
+            local group = {}
+            for name, value in pairs(db.widgets) do
+                -- `true` was the even older boolean form, which meant "on".
+                if value == true or value == section then group[#group + 1] = name end
+            end
+            table.sort(group)
+            for _, name in ipairs(group) do order[#order + 1] = name end
+        end
+        db.order = order
+        db.widgets = nil
+    end
+    db.order = db.order or {}
+
     -- Unlocked by default: a bar you just switched on has to be positionable
     -- without hunting for the setting that allows it. Lock it once it is
     -- where you want it.
     if db.locked == nil then db.locked = false end
     if db.showIcons == nil then db.showIcons = true end
-    -- Off by default: AniMods' own brokers colour their text deliberately
-    -- (role counts, guild vs friends), and stripping would throw that away.
-    -- It exists for third-party plugins whose palette clashes with the bar.
-    if db.stripColors == nil then db.stripColors = false end
-    if db.maxWidth == nil then db.maxWidth = 0 end   -- 0 = unclamped
     if db.width == nil then db.width = 500 end
+
+    -- Dropped settings, cleared rather than left to rot in the saved variables.
+    -- `stripColors` discarded the meaning AniMods' own brokers put in their
+    -- colours; `maxWidth` capped a widget's width, which equal division now
+    -- does by construction -- every widget gets exactly its share and its text
+    -- truncates to fit, so there is nothing left for a manual cap to do.
+    db.stripColors = nil
+    db.maxWidth = nil
+    db.showOthers = nil
+
     return db
 end
 
--- Widget placement. Stored per broker name as a section string; `false` or
--- absent means hidden.
---
--- Migration: this setting used to be a boolean. `true` becomes "left", which
--- reproduces the previous single-row layout exactly.
-local function WidgetSection(name)
-    local v = ModuleDB().widgets[name]
-    if v == true then return "left" end
-    if type(v) == "string" and SECTION_LABEL[v] and v ~= "hidden" then return v end
-    return nil
+local function RebuildEnabledLookup()
+    wipe(enabled)
+    for _, name in ipairs(ModuleDB().order) do enabled[name] = true end
 end
 
 local function IsLocked()
@@ -142,32 +159,21 @@ end
 -- it hides the real problem, which was that a plugin publishing only an ICON
 -- looked identical to a broken one. Icons are rendered separately below; an
 -- empty string here is a legitimate answer, and the icon carries the slot.
--- Broker text arrives carrying the plugin's own colour codes, which override
--- anything the bar would apply. Stripping hands the colour back to the bar;
--- leaving them keeps the plugin's palette. Both escape forms are handled --
--- the literal |cAARRGGBB and the named |cnCOLOR_NAME: variant.
-local function StripColors(str)
-    if not str then return str end
-    str = str:gsub("|c%x%x%x%x%x%x%x%x", "")
-    str = str:gsub("|cn[%a%d_]+:", "")
-    str = str:gsub("|r", "")
-    return str
-end
-
+-- Each plugin's own colour codes are left exactly as published. There was a
+-- "Strip plugin colors" setting; it went because the colours carry meaning
+-- rather than decoration -- GroupRoles tints by role, SocialStatus by guild
+-- versus friends -- so stripping them silently deleted information from the
+-- bar to solve a palette clash that a widget can be switched off to solve.
 local function ItemText(obj)
     if not obj then return "" end
-    local str
     local t = obj.text
-    if type(t) == "string" and t ~= "" then
-        str = t
-    else
-        local v = obj.value
-        if v == nil then return "" end
-        str = tostring(v)
-        local suffix = obj.suffix
-        if type(suffix) == "string" and suffix ~= "" then str = str .. " " .. suffix end
-    end
-    if ModuleDB().stripColors then str = StripColors(str) end
+    if type(t) == "string" and t ~= "" then return t end
+
+    local v = obj.value
+    if v == nil then return "" end
+    local str = tostring(v)
+    local suffix = obj.suffix
+    if type(suffix) == "string" and suffix ~= "" then str = str .. " " .. suffix end
     return str
 end
 
@@ -246,42 +252,69 @@ local function EnsureItem(name)
     return it
 end
 
--- Measures one item and positions its icon/text within its own button.
--- Returns the width the slot occupies.
-local function SizeItem(it)
+-- Natural width of one item's content, and the text width cached alongside it.
+-- Measured unconstrained (width 0 = size to content), because a FontString
+-- that is still carrying last layout's clamp would otherwise report that clamp
+-- back as its own width and the slot would ratchet smaller every pass.
+local function MeasureItem(it)
+    it.fs:SetWidth(0)
     local textW = it.fs:GetStringWidth() or 0
-
-    it.fs:ClearAllPoints()
+    it.textW = textW
     if it.hasIcon then
-        it.fs:SetPoint("LEFT", it.icon, "RIGHT", textW > 0 and ICON_GAP or 0, 0)
-    else
-        it.fs:SetPoint("LEFT")
+        return ICON_SIZE + (textW > 0 and ICON_GAP or 0) + textW
     end
-
-    local w = textW
-    if it.hasIcon then
-        w = ICON_SIZE + (textW > 0 and ICON_GAP or 0) + textW
-    end
-
-    -- Max Width clamp. Broker text has no shape we can predict -- a plugin can
-    -- decide to publish a whole sentence -- so this stops one widget pushing
-    -- every other off the bar. The FontString is given the remaining width and
-    -- has word wrap off, so it ellipsizes rather than wrapping into the row
-    -- below.
-    local maxW = ModuleDB().maxWidth or 0
-    if maxW > 0 and w > maxW then
-        w = maxW
-        local avail = maxW - (it.hasIcon and (ICON_SIZE + ICON_GAP) or 0)
-        it.fs:SetWidth(math.max(avail, 1))
-    else
-        it.fs:SetWidth(0)   -- 0 = size to content
-    end
-
-    it.button:SetWidth(math.max(w, 1))
-    return w
+    return textW
 end
 
--- Lays the chosen widgets into their three alignment sections.
+-- Places one item in a slot of exactly `slotW`, its content centred.
+local function PlaceItem(it, x, slotW)
+    local textW = it.textW or 0
+    local iconW = it.hasIcon and (ICON_SIZE + (textW > 0 and ICON_GAP or 0)) or 0
+
+    -- Text truncates to whatever the slot leaves it. Word wrap is off (set at
+    -- construction), so a constrained FontString ellipsizes rather than growing
+    -- a second line and overflowing the bar's height.
+    local avail = slotW - SLOT_PAD * 2
+    if iconW + textW > avail then
+        textW = math.max(avail - iconW, 1)
+        it.fs:SetWidth(textW)
+    else
+        it.fs:SetWidth(0)
+    end
+
+    it.button:ClearAllPoints()
+    it.button:SetPoint("LEFT", itemHost, "LEFT", x, 0)
+    it.button:SetWidth(math.max(slotW, 1))
+
+    local startX = math.max((slotW - (iconW + textW)) / 2, 0)
+    if it.hasIcon then
+        it.icon:ClearAllPoints()
+        it.icon:SetPoint("LEFT", it.button, "LEFT", startX, 0)
+        it.fs:ClearAllPoints()
+        it.fs:SetPoint("LEFT", it.icon, "RIGHT", textW > 0 and ICON_GAP or 0, 0)
+    else
+        it.fs:ClearAllPoints()
+        it.fs:SetPoint("LEFT", it.button, "LEFT", startX, 0)
+    end
+    it.button:Show()
+end
+
+-- Lays the chosen widgets out in equal shares of the bar.
+--
+-- This is EllesmereUIDataBars' "even" sizing mode (its SolveLayout, sizingMode
+-- == "even"), and copying it settled two things at once. Positions stopped
+-- needing a per-widget setting -- with fixed shares, ORDER is the only spatial
+-- choice left, which is what made a drag-to-reorder preview possible. And a
+-- widget can no longer push its neighbours off the bar, which is what the
+-- "Max widget width" cap existed to prevent; each one is bounded by its share.
+--
+-- Two details taken from EUI's solver rather than reinvented:
+--   * Cumulative rounding. Each edge is computed from the START of the bar
+--     (k * L / n) instead of adding a rounded width per widget, so the
+--     fractional pixels telescope and the last slot lands exactly on the far
+--     edge instead of a rounding error short of it.
+--   * A widget measuring zero takes no share. A plugin that publishes nothing
+--     right now would otherwise hold an empty column of bar open.
 --
 -- Only called when the SET of widgets or their WIDTHS change, never on a
 -- plain text update that happens to be the same length -- see Refresh below.
@@ -292,52 +325,27 @@ local function Relayout()
     bar:SetWidth(math.max(db.width or 500, 80))
     bar:SetHeight(BAR_H)
 
-    -- Bucket by section, each bucket sorted so order is stable across
-    -- sessions -- pairs() order is not.
-    local buckets = { left = {}, center = {}, right = {} }
-    for name, section in pairs(shown) do
-        local b = buckets[section]
-        if b and items[name] then b[#b + 1] = name end
-    end
-    for _, b in pairs(buckets) do table.sort(b) end
-
-    -- Total width of a bucket, including the gaps between its members.
-    local function Measure(b)
-        local total = 0
-        for i, name in ipairs(b) do
-            total = total + SizeItem(items[name])
-            if i > 1 then total = total + ITEM_GAP end
-        end
-        return total
+    local live = {}
+    for _, name in ipairs(db.order) do
+        local it = items[name]
+        if it and MeasureItem(it) > 0 then live[#live + 1] = it end
     end
 
-    -- Every bucket must be measured, because Measure is also what sizes each
-    -- button. The left section's own total is not needed for placement -- it
-    -- starts at a fixed inset -- so it is not bound.
-    Measure(buckets.left)
-    local centerW = Measure(buckets.center)
-    local rightW = Measure(buckets.right)
-
-    local function Place(b, startX)
-        local x = startX
-        for _, name in ipairs(b) do
-            local it = items[name]
-            it.button:ClearAllPoints()
-            it.button:SetPoint("LEFT", itemHost, "LEFT", x, 0)
-            it.button:Show()
-            x = x + (it.button:GetWidth() or 0) + ITEM_GAP
-        end
+    local L = (bar:GetWidth() or 0) - EDGE_PAD * 2
+    local n = #live
+    local prevEdge = 0
+    for k = 1, n do
+        local edge = math.floor(k * L / n + 0.5)
+        PlaceItem(live[k], EDGE_PAD + prevEdge, edge - prevEdge)
+        prevEdge = edge
     end
 
-    local barW = bar:GetWidth() or 0
-    Place(buckets.left, EDGE_PAD)
-    Place(buckets.center, (barW - centerW) / 2)
-    Place(buckets.right, barW - EDGE_PAD - rightW)
-
-    -- Anything not currently placed is hidden, including items whose section
-    -- was just cleared.
-    for name, it in pairs(items) do
-        if not shown[name] then it.button:Hide() end
+    -- Anything not placed is hidden: widgets just switched off, and widgets
+    -- that measured zero this pass.
+    local placed = {}
+    for _, it in ipairs(live) do placed[it] = true end
+    for _, it in pairs(items) do
+        if not placed[it] then it.button:Hide() end
     end
 end
 
@@ -349,7 +357,7 @@ local function Refresh()
     if not (bar and ldb) then return end
 
     local widthChanged = false
-    for name in pairs(shown) do
+    for _, name in ipairs(ModuleDB().order) do
         local obj = ldb:GetDataObjectByName(name)
         local it = EnsureItem(name)
         if it then
@@ -395,9 +403,9 @@ end
 -- assignment. Same one-shot-per-burst helper the modules use.
 local QueueRefresh
 
--- Declared before use: SetWidgetShown calls it, and it is defined below with
--- the rest of the frame handling. Without this the call would resolve to a
--- global read and silently do nothing.
+-- Declared before use: SetWidgetEnabled and SetOrder call it, and it is defined
+-- below with the rest of the frame handling. Without this the call would
+-- resolve to a global read and silently do nothing.
 local ApplyVisibility
 
 -- Applies the lock to the live frame. EnableMouse stays ON either way: the
@@ -413,14 +421,39 @@ local function ApplyLock()
     end
 end
 
-local function SetWidgetSection(name, section)
-    ModuleDB().widgets[name] = section or false
-    shown[name] = section
-    -- Goes through ApplyVisibility rather than calling Refresh/Relayout
-    -- directly: the bar may not have been built yet (it is off by default, and
-    -- widgets can be ticked before it is switched on), and EnsureItem needs
-    -- its host to exist or it produces an unparented button that is then
-    -- cached forever.
+-- Everything below goes through ApplyVisibility rather than calling
+-- Refresh/Relayout directly: the bar may not have been built yet (it is off by
+-- default, and widgets can be ticked before it is switched on), and EnsureItem
+-- needs its host to exist or it produces an unparented button that is then
+-- cached forever.
+
+-- Appends when switched on, so a newly ticked widget lands at the end of the
+-- bar where the eye is already looking for it, rather than somewhere in the
+-- middle decided by an alphabetical rule.
+local function SetWidgetEnabled(name, on)
+    local order = ModuleDB().order
+    for i, existing in ipairs(order) do
+        if existing == name then
+            if on then return end
+            table.remove(order, i)
+            RebuildEnabledLookup()
+            ApplyVisibility()
+            return
+        end
+    end
+    if not on then return end
+    order[#order + 1] = name
+    RebuildEnabledLookup()
+    ApplyVisibility()
+end
+
+-- Takes the order the preview strip arrived at. The strip owns the array while
+-- a drag is in flight, so this stores what it hands back rather than trying to
+-- reconcile two copies.
+local function SetOrder(order)
+    local db = ModuleDB()
+    db.order = order
+    RebuildEnabledLookup()
     ApplyVisibility()
 end
 
@@ -491,10 +524,53 @@ local function AllBrokerNames()
     return out
 end
 
+-- How one broker is named in the picker.
+--
+-- The registered NAME leads, and a self-declared label rides along in grey
+-- ONLY when it differs -- EllesmereUIDataBars' rule (its ns.LDBLabel), and
+-- worth copying exactly, because the version here got both halves wrong. It
+-- led with the label and put the name beside it as a `note`, which is for a
+-- qualifier about the row rather than a second name for the same thing; and it
+-- printed both unconditionally, so every plugin whose label matches its name
+-- -- BigWigs, Myslot -- rendered its own name twice in a row, once in white
+-- and once in accent.
+--
+-- The name leads because the name is what identifies the object everywhere
+-- else: it is the key this bar stores, and the string to look for in any other
+-- data bar's widget list.
+local function BrokerLabel(name, obj)
+    local label = obj and obj.label
+    if type(label) == "string" and label ~= "" and label ~= name then
+        return name .. "  |cff808080" .. label .. "|r"
+    end
+    return name
+end
+
+-- Short form for the preview strip's cells, which are narrow and already
+-- ordered: the friendly label when a plugin offers one, else its name.
+local function BrokerShortLabel(name, obj)
+    local label = obj and obj.label
+    if type(label) == "string" and label ~= "" then return label end
+    return name
+end
+
+-- Deliberately short. This is a bar for people who do not have a data bar, so
+-- its settings are the ones without which it cannot be used at all: where it
+-- sits, how wide it is, and what is on it. Everything else was removed rather
+-- than kept "in case" -- a lightweight bar with a heavyweight options tab is
+-- not lightweight.
+--
+-- What went, and why none of it is missed:
+--   * Per-widget position. Equal division decides placement, so only ORDER is
+--     left to choose, and the preview strip below is where that is done.
+--   * Max widget width. Each widget is bounded by its share already.
+--   * Strip plugin colors. It deleted meaning to solve a palette clash.
+--   * Per-widget settings behind a gear. There is nothing left to put in one:
+--     a widget is either on the bar or it is not.
 function Bar:GetInfoRows()
     local rows = {}
 
-    rows[#rows + 1] = { section = "Appearance" }
+    rows[#rows + 1] = { section = "Bar" }
     rows[#rows + 1] = {
         label = "Lock position",
         help  = "Stops the bar being dragged.",
@@ -523,98 +599,75 @@ function Bar:GetInfoRows()
             Relayout()
         end,
     }
-    rows[#rows + 1] = {
-        label = "Strip plugin colors",
-        help  = "Ignore each plugin's own text color. AniMods' widgets use color "
-             .. "to carry meaning, so this discards that too.",
-        get   = function() return ModuleDB().stripColors == true end,
-        set   = function(v)
-            ModuleDB().stripColors = v and true or false
-            -- Text is cached per item for the dirty check, so it has to be
-            -- invalidated or the re-render is a no-op.
-            for _, it in pairs(items) do it.text = nil end
-            dirty = true
-            Refresh()
-            Relayout()
-        end,
-    }
-    rows[#rows + 1] = {
-        label = "Max widget width",
-        note  = "0 = unlimited",
-        help  = "Caps a single widget's width. Longer text is truncated.",
-        min   = 0, max = 400, step = 10,
-        get   = function() return ModuleDB().maxWidth or 0 end,
-        set   = function(v)
-            ModuleDB().maxWidth = v
-            Relayout()
-        end,
-    }
 
-    -- Widgets: AniMods' own first, then everyone else's behind a fold.
+    -- Widgets: the preview first, the picker under it.
     --
-    -- Ours are the ones you came here to arrange, and on a busy install they
-    -- were buried alphabetically among a dozen third-party brokers. Splitting
-    -- them also lets the long list start collapsed, which is what keeps this
-    -- tab a readable length.
-    local function WidgetRows(name, obj)
-        local out = {}
-        -- On/off is a checkbox rather than a four-way section dropdown: the
-        -- question "is this on the bar" is a different one from "where", and
-        -- answering both through one control meant Hidden was a position.
-        out[#out + 1] = {
-            label = (obj and obj.label) or name,
-            note  = ((obj and obj.label) and name) or nil,
-            get   = function() return WidgetSection(name) ~= nil end,
-            set   = function(v) SetWidgetSection(name, v and "left" or nil) end,
-        }
-        -- Position follows the switch, and only while it is on -- an alignment
-        -- for something not on the bar is noise.
-        if WidgetSection(name) then
-            out[#out + 1] = {
-                label   = "Position",
-                options = SECTION_LABEL,
-                order   = SECTION_ORDER,
-                get     = function() return WidgetSection(name) or "left" end,
-                set     = function(v) SetWidgetSection(name, v) end,
-            }
-        end
-        return out
-    end
+    -- That order matches EllesmereUIDataBars' own config, and it is the right
+    -- way round -- the strip is the thing being edited, and the picker is how
+    -- rows get into it. It also puts the answer to "what is on my bar" at the
+    -- top rather than at the end of a list of everything installed.
+    local db = ModuleDB()
+    local names = AllBrokerNames()
 
     local mine, others = {}, {}
-    for _, name in ipairs(AllBrokerNames()) do
+    for _, name in ipairs(names) do
         local list = name:match("^AniMods") and mine or others
         list[#list + 1] = name
     end
 
     rows[#rows + 1] = { section = "Widgets" }
-    if #mine == 0 and #others == 0 then
+
+    if #names == 0 then
         rows[#rows + 1] = { label = "Plugins", value = "None registered" }
-    end
-    for _, name in ipairs(mine) do
-        for _, r in ipairs(WidgetRows(name, ldb:GetDataObjectByName(name))) do
-            rows[#rows + 1] = r
-        end
+        return rows
     end
 
-    if #others > 0 then
-        rows[#rows + 1] = { section = ("Other addons (%d)"):format(#others) }
-        rows[#rows + 1] = {
-            label = "Show these widgets",
-            get   = function() return ModuleDB().showOthers == true end,
-            set   = function(v)
-                ModuleDB().showOthers = v and true or false
-                if AniMods.RefreshUI then AniMods.RefreshUI() end
-            end,
-        }
-        if ModuleDB().showOthers then
-            for _, name in ipairs(others) do
-                for _, r in ipairs(WidgetRows(name, ldb:GetDataObjectByName(name))) do
-                    rows[#rows + 1] = r
-                end
-            end
+    local labels = {}
+    for _, name in ipairs(db.order) do
+        labels[name] = BrokerShortLabel(name, ldb and ldb:GetDataObjectByName(name))
+    end
+
+    rows[#rows + 1] = {
+        strip  = db.order,
+        labels = labels,
+        -- Applied live, so the bar itself reorders under the cursor.
+        onReorder = SetOrder,
+        onDrop    = SetOrder,
+    }
+
+    -- One menu, two groups: AniMods' own widgets first because they are what
+    -- this bar is for, then everyone else's under a caption. Grouping inside
+    -- the menu is what removed the need for a separate expander -- the long
+    -- list is already behind one click, and the panel's own height no longer
+    -- depends on how many brokers happen to be installed.
+    local picker = {}
+    local function AddGroup(header, list)
+        if #list == 0 then return end
+        picker[#picker + 1] = { header = true, text = header }
+        for _, name in ipairs(list) do
+            picker[#picker + 1] = {
+                key = name,
+                text = BrokerLabel(name, ldb and ldb:GetDataObjectByName(name)),
+            }
         end
     end
+    AddGroup("AniMods", mine)
+    AddGroup(("Other addons (%d)"):format(#others), others)
+
+    local function Summary()
+        return ("%d of %d"):format(#ModuleDB().order, #names)
+    end
+
+    rows[#rows + 1] = {
+        label     = "Show widgets",
+        help      = "Pick which data broker widgets appear on the bar. Drag the "
+                 .. "preview above to reorder them.",
+        picker    = picker,
+        summary   = Summary(),
+        summarize = Summary,
+        isChecked = function(name) return enabled[name] == true end,
+        onToggle  = SetWidgetEnabled,
+    }
 
     return rows
 end
@@ -627,12 +680,9 @@ function Bar:Enable()
         if dirty then Refresh() end
     end)
 
-    -- WidgetSection also performs the boolean -> section migration, so a
-    -- saved `true` from before alignment sections existed comes back as
-    -- "left" and the bar looks exactly as it did.
-    for name in pairs(ModuleDB().widgets) do
-        shown[name] = WidgetSection(name)
-    end
+    -- ModuleDB() performs the alignment-map -> ordered-list migration on first
+    -- touch, so this also settles what a pre-upgrade bar shows.
+    RebuildEnabledLookup()
 
     -- The two disables below are for the WoW API annotations, not for a real
     -- problem: they declare RegisterCallback's third argument as a method-NAME
@@ -650,7 +700,7 @@ function Bar:Enable()
     -- is why the first parameter is discarded.
     ---@diagnostic disable-next-line: param-type-mismatch
     ldb.RegisterCallback(self, "LibDataBroker_AttributeChanged", function(_, name, key)
-        if not shown[name] then return end
+        if not enabled[name] then return end
         if key and not WATCHED[key] then return end
         dirty = true
         QueueRefresh()
@@ -660,7 +710,7 @@ function Bar:Enable()
     -- for PLAYER_LOGIN as AniMods' own modules do) has to be able to appear.
     ---@diagnostic disable-next-line: param-type-mismatch
     ldb.RegisterCallback(self, "LibDataBroker_DataObjectCreated", function(_, name)
-        if not shown[name] then return end
+        if not enabled[name] then return end
         EnsureItem(name)
         dirty = true
         QueueRefresh()
@@ -673,8 +723,8 @@ end
 --
 -- This module can, where most cannot, because everything it owns is its own:
 -- one frame it created, and LDB callbacks that are cheap no-ops while the bar
--- is hidden (the handler returns immediately once `shown` is empty of visible
--- work). It installs no hooks on anyone else's frames and registers no data
+-- is hidden (the handler returns immediately for any broker not in `enabled`).
+-- It installs no hooks on anyone else's frames and registers no data
 -- object of its own -- the two things that cannot be undone.
 function Bar:SetEnabled(on)
     if on then

@@ -97,28 +97,33 @@ module registry:
 local MyFeature = {
     title        = "My Feature",              -- optional, defaults to the registered name
     description  = "One-line summary shown in the status panel.",
-    -- Optional: an ordered checklist shown as an always-visible "Depends on:"
-    -- block in the detail pane -- distinct from the condition table below,
-    -- which is machine-checked and only surfaces a reason when it currently
-    -- fails. `met` is an optional live predicate; a green/red dot reflects it
-    -- each refresh; omit `met` for a purely informational line (e.g. "None").
-    dependencies = {
-        { text = "SomeAddon loaded", met = function() return AniMods.IsAddOnLoaded("SomeAddon") end },
-    },
 
-    -- Optional: gates whether Enable() runs at all. Evaluated once at PLAYER_LOGIN,
-    -- so IsAddOnLoaded() checks against *other* addons are reliable no matter the
-    -- load order.
-    condition = {
-        requires = { "SomeAddon", { name = "OtherAddon", minVersion = "2.0.0" } },
-        forbids  = { "ConflictingAddon" },
-        check    = function() return true end, -- arbitrary extra predicate, ANDed in
+    -- Optional: gates whether Enable() runs at all, and renders as the panel's
+    -- "Conditions" card -- one row per entry with a Met / Not met badge, so
+    -- "why is this inactive" is answered by a column of colours rather than
+    -- prose. Evaluated at PLAYER_LOGIN, so IsAddOnLoaded() checks against
+    -- *other* addons are reliable no matter the load order.
+    --
+    -- Each `text` is phrased as a STATEMENT that is true or false, which is
+    -- what makes the badge read correctly against it. An entry with no `met`
+    -- never fails.
+    conditions = {
+        -- Required (the default): unmet means the module cannot run.
+        { text = "SomeAddon installed",
+          help = "The long explanation, revealed by the row's ? marker.",
+          met  = function() return AniMods.IsAddOnLoaded("SomeAddon") end },
+
+        -- Soft: unmet still deactivates, but the panel offers "Run anyway"
+        -- (requires `forceable = true` on the module).
+        { text = "No other data bar", soft = true,
+          met  = function() return not AniMods.IsAddOnLoaded("Titan") end },
     },
+    forceable = true,
 }
 
 function MyFeature:Enable()
-    -- hook stuff, create frames, etc. Only called if condition passed AND the
-    -- module is user-enabled.
+    -- hook stuff, create frames, etc. Only called if the conditions passed AND
+    -- the module is user-enabled.
 end
 
 AniMods.RegisterModule("MyFeature", MyFeature)
@@ -127,9 +132,20 @@ AniMods.RegisterModule("MyFeature", MyFeature)
 Add the new file to `AniMods.toc` (after `Core.lua`, `Broker.lua` and `UI.lua`) to load
 it.
 
-Modules are enabled by default (once `condition` passes). Most WoW UI hooks can't be
+Modules are enabled by default (once their conditions pass). Most WoW UI hooks can't be
 cleanly undone at runtime, so there's no `Disable()` contract — toggling a module off
-in the status panel just skips its `Enable()` next login/reload.
+in the status panel just skips its `Enable()` next login/reload. A module that genuinely
+*can* apply a toggle live implements `SetEnabled(on)`; the panel then applies the change
+immediately instead of asking for a reload.
+
+**Conditions gate; they do not describe.** Something that enables only *part* of a
+module belongs with that part, not here — a row that can never change whether the module
+runs turns a gating checklist into a mixed list of facts, and needs its own badge
+wording to avoid claiming something is broken when nothing is. GroupRoles reports
+EllesmereUIQoL in its own Integration section beside the docked badge's settings, and
+`Broker.SectionRows` reports LibDataBroker beside the broker's display options. Both say
+more than a condition row could: not whether the host is installed, but whether the
+feature actually attached.
 
 ### Shared broker helper (`Broker.lua`)
 
@@ -166,9 +182,21 @@ function MyFeature:GetInfoRows()
         { label = "Style", options = { a = "Style A", b = "Style B" },
           order = { "a", "b" }, get = GetStyle, set = SetStyle,
           atlas = { "some-atlas-1", "some-atlas-2" } },                          -- dropdown, w/ optional icon preview(s)
+        { label = "Spacing", min = 0, max = 4, step = 1, get = G, set = S },     -- slider
+        { label = "Accent", swatches = COLORS, order = KEYS, get = G, set = S }, -- colour squares
+        { label = "Show widgets", picker = ITEMS, summary = "2 of 7",            -- multi-select dropdown
+          isChecked = IsOn, onToggle = SetOn },
+        { strip = ORDER, labels = LABELS, onReorder = Apply, onDrop = Apply },   -- drag-to-reorder preview
     }
 end
 ```
+
+Any row may carry `help`, which attaches a `?` marker directly after its label revealing
+the long explanation on hover. That is what keeps the panel scannable: the label states
+the setting, the reasoning lives one hover away rather than as a paragraph under every
+control. The corollary is that the label must stand alone — `note` is the short qualifier
+that belongs *beside* it ("active now", "current"), never a second name for the same
+thing.
 
 A row with `section` renders as a divider header, grouping an otherwise-flat scrolling
 list into skimmable chunks (a module with several kinds of info — live status,
@@ -252,20 +280,22 @@ modules leaves the displayed numbers unchanged, that no-op repaint was the commo
 
 ## UI
 
-`/ani` opens the status panel: one tab per registered module, drawn with
-`AniMods.W` (`Widgets.lua`) on EllesmereUI's public skinning API, so it wears the same
-window dress as the rest of the suite and follows the user's theme live. Each
-tab's title is prefixed with a colored status dot (green = active, gray = user-disabled,
-orange = inactive/condition unmet, red = failed) so load state is visible without
-opening the tab.
+`/ani` — the only slash command — opens the settings panel, drawn with `AniMods.W`
+(`Widgets.lua`) on EllesmereUI's public skinning API, so it wears the same window dress
+as the rest of the suite and follows the user's theme live.
 
-Each tab shows: the module's full title, state badge, description, an always-visible
-"Depends on:" checklist (its `dependencies` field, each entry its own green/red-dotted
-line reflecting whether it's currently satisfied — gray for a purely informational entry
-with no live check), and (if inactive) the reason why; below that, its `GetInfoRows()`
-(see above) — a `section` becomes an accent-colored heading with a hairline rule,
-`options` a dropdown, `min` a slider, plain `get`/`set` a checkbox, everything else a
-two-column value row with alternating stripes; at the bottom, an enabled checkbox. If a
+A **sidebar** lists the modules, each row carrying a colored status dot (green = active,
+gray = user-disabled, orange = inactive/condition unmet, red = failed) and a **power
+button** that switches the module on or off. Both live in the list rather than inside
+each tab, so the whole set is switchable without opening any of them. Switching a module
+that cannot apply the change live raises a reload prompt and a "Reload needed" badge on
+its tab; one that implements `SetEnabled(on)` just applies.
+
+Each tab shows: the module's title, a `?` for its description, a state badge, and — for
+a `forceable` module held back only by soft conditions — a "Run anyway" switch. Below
+that, its **Conditions** card (one row per entry, each with a Met / Not met badge and its
+own `?`), the reason it is inactive if it is, then its `GetInfoRows()` (see above),
+grouped into titled cards. If a
 module's `Enable()` threw an error (state "Failed"), a **Show Error** button opens a
 popup with the full traceback (message + `debugstack()`) — not just the one-line `pcall`
 message. (WoW's addon sandbox doesn't expose the `debug` table at all — only specific

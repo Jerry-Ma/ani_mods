@@ -50,17 +50,15 @@ local GroupRoles = {
     -- surface, and suppressing a databar widget because an unrelated addon
     -- happens to show similar numbers somewhere else is the user's call to
     -- make by switching the module off, not ours to make for them.
-    -- Nothing is required: the counts are plain Blizzard API and the broker
-    -- works anywhere. EllesmereUIQoL is OPTIONAL -- it enables the docked
-    -- badge, which is one of this module's two surfaces, so its absence
-    -- disables half the module rather than breaking it.
-    conditions = {
-        { text = "EllesmereUIQoL installed",
-          optional = true,
-          help = "Enables the count badge docked under EllesmereUI's Raid Tools "
-              .. "icon. The broker widget works without it.",
-          met = function() return AniMods.IsAddOnLoaded("EllesmereUIQoL") end },
-    },
+    -- No conditions at all: the counts are plain Blizzard API and the broker
+    -- works anywhere, so nothing can stop this module running.
+    --
+    -- EllesmereUIQoL was listed here for a while as an "optional" condition,
+    -- because it enables the docked badge. That row said less than the
+    -- Integration section below already says -- "Docked to EllesmereUI icon"
+    -- reports whether the badge actually attached, not merely whether the
+    -- host addon is installed -- and it sat in a checklist whose whole
+    -- subject is what stops the module running, which this never did.
 }
 
 local ROLES = { "TANK", "HEALER", "DAMAGER" }
