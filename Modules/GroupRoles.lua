@@ -50,15 +50,29 @@ local GroupRoles = {
     -- surface, and suppressing a databar widget because an unrelated addon
     -- happens to show similar numbers somewhere else is the user's call to
     -- make by switching the module off, not ours to make for them.
-    -- No conditions at all: the counts are plain Blizzard API and the broker
-    -- works anywhere, so nothing can stop this module running.
+    -- One condition, and it is about a DUPLICATE rather than a prerequisite:
+    -- NDui's raid tool draws its own Tank/Healer/DPS counts
+    -- (Modules/Misc/RaidTool.lua, M:RaidTool_RoleCount), so with NDui installed
+    -- this is a second display of the same three numbers.
     --
-    -- EllesmereUIQoL was listed here for a while as an "optional" condition,
-    -- because it enables the docked badge. That row said less than the
-    -- Integration section below already says -- "Docked to EllesmereUI icon"
-    -- reports whether the badge actually attached, not merely whether the
-    -- host addon is installed -- and it sat in a checklist whose whole
-    -- subject is what stops the module running, which this never did.
+    -- This condition existed before, was removed, and is back deliberately. The
+    -- argument for removing it was that NDui shows those counts on a different
+    -- surface, so suppressing a databar widget over it was the user's call to
+    -- make rather than the addon's. That reasoning was sound and the call has
+    -- now been made: duplicate counts are not wanted. Recorded rather than
+    -- silently re-added, so the next reader does not undo it a third time.
+    --
+    -- EllesmereUIQoL is deliberately NOT listed. It enables only the docked
+    -- badge, and the Integration section below already reports whether that
+    -- badge actually attached -- which says more than "is the addon installed",
+    -- and belongs with the feature rather than in a checklist about whether the
+    -- module may run at all.
+    conditions = {
+        { text = "NDui not installed",
+          help = "NDui's raid tool shows the same role counts, so this stands "
+              .. "down rather than displaying them twice.",
+          met = function() return not AniMods.IsAddOnLoaded("NDui") end },
+    },
 }
 
 local ROLES = { "TANK", "HEALER", "DAMAGER" }

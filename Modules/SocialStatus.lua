@@ -33,20 +33,26 @@
 local SocialStatus = {
     title = "Social Status",
     description = "Online guild and friend counts.",
-    -- No `condition`: nothing here needs another addon. The roster gathering
-    -- below is a port that calls only Blizzard APIs (GetGuildRosterInfo,
-    -- C_BattleNet, C_FriendList), and the broker is a plain LibDataBroker
-    -- object that any data bar can display -- EllesmereUIDataBars, AniMods'
-    -- own bar, or a third-party one.
+    -- One condition, and it is about a DUPLICATE rather than a prerequisite:
+    -- NDui's infobar ships both of these counts already
+    -- (Modules/Infobar/Friends.lua and Guild.lua), so with NDui installed this
+    -- is a second widget showing the same two numbers.
     --
-    -- This used to require EllesmereUIMinimap, which was gating the DATA on a
-    -- PRESENTATION dependency: that addon is where the popup's look was
-    -- copied from, not where any of its information comes from. The effect
-    -- was that a stock UI -- or even EllesmereUI installed without its
-    -- Minimap module -- lost working friend counts for no reason.
-    -- No conditions: everything here is plain Blizzard API, and
-    -- EllesmereUIMinimap only informs the popup's styling. Listing it would
-    -- make an unmet entry, which now means an inactive module.
+    -- Nothing here NEEDS another addon -- the roster gathering calls only
+    -- Blizzard APIs (GetGuildRosterInfo, C_BattleNet, C_FriendList) and the
+    -- broker is a plain LibDataBroker object any data bar can display. That is
+    -- why EllesmereUIMinimap is deliberately not listed: it is where the popup's
+    -- look was copied from, not where any of the information comes from, and
+    -- requiring it once cost a stock UI its friend counts for no reason.
+    --
+    -- The distinction that matters: a condition is right when another addon
+    -- already DOES this, and wrong when another addon merely INSPIRED it.
+    conditions = {
+        { text = "NDui not installed",
+          help = "NDui's infobar shows the same guild and friend counts, so "
+              .. "this stands down rather than displaying them twice.",
+          met = function() return not AniMods.IsAddOnLoaded("NDui") end },
+    },
 }
 
 local function ModuleDB()

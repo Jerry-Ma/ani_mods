@@ -291,13 +291,22 @@ nothing to adjust. `conditions` makes that explicit and inspectable instead of s
 double-hooking or crashing on a missing global, and the panel can then answer "why is
 this off" with a checklist rather than silence.
 
-Only three modules have any. That is the point: a condition is a *gate*, and most of
-these patches use plain Blizzard API and work anywhere, so gating them would be
-inventing a restriction. GroupRoles and SocialStatus each carried one for a while —
-"requires EllesmereUIQoL", "requires EllesmereUIMinimap" — which turned out to gate the
-data on a *presentation* concern: the counts are plain Blizzard API and the broker works
-on a stock UI, so the condition was denying a working feature to anyone without the
-addon it merely resembled.
+The rule that decides whether something belongs here: **a condition is right when another
+addon already _does_ this, and wrong when another addon merely _inspired_ it.**
+
+Both halves have been learned the hard way. GroupRoles and SocialStatus each carried a
+"requires EllesmereUIQoL" / "requires EllesmereUIMinimap" for a while, which gated the
+*data* on a *presentation* concern — the counts are plain Blizzard API and the brokers
+work on a stock UI, so those conditions denied a working feature to anyone without the
+addon they merely resembled. Both are gone. Both now instead carry "NDui not installed",
+which is the other half of the rule: NDui genuinely ships the same counts
+(`Modules/Misc/RaidTool.lua`, `Modules/Infobar/Friends.lua`), so running alongside it
+means two widgets showing one number.
+
+GroupRoles' NDui condition was in fact removed once, on the argument that NDui shows its
+counts on a *different surface* so suppressing a databar widget over it was the user's
+call rather than the addon's. That argument was sound; the call was subsequently made.
+It is recorded in the module so the next reader doesn't undo it a third time.
 
 ### Doing nothing when nothing happened
 
@@ -553,15 +562,17 @@ both toggleable in **General**.
   when there are any. EllesmereUI's QoL Raid Tools panel has no composition display the
   way NDui's raid tool does, so this fills the gap.
 
-  **No conditions**: the counts come from `UnitGroupRolesAssigned`, a plain Blizzard
-  call, and the broker works in any data bar. It used to require EllesmereUIQoL and
-  forbid NDui, and both were wrong — the first denied a stock UI its role counts because
-  of a badge it wasn't going to show anyway, and the second suppressed a databar widget
-  because an unrelated addon draws similar numbers on a different surface, which is the
-  user's call to make by switching the module off. Only the *docked badge* needs
-  EllesmereUIQoL, and that is handled where it happens: `TryDockToEUIIcon` simply returns
-  when the icon does not exist, so the module degrades to broker-only by itself, and the
-  Integration section reports whether it actually docked. Named for what it
+  **One condition: NDui not installed** — its raid tool draws the same three counts
+  (`Modules/Misc/RaidTool.lua`, `M:RaidTool_RoleCount`), so this stands down rather than
+  showing them twice.
+
+  EllesmereUIQoL is deliberately *not* a condition, though it once was. That requirement
+  denied a stock UI its role counts over a badge it wasn't going to show anyway — the
+  counts come from `UnitGroupRolesAssigned`, a plain Blizzard call, and the broker works
+  in any data bar. Only the *docked badge* needs EllesmereUIQoL, and that's handled where
+  it happens: `TryDockToEUIIcon` returns when the icon doesn't exist, so the module
+  degrades to broker-only by itself and the Integration section reports whether it
+  actually docked. Named for what it
   reports — assigned *roles*, in a party as well as a raid; it was called
   `RaidComposition` until the rename, which was wrong twice over (it works in 5-mans,
   and "composition" normally means the class/spec makeup rather than the role split).
@@ -781,11 +792,16 @@ both toggleable in **General**.
   against combat lockdown. Refreshes on `GUILD_ROSTER_UPDATE`/`FRIENDLIST_UPDATE`/
   `BN_FRIEND_INFO_CHANGED`/`BN_FRIEND_ACCOUNT_ONLINE`/`BN_FRIEND_ACCOUNT_OFFLINE`.
 
-  **No conditions.** It required EllesmereUIMinimap for a while, on the reasoning that
-  the whole point was to be the broker-shaped equivalent of a button that is specifically
-  EUI's. But the counting logic needs nothing from EUI and the broker displays in any
-  data bar, so the requirement withheld a working widget on the strength of what inspired
-  it — the same presentation-gating-the-data mistake GroupRoles made.
+  **One condition: NDui not installed** — its infobar ships both of these counts already
+  (`Modules/Infobar/Friends.lua` and `Guild.lua`), so this stands down rather than
+  showing them twice.
+
+  EllesmereUIMinimap is deliberately *not* a condition, though it was for a while, on the
+  reasoning that the whole point was to be the broker-shaped equivalent of a button
+  that's specifically EUI's. But the counting logic needs nothing from EUI and the broker
+  displays in any data bar, so the requirement withheld a working widget on the strength
+  of what *inspired* it. That's the distinction: a condition is right when another addon
+  already **does** this, and wrong when another addon merely **inspired** it.
 
   Deliberately **not** a native EllesmereUIDataBars block type (which would come with
   its own dedicated settings page, matching the depth of its built-in blocks like Gold
