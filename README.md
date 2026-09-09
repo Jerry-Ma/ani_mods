@@ -376,7 +376,8 @@ its tab; one that implements `SetEnabled(on)` just applies.
 Each tab shows: the module's title, a `?` for its description, a state badge, and — for
 a `forceable` module held back only by soft conditions — a "Run anyway" switch. Below
 that, its **Conditions** card (one row per entry, each with a Yes / No badge and its
-own `?`), the reason it is inactive if it is, then its `GetInfoRows()` (see above),
+own `?`) — which is the whole explanation of why a module is inactive, so there is no
+prose reason line beside it — then its `GetInfoRows()` (see above),
 grouped into titled cards. If a
 module's `Enable()` threw an error (state "Failed"), a **Show Error** button opens a
 popup with the full traceback (message + `debugstack()`) — not just the one-line `pcall`

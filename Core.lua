@@ -31,7 +31,7 @@ AniMods = AniMods or {}
 local AniMods = AniMods
 
 local modules = {}   -- name -> module table, as registered
-local status  = {}   -- name -> { title, description, conditionMet, conditionReason, userEnabled, active }
+local status  = {}   -- name -> { title, description, conditionMet, errorTrace, userEnabled, active }
 AniMods.status = status
 
 local db
@@ -223,12 +223,17 @@ local function InitModules()
         -- Everything it expressed is a condition with a `met` function, which
         -- is what `conditions` already is, so it is gone rather than kept as
         -- a second way to say the same thing.
-        local depsAllMet, depsHardMet, firstUnmet = AniMods.EvaluateConditions(module.conditions)
+        -- No "needs: <x>" reason string any more. It repeated, in prose, the
+        -- one thing the panel's Conditions card already states as a row: the
+        -- card names the claim, the badge answers it, and the "?" explains it.
+        -- A second rendering of the first unmet entry said strictly less and
+        -- sat right underneath the first.
+        --
+        -- firstUnmet is still returned by EvaluateConditions -- it costs
+        -- nothing and is the obvious thing to want if a caller outside the
+        -- panel ever needs to explain a refusal in one line.
+        local depsAllMet, depsHardMet = AniMods.EvaluateConditions(module.conditions)
         local runnable = ConditionsSatisfied(module, module.conditions, forced)
-        local reason
-        if not runnable then
-            reason = firstUnmet and ("needs: " .. firstUnmet) or "a condition is not met"
-        end
 
         local active = false
         local ranEnable = false
@@ -252,13 +257,12 @@ local function InitModules()
                 -- something that never ran.
                 ranEnable = true
             else
+                -- ErrorHandler joins "<message>\n<stack>". Only the trace is
+                -- stored: the panel takes the part before the first newline for
+                -- its inline line and keeps the whole thing for the Show Error
+                -- button, so splitting it here as well would be two owners of
+                -- one string.
                 errorTrace = err
-                -- ErrorHandler joins "<message>\n<stack>" - the part before
-                -- the first newline is the original brief message, good
-                -- enough for the inline reason; the full thing is one click
-                -- away via the Show Error button.
-                local briefMsg = tostring(err):match("^[^\n]*") or tostring(err)
-                reason = "error in Enable(): " .. briefMsg
             end
         end
 
@@ -272,9 +276,8 @@ local function InitModules()
             order           = module.order or 100,
             essential       = module.essential == true,
             description     = module.description,
-            conditions      = module.conditions, -- { text, met, soft, help } entries; distinct from conditionReason, which only appears on failure
+            conditions      = module.conditions, -- { text, met, soft, help } entries
             conditionMet    = runnable,
-            conditionReason = reason,
             errorTrace      = errorTrace,
             userEnabled     = userEnabled,
             active          = active,

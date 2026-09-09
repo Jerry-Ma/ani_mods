@@ -66,13 +66,26 @@ local function GetStateInfo(entry)
     end
 end
 
--- Whether entry has an error block, a plain reason block, or neither --
--- shared between BuildTabContent (which creates the block) and
--- TryRefreshTabInPlace (a change in which is structural, not a text update).
-local function ClassifyReason(entry)
-    local hasError = entry.errorTrace and true or false
-    local hasReason = (not hasError) and entry.conditionReason and true or false
-    return hasError, hasReason
+-- The one-line form of an Enable() failure, for the inline block above the
+-- Show Error button. ErrorHandler joins "<message>\n<stack>", so the part
+-- before the first newline is the original message.
+local function BriefError(entry)
+    local trace = entry.errorTrace
+    if not trace then return nil end
+    return "Enable() failed: " .. (tostring(trace):match("^[^\n]*") or tostring(trace))
+end
+
+-- Whether entry has an error block. Shared between BuildTabContent (which
+-- creates it) and TryRefreshTabInPlace (a change in which is structural, not a
+-- text update).
+--
+-- There was a second, non-error kind of block here, carrying Core's
+-- "needs: <first unmet condition>". It went because it restated the Conditions
+-- card sitting directly above it -- the card names each claim, its badge
+-- answers it, its "?" explains it, and the prose line repeated the first one of
+-- those and nothing else.
+local function HasError(entry)
+    return entry.errorTrace and true or false
 end
 
 -- Sidebar order: by the module's `order` first, then title. Everything
@@ -831,11 +844,7 @@ local function ApplyLiveValues(entry, cache)
     RefreshConditionRows(entry, cache)
 
     if cache.reasonText then
-        if cache.hasError then
-            cache.reasonText:SetText("|cffff4444" .. (entry.conditionReason or "error") .. "|r")
-        elseif cache.hasReason then
-            cache.reasonText:SetText("|cffff9933" .. entry.conditionReason .. "|r")
-        end
+        cache.reasonText:SetText("|cffff4444" .. (BriefError(entry) or "error") .. "|r")
     end
 
 end
@@ -971,15 +980,16 @@ local function BuildTabContent(name)
         cache.blocks[#cache.blocks + 1] = { frame = card.frame, gap = BLOCK_GAP }
     end
 
-    -- Error / reason block.
-    local hasError, hasReason = ClassifyReason(entry)
-    cache.hasError, cache.hasReason = hasError, hasReason
-    if hasError or hasReason then
+    -- Error block. Only an Enable() failure gets one; an inactive module is
+    -- explained by its Conditions card.
+    local hasError = HasError(entry)
+    cache.hasError = hasError
+    if hasError then
         local reason = W.Text(content, 12, 1)
         cache.reasonText = reason
         cache.blocks[#cache.blocks + 1] = { frame = reason.frame, text = reason, gap = BLOCK_GAP }
 
-        if hasError then
+        do
             local btn = W.Button(content, 140, 22)
             btn:SetText("Show Error")
             btn:SetOnClick(function()
@@ -1031,10 +1041,9 @@ local function TryRefreshTabInPlace(name)
         if ok then rows = result end
     end
 
-    local hasError, hasReason = ClassifyReason(entry)
-    if cache.hasError ~= hasError or cache.hasReason ~= hasReason then
-        return false
-    end
+    -- Gaining or losing the error block is structural, so it forces a rebuild
+    -- rather than an in-place update.
+    if cache.hasError ~= HasError(entry) then return false end
 
     local groups = SplitIntoSections(rows)
     if #groups ~= cache.groupCount then return false end
