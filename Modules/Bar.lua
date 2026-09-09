@@ -104,20 +104,42 @@ local dirty = false
 -- and that is enforced here rather than trusted, because the migration that
 -- built the first one got it wrong (see below) and there is now saved data in
 -- the wild carrying duplicates.
-local function DedupeOrder(order)
-    local seen, out = {}, {}
-    for _, name in ipairs(order or {}) do
+-- In place, and returning the SAME table. Both matter.
+--
+-- Returning a fresh table (the first version) meant `db.order` was replaced on
+-- every read, which quietly broke the preview strip: it holds a reference to
+-- the live order array and mutates it as you drag, so a replacement mid-gesture
+-- left it editing a table nobody read any more. It self-healed on the next drop
+-- only because SetOrder assigns the strip's copy back.
+local function DedupeOrderInPlace(order)
+    local seen, write = {}, 0
+    for read = 1, #order do
+        local name = order[read]
         if type(name) == "string" and not seen[name] then
             seen[name] = true
-            out[#out + 1] = name
+            write = write + 1
+            order[write] = name
         end
     end
-    return out
+    for i = #order, write + 1, -1 do order[i] = nil end
+    return order
 end
+
+-- Normalisation runs ONCE, not on every accessor call.
+--
+-- It used to run on each one -- and ModuleDB() is called from Relayout, from
+-- Refresh's per-widget loop, from BarColor, ApplyAppearance, IsLocked and the
+-- settings rows -- so a single bar repaint allocated a dozen throwaway tables
+-- deduplicating a list that had not changed since the last time it was
+-- deduplicated. Migration and defaults are one-time work; only the guard was
+-- missing.
+local prepared = false
 
 local function ModuleDB()
     AniModsDB.bar = AniModsDB.bar or {}
     local db = AniModsDB.bar
+    if prepared then return db end
+    prepared = true
 
     -- Migration off the old per-widget alignment map. Sections are read in
     -- left/centre/right order and each sorted by name, which lands every widget
@@ -145,8 +167,10 @@ local function ModuleDB()
     end
 
     -- Unconditional, not just after the migration: it also repairs a list
-    -- already saved with duplicates in it.
-    db.order = DedupeOrder(db.order)
+    -- already saved with duplicates in it. Once is enough -- nothing after this
+    -- point can introduce one (SetWidgetEnabled checks for the name first).
+    db.order = db.order or {}
+    DedupeOrderInPlace(db.order)
 
     -- Unlocked by default: a bar you just switched on has to be positionable
     -- without hunting for the setting that allows it. Lock it once it is

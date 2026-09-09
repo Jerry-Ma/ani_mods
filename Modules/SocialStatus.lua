@@ -584,9 +584,26 @@ local function BrokerPart(category, count)
     return part
 end
 
+-- The last counted pair, so one event produces ONE walk.
+--
+-- The broker text and the panel's Status rows both want these two numbers, and
+-- both used to call CountOnline themselves -- so with the panel open on this
+-- tab, every friend or guild event walked the guild roster and both friend
+-- lists TWICE, once for each reader, in the same frame. They are recounted
+-- where the event is handled and read from here.
+--
+-- Safe to serve a cached pair to a panel opened much later: these numbers can
+-- only change through one of the events this module listens to, and Enable
+-- primes them.
+local guildOnline, friendsOnline = 0, 0
+
+local function RecountOnline()
+    guildOnline, friendsOnline = CountOnline()
+end
+
 local function UpdateBroker()
     if not ldbObject then return end
-    local guildCount, friendCount = CountOnline()
+    local guildCount, friendCount = guildOnline, friendsOnline
     Broker.SetText(ldbObject, Broker.BuildText(ModuleDB, {
         BrokerPart("GUILD", guildCount),
         BrokerPart("FRIENDS", friendCount),
@@ -601,9 +618,9 @@ function SocialStatus:GetInfoRows()
     local rows = {}
 
     rows[#rows + 1] = { section = "Status" }
-    local guildCount, friendCount = CountOnline()
-    rows[#rows + 1] = { label = "Guild online", value = tostring(guildCount) }
-    rows[#rows + 1] = { label = "Friends online", value = tostring(friendCount) }
+    -- Read, not recounted: the event handler already did the walk this frame.
+    rows[#rows + 1] = { label = "Guild online", value = tostring(guildOnline) }
+    rows[#rows + 1] = { label = "Friends online", value = tostring(friendsOnline) }
 
     for _, row in ipairs(Broker.SectionRows(ModuleDB, UpdateBroker, "AniModsSocialStatus")) do
         rows[#rows + 1] = row
@@ -614,6 +631,7 @@ end
 
 function SocialStatus:Enable()
     InitLDB()
+    RecountOnline()
     UpdateBroker()
 
     -- Coalesced: BN_FRIEND_INFO_CHANGED alone fires once per friend whose
@@ -624,6 +642,8 @@ function SocialStatus:Enable()
     -- produce the number the last one alone would have produced. One walk per
     -- frame, at most, is enough.
     local Refresh = AniMods.Coalesce(function()
+        -- One walk, then both readers take their numbers from it.
+        RecountOnline()
         UpdateBroker()
         if AniMods.RefreshUI then AniMods.RefreshUI() end
     end)
