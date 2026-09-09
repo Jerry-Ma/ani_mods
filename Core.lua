@@ -98,15 +98,22 @@ AniMods.CompareVersions = CompareVersions
 -- C_Timer.After(0, ...) runs on the next frame, so the whole burst is answered
 -- once, after it has finished, with no added latency a player could see. This
 -- is a one-shot per burst, NOT a poll: nothing is scheduled while idle.
+-- The deferred body is built ONCE per coalescer, not once per burst. Building
+-- it inside the scheduler (the obvious way) allocates a closure every time a
+-- burst starts -- and bursts are the frequent case this exists to handle, so
+-- the helper that avoids N walks was itself producing garbage on the same
+-- schedule. Nothing about the closure varies between bursts, so there is
+-- nothing to rebuild.
 function AniMods.Coalesce(fn)
     local scheduled = false
+    local run = function()
+        scheduled = false
+        fn()
+    end
     return function()
         if scheduled then return end
         scheduled = true
-        C_Timer.After(0, function()
-            scheduled = false
-            fn()
-        end)
+        C_Timer.After(0, run)
     end
 end
 

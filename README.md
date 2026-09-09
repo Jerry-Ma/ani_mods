@@ -348,7 +348,9 @@ Three rules keep it that way, and all three were learned by getting them wrong f
   `GUILD_ROSTER_UPDATE` fires repeatedly per roster query. Answering each separately
   redoes the same walk N times to reach the state the last one alone would have
   produced. This is a one-shot per burst, **not** a poll: nothing is scheduled while
-  idle.
+  idle. Its deferred body is built once per coalescer rather than once per burst —
+  building it inside the scheduler is the obvious way and means the helper that exists
+  to avoid N walks produces garbage on the same schedule as the bursts it's damping.
 - **Compute what the caller actually needs.** SocialStatus' broker needs two integers,
   and recomputed them on every friend/guild event through the same
   `GatherOnlineFriends()` the tooltip uses — allocating a 7-field table per online guild
@@ -360,6 +362,21 @@ Three rules keep it that way, and all three were learned by getting them wrong f
   lists again, the exact cost being avoided) — which makes them the one thing that has
   to be kept in step, or the broker's numbers will silently disagree with its own
   tooltip.
+
+- **Normalise once, not per access.** `Bar`'s `ModuleDB()` ran its migration check,
+  duplicate repair and defaults on *every* call — and it's called from `Relayout`, from
+  `Refresh`'s per-widget loop, from `BarColor`, `ApplyAppearance`, `IsLocked` and every
+  settings row, so one bar repaint allocated a dozen throwaway tables deduplicating a
+  list that hadn't changed since the last time it was deduplicated. One-time work needs
+  a one-time guard. The repair also has to mutate **in place**: returning a fresh table
+  replaced `db.order` on every read, and the preview strip holds a reference to that
+  array and edits it as you drag.
+- **Count once, read many.** `SocialStatus` had two readers of the same two integers —
+  the broker text and the panel's Status rows — and each called `CountOnline()` itself,
+  so with that tab open every friend event walked the guild roster and both friend lists
+  *twice* in one frame. The walk happens where the event is handled; both readers take
+  its result. Safe to serve to a panel opened later, because those numbers can only
+  change through the events the module listens to.
 
 Two smaller ones in the same spirit: hot loops reuse their scratch tables and their unit
 tokens rather than rebuilding a set of 40 identical strings per walk (`RAID_UNITS` /
@@ -911,5 +928,9 @@ both toggleable in **General**.
   device *name* and indices are re-read fresh at the moment of switching, never stored.
 
   Refreshes on `CVAR_UPDATE`, which is how SoundManager notices the output being changed
-  from outside (the OS, Blizzard's audio options, another addon); the handler re-reads
-  the device and only pushes an update when it actually differs, so there's no polling.
+  from outside (the OS, Blizzard's audio options, another addon). That's the broadest
+  event registration in the addon — it fires for *every* cvar — so the handler's first
+  job is to establish the event isn't ours as cheaply as possible: `strcmputf8i`, a
+  Blizzard C function that compares case-insensitively **without building a lowered
+  copy**. The obvious `cvar:lower() == "..."` would allocate a string per unrelated cvar
+  change just to discard it, and the payload's casing isn't worth relying on.

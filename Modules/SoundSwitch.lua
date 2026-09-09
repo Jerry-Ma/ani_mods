@@ -30,7 +30,10 @@ local SoundSwitch = {
 local Broker = AniMods.Broker
 
 local ldbObject
-local lastKnownDevice
+
+-- The cvar the whole module turns on, named once: it is both what gets written
+-- when switching and what CVAR_UPDATE is filtered against.
+local SOUND_CVAR = "Sound_OutputDriverIndex"
 
 local function ModuleDB()
     AniModsDB.soundSwitch = AniModsDB.soundSwitch or {}
@@ -61,7 +64,7 @@ local function GetDevices()
 end
 
 local function CurrentDeviceName()
-    local raw = C_CVar and C_CVar.GetCVar and C_CVar.GetCVar("Sound_OutputDriverIndex")
+    local raw = C_CVar and C_CVar.GetCVar and C_CVar.GetCVar(SOUND_CVAR)
     local idx = tonumber(raw)
     if not idx or not Sound_GameSystem_GetOutputDriverNameByIndex then return nil end
     return Sound_GameSystem_GetOutputDriverNameByIndex(idx)
@@ -80,7 +83,7 @@ local function SetInCycle(name, enabled)
 end
 
 local function SwitchToIndex(index)
-    C_CVar.SetCVar("Sound_OutputDriverIndex", index)
+    C_CVar.SetCVar(SOUND_CVAR, index)
     -- RestartSoundSystem is the modern call; AudioOptionsFrame_AudioRestart
     -- is the pre-10.0 one SoundManager still falls back to.
     if not pcall(Sound_GameSystem_RestartSoundSystem) then
@@ -135,8 +138,6 @@ end
 local function UpdateBroker()
     if not ldbObject then return end
     local name = CurrentDeviceName()
-    lastKnownDevice = name
-
     local part = { text = name or "Unknown" }
     local icon = SpeakerIcon()
     if icon then
@@ -268,13 +269,29 @@ function SoundSwitch:Enable()
     local eventFrame = CreateFrame("Frame")
     eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
     -- CVAR_UPDATE is how SoundManager notices the output being changed from
-    -- outside (the OS, Blizzard's own audio options, another addon). Cheaper
-    -- than matching the cvar name, whose casing in the payload isn't worth
-    -- relying on: re-read the device and only push an update when it actually
-    -- differs from what's displayed.
+    -- outside (the OS, Blizzard's own audio options, another addon). It is also
+    -- the broadest registration in this addon -- it fires for EVERY cvar -- so
+    -- the handler's first job is to establish that the event is not ours, as
+    -- cheaply as possible.
+    --
+    -- strcmputf8i is a Blizzard C function that compares case-insensitively
+    -- WITHOUT building a lowered copy. That matters: the payload's casing is
+    -- not worth relying on, and the obvious `cvar:lower() == "..."` would
+    -- allocate a string for every unrelated cvar change just to discard it.
+    -- One C compare per event, no garbage, and no dependence on casing.
+    --
+    -- This replaced re-reading the sound device on every cvar change and
+    -- comparing it to the last known one. That was allocation-free too, but it
+    -- spent two API calls to answer a question the event's own payload answers.
     eventFrame:RegisterEvent("CVAR_UPDATE")
-    eventFrame:SetScript("OnEvent", function(_, event)
-        if event == "CVAR_UPDATE" and CurrentDeviceName() == lastKnownDevice then return end
+    eventFrame:SetScript("OnEvent", function(_, event, cvar)
+        if event == "CVAR_UPDATE"
+            and not (cvar and strcmputf8i(cvar, SOUND_CVAR) == 0) then
+            return
+        end
+        -- No "did it actually change" guard: the event now only reaches here
+        -- for our own cvar, and Broker.SetText already declines to assign an
+        -- unchanged string.
         UpdateBroker()
         if AniMods.RefreshUI then AniMods.RefreshUI() end
     end)

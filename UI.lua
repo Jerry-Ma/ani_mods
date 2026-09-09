@@ -92,7 +92,20 @@ end
 -- defaults to order 100 and so sorts alphabetically; General claims 0 so the
 -- addon's own settings head the list instead of landing between Chat Context
 -- Switch and Group Roles.
+-- Built once. The module set is fixed after login -- Core fills `status` in
+-- InitModules and nothing adds or removes an entry afterwards, only mutates
+-- fields on one -- and the sort keys (`order`, `title`) are declared on the
+-- module table, so neither the membership nor the ordering can change.
+--
+-- It used to rebuild and re-sort on every RefreshUI, which is every coalesced
+-- module event while the panel is open. Small at eight modules, but it was
+-- allocating a table and running a comparison sort to arrive at the same answer
+-- every time.
+local sortedNames
+
 local function SortedModuleNames()
+    if sortedNames then return sortedNames end
+
     local names = {}
     for name in pairs(AniMods.status) do tinsert(names, name) end
     table.sort(names, function(a, b)
@@ -101,7 +114,9 @@ local function SortedModuleNames()
         if oa ~= ob then return oa < ob end
         return (ea.title or a) < (eb.title or b)
     end)
-    return names
+
+    sortedNames = names
+    return sortedNames
 end
 
 -- ── Reload prompt ────────────────────────────────────────────────────────────
