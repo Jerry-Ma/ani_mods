@@ -796,11 +796,25 @@ both toggleable in **General**.
   own files directly — silently wiped on its next update. Staying a plain LDB broker
   means it survives every EUI update untouched, at the cost of using EllesmereUIDataBars'
   generic "Broker Plugin" block type instead of a dedicated one.
-- **SpecSwitch** — switch specialization and loot spec from a data bar. **Left-click**
-  opens a menu of specs, **right-click** a menu of loot specs (led by "Follow current
+- **SpecSwitch** — switch specialization, talent loadout and loot spec from a data bar.
+  The click map is EllesmereUIDataBars' spec block, feature for feature: **left-click**
+  a menu of specs, **Ctrl+left-click** a menu of talent loadouts, **Shift+left-click**
+  opens the talent frame, **right-click** a menu of loot specs (led by "Follow current
   spec", Blizzard's default and the state you want back after borrowing one for a boss).
-  Settings live at the bottom of the spec menu rather than claiming right-click, so the
-  two menus keep the split anyone who has used EUI's block already knows.
+  Settings live at the bottom of the spec menu rather than claiming right-click.
+
+  Reimplemented, not copied — EllesmereUI's licence is all-rights-reserved, the same
+  reason its role-icon PNGs are referenced rather than bundled (see GroupRoles). What is
+  taken is the *design*: which click does what, and which Blizzard APIs answer it.
+
+  One piece is deliberately **not** inherited. EUI's block displays the loadout name on
+  the bar, so it must know when that name settles — and Blizzard writes the
+  "last selected" pointer *after* the talent-commit events fire, so `TRAIT_CONFIG_UPDATED`
+  reads the old one. It solves that by hooking `UpdateLastSelectedSavedConfigID` itself
+  plus four extra events. Nothing here shows the name outside a menu or tooltip built at
+  the moment it opens, so there is no stale copy to keep fresh and the race has no
+  surface to land on. The hints likewise stay in the hover tooltip rather than being
+  repeated in a footer inside every menu.
 
   It **cycled** at first, and that was wrong. With four specs, reaching a known
   destination took up to three clicks *and three intermediate spec changes* — and a spec

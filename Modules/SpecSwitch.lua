@@ -195,6 +195,99 @@ local function ShowSpecMenu(anchor)
     AniMods.W.Menu(anchor, entries)
 end
 
+-- ---------------------------------------------------------------------------
+-- Loadouts
+-- ---------------------------------------------------------------------------
+-- Talent loadouts for the ACTIVE spec, newest API only.
+--
+--   C_ClassTalents.GetConfigIDsBySpecID(specID)         -- the saved loadouts
+--   C_ClassTalents.GetLastSelectedSavedConfigID(specID) -- which one is applied
+--   C_Traits.GetConfigInfo(configID)                    -- its name
+--   C_ClassTalents.LoadConfig(configID, true)           -- apply it
+--
+-- Read live on every open rather than cached, and that is worth stating because
+-- it is the whole reason this module does not inherit EllesmereUIDataBars' most
+-- delicate piece of machinery. Its block DISPLAYS the loadout name, so it has to
+-- know when the name settles -- and Blizzard writes the "last selected" pointer
+-- AFTER the talent-commit events fire, so TRAIT_CONFIG_UPDATED reads the old
+-- name. EUI solves that by hooking UpdateLastSelectedSavedConfigID itself and
+-- listening to four extra events.
+--
+-- Nothing here displays the name outside a menu or tooltip that is built at the
+-- moment it opens, so there is no stale copy to keep fresh: the race has no
+-- surface to land on.
+local function LoadoutsAvailable()
+    return (C_ClassTalents and C_ClassTalents.GetConfigIDsBySpecID
+        and C_ClassTalents.GetLastSelectedSavedConfigID
+        and C_Traits and C_Traits.GetConfigInfo) and true or false
+end
+
+local function GetLoadouts()
+    local out = {}
+    if not LoadoutsAvailable() then return out end
+    local spec = CurrentSpec()
+    if not spec then return out end
+
+    local activeID = C_ClassTalents.GetLastSelectedSavedConfigID(spec.id)
+    for _, configID in ipairs(C_ClassTalents.GetConfigIDsBySpecID(spec.id) or {}) do
+        local info = C_Traits.GetConfigInfo(configID)
+        if info and info.name then
+            out[#out + 1] = {
+                name = info.name,
+                configID = configID,
+                isActive = (configID == activeID),
+            }
+        end
+    end
+    return out
+end
+
+local function SwitchLoadout(specID, configID)
+    if InCombatLockdown() then
+        Warn("can't change loadout in combat")
+        return
+    end
+
+    -- Blizzard's own sequence, and the branch matters: when the loadout is
+    -- already applied talent-wise, LoadConfig reports NoChangesNecessary and
+    -- commits nothing -- so the "last selected" pointer has to be moved by hand
+    -- or the game keeps thinking the previous loadout is the current one.
+    local result = C_ClassTalents.LoadConfig(configID, true)
+    if result == Enum.LoadConfigResult.NoChangesNecessary then
+        C_ClassTalents.UpdateLastSelectedSavedConfigID(specID, configID)
+    end
+end
+
+-- PlayerSpellsUtil only. EllesmereUIDataBars keeps the pre-11.0
+-- ToggleTalentFrame global as a second branch, which is right for an addon
+-- supporting older clients; this one targets current retail, and carrying a
+-- branch for a client it never runs on is the kind of debt that never gets
+-- removed because nothing ever proves it dead.
+local function OpenTalents()
+    if PlayerSpellsUtil and PlayerSpellsUtil.ToggleClassTalentFrame then
+        PlayerSpellsUtil.ToggleClassTalentFrame()
+    end
+end
+
+local function ShowLoadoutMenu(anchor)
+    local spec = CurrentSpec()
+    local loadouts = GetLoadouts()
+    if not spec or #loadouts == 0 then
+        Warn("no saved talent loadouts for this spec")
+        return
+    end
+
+    local entries = { { header = true, text = "Loadout" } }
+    for _, loadout in ipairs(loadouts) do
+        entries[#entries + 1] = {
+            text = loadout.name,
+            checked = loadout.isActive,
+            onClick = function() SwitchLoadout(spec.id, loadout.configID) end,
+        }
+    end
+    AniMods.W.Menu(anchor, entries)
+end
+
 local function ShowLootMenu(anchor)
     local specs = GetSpecs()
     if #specs == 0 then
@@ -277,8 +370,24 @@ local function ShowTooltip(tt)
     tt:AddDoubleLine("Loot spec", loot and loot.name or "Follows current spec",
         0.8, 0.8, 0.8, 1, 0.82, 0)
 
+    -- Read at hover, never stored -- see the note on GetLoadouts.
+    local activeLoadout
+    for _, loadout in ipairs(GetLoadouts()) do
+        if loadout.isActive then activeLoadout = loadout.name break end
+    end
+    if activeLoadout then
+        tt:AddDoubleLine("Loadout", activeLoadout, 0.8, 0.8, 0.8, 1, 1, 1)
+    end
+
+    -- The click hints live here rather than in a footer inside each menu, which
+    -- is where EllesmereUIDataBars puts them. Its block needs them there
+    -- because its tooltip is spent on other content; ours is not, and a hover
+    -- hint is readable BEFORE you commit to a click. Repeating them in both
+    -- would be two renderings of one fact.
     tt:AddLine(" ")
     tt:AddLine("Left-click: choose spec", 0.6, 0.6, 0.6)
+    tt:AddLine("Ctrl-click: choose loadout", 0.6, 0.6, 0.6)
+    tt:AddLine("Shift-click: open talents", 0.6, 0.6, 0.6)
     tt:AddLine("Right-click: choose loot spec", 0.6, 0.6, 0.6)
 end
 
@@ -301,7 +410,16 @@ local function InitLDB()
         -- what the menu anchors to.
         OnClick = function(frame, button)
             if button == "LeftButton" then
-                ShowSpecMenu(frame)
+                -- Modifier order matters: Ctrl is checked first because
+                -- Ctrl+Shift should reach the loadout menu rather than
+                -- whichever branch happened to be tested first.
+                if IsControlKeyDown() then
+                    ShowLoadoutMenu(frame)
+                elseif IsShiftKeyDown() then
+                    OpenTalents()
+                else
+                    ShowSpecMenu(frame)
+                end
             else
                 ShowLootMenu(frame)
             end
