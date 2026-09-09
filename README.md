@@ -809,12 +809,19 @@ both toggleable in **General**.
   what would make it usable.
 
   The two are read very differently, and taking each addon's *highest-level* call is the
-  point: `BigWigsAPI.GetCountdownSound(voice, n)` returns a file path, which we play, with
+  point: `BigWigsAPI:GetCountdownSound(voice, n)` returns a file path, which we play, with
   the chosen voice at the Countdown plugin's `db.profile.voice`; EXBoss instead
   **plays the digit itself** via `ExBoss.Voice.Countdown:TryPlayDigit(n)`, resolving its
   selected pack, that pack's per-digit switches and any per-digit LibSharedMedia override
   on the way. Asking EXBoss for a path would mean reimplementing all of that and getting
   it wrong the first time its settings changed.
+
+  A trap worth recording: `BigWigsAPI` is **colon-defined**, so `GetCountdownSound`'s real
+  first parameter is `self`. Calling it with a dot passes the voice id as `self` and the
+  digit as `id`, looking up a voice *named* "5" and returning nil every time — silence, no
+  error. BigWigs' own code reads `BigWigsAPI.GetCountdownList()` with a dot in places,
+  which works only because that function ignores `self` and proves nothing about the rest
+  of the table; its colon calls (`BigWigsAPI:HasCountdown`) are what state the convention.
 
   **It needs no listener on either addon's settings, and that's by construction rather
   than luck**: both are read at the moment a digit plays, so re-configuring BigWigs or

@@ -125,7 +125,7 @@ end
 -- Both are asked "what should second N sound like", but only one of them
 -- answers with a file:
 --
---   BigWigs   BigWigsAPI.GetCountdownSound(voiceID, n) -> a sound file path,
+--   BigWigs   BigWigsAPI:GetCountdownSound(voiceID, n) -> a sound file path,
 --             which we play. The chosen voice is the Countdown plugin's
 --             db.profile.voice. Voice packs register 5-10 entries, so a
 --             countdown longer than the pack is simply silent past its range,
@@ -201,8 +201,22 @@ local function PlayDigit(source, digit)
     if source == SOURCE_BIGWIGS then
         local api = _G.BigWigsAPI
         local voice = BigWigsVoice()
-        local path = voice and api and api.GetCountdownSound
-            and api.GetCountdownSound(voice, digit)
+        if not (voice and api and api.GetCountdownSound) then return false end
+
+        -- COLON, not dot. BigWigsAPI is defined with colon methods
+        -- (`function API:GetCountdownSound(id, index)`), so its real first
+        -- parameter is self. Calling it with a dot passed the voice id as self
+        -- and the digit as `id`, which looked up voices[5] -- a voice named
+        -- "5" -- and returned nil every time, so BigWigs was silently never
+        -- producing a sound.
+        --
+        -- Easy to get wrong from BigWigs' own code, which reads
+        -- `BigWigsAPI.GetCountdownList()` with a dot in places: that one
+        -- ignores self, so both forms work for it and neither form proves
+        -- anything about the rest of the table. The colon calls elsewhere
+        -- (BigWigsAPI:HasCountdown, BigWigsAPI:GetCountdownList) are the ones
+        -- that say what the convention actually is.
+        local path = api:GetCountdownSound(voice, digit)
         if not path then return false end
         PlaySoundFile(path, "Master")
         return true
