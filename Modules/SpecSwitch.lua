@@ -50,6 +50,14 @@ local function ModuleDB()
     return AniModsDB.specSwitch
 end
 
+-- On by default, but a setting: it is the one part of this widget that makes it
+-- wider, and loadout names are user-chosen, so a bar with three widgets and a
+-- loadout called "Single Target Cleave Build" has a different opinion about
+-- that than one with two and "Raid".
+local function ShowLoadout()
+    return ModuleDB().showLoadout ~= false
+end
+
 -- ---------------------------------------------------------------------------
 -- Specs
 -- ---------------------------------------------------------------------------
@@ -238,6 +246,22 @@ local function LoadoutsAvailable()
         and C_Traits and C_Traits.GetConfigInfo) and true or false
 end
 
+-- The applied loadout's name, read live and allocating nothing.
+--
+-- Separate from GetLoadouts (which builds the whole list for the menu) because
+-- this one runs on every broker update, and building a table of every saved
+-- loadout to read one field off one of them is the shape of waste the audit
+-- went looking for.
+local function ActiveLoadoutName()
+    if not LoadoutsAvailable() then return nil end
+    local spec = CurrentSpec()
+    if not spec then return nil end
+    local configID = C_ClassTalents.GetLastSelectedSavedConfigID(spec.id)
+    if not configID then return nil end
+    local info = C_Traits.GetConfigInfo(configID)
+    return info and info.name or nil
+end
+
 local function GetLoadouts()
     local out = {}
     if not LoadoutsAvailable() then return out end
@@ -381,14 +405,27 @@ UpdateBroker = function()
     -- exactly one icon.
     local loot = SpecByID(LootSpecID()) or spec
 
-    Broker.SetText(ldbObject, Broker.BuildText(ModuleDB, {
-        {
-            text = spec.name,
-            texture = loot.icon,
-            iconAfter = true,
-            color = classColor,
-        },
-    }))
+    local parts = {}
+
+    -- Loadout first, because it is the narrower thing: "Raid" qualifies
+    -- "Frost", not the other way round, and reading left to right it goes from
+    -- the specific setup to the spec it belongs to. Optional, and absent
+    -- entirely when this character has saved none.
+    if ShowLoadout() then
+        local loadout = ActiveLoadoutName()
+        if loadout then
+            parts[#parts + 1] = { text = loadout }
+        end
+    end
+
+    parts[#parts + 1] = {
+        text = spec.name,
+        texture = loot.icon,
+        iconAfter = true,
+        color = classColor,
+    }
+
+    Broker.SetText(ldbObject, Broker.BuildText(ModuleDB, parts))
 end
 
 local function ShowTooltip(tt)
@@ -415,13 +452,12 @@ local function ShowTooltip(tt)
     tt:AddDoubleLine("Loot spec", loot and loot.name or "Follows current spec",
         0.8, 0.8, 0.8, 1, 0.82, 0)
 
-    -- Read at hover, never stored -- see the note on GetLoadouts.
-    local activeLoadout
-    for _, loadout in ipairs(GetLoadouts()) do
-        if loadout.isActive then activeLoadout = loadout.name break end
-    end
-    if activeLoadout then
-        tt:AddDoubleLine("Loadout", activeLoadout, 0.8, 0.8, 0.8, 1, 1, 1)
+    -- Read at hover, never stored -- see the note on ActiveLoadoutName. Shown
+    -- here regardless of the bar setting: hiding it on the bar is about width,
+    -- and the tooltip has none of that pressure.
+    local loadout = ActiveLoadoutName()
+    if loadout then
+        tt:AddDoubleLine("Loadout", loadout, 0.8, 0.8, 0.8, 1, 1, 1)
     end
 
     -- No click hints here: they live in the spec popup's footer, where EUI puts
@@ -521,6 +557,18 @@ function SpecSwitch:GetInfoRows()
         end,
     }
 
+    rows[#rows + 1] = { section = "Display" }
+    rows[#rows + 1] = {
+        label = "Show talent loadout",
+        help  = "Puts the applied loadout's name before the spec on the bar. "
+             .. "The tooltip shows it either way.",
+        get   = ShowLoadout,
+        set   = function(v)
+            ModuleDB().showLoadout = v and true or false
+            UpdateBroker()
+        end,
+    }
+
     -- No "specs in the cycle" section: there is no cycle. It existed only to
     -- make cycling tolerable, and the menus made both unnecessary.
 
@@ -543,6 +591,31 @@ function SpecSwitch:Enable()
 
     InitLDB()
     UpdateBroker()
+
+    -- Loadout-name freshness, and the reason this module previously refused to
+    -- display the name at all.
+    --
+    -- Blizzard writes the "last selected loadout" pointer AFTER the
+    -- talent-commit events fire, so TRAIT_CONFIG_UPDATED and SPELLS_CHANGED
+    -- both race it and read the name that was current a moment ago. Listening
+    -- to them would produce a display that is reliably one swap behind.
+    --
+    -- So hook the WRITE instead: every path that changes which loadout is
+    -- current -- Blizzard's talent UI, loadout addons, and this module's own
+    -- SwitchLoadout in its NoChangesNecessary branch -- funnels through
+    -- UpdateLastSelectedSavedConfigID. EllesmereUIDataBars reaches the same
+    -- conclusion for the same display (its HookLoadoutPointer).
+    --
+    -- Unlike EUI's, this handler needs no combat guard and no
+    -- PLAYER_REGEN_ENABLED catch-up: theirs re-measures and re-anchors frames,
+    -- which is protected, while all this does is assign a string to an LDB
+    -- object and repaint a panel that is ours.
+    if C_ClassTalents and C_ClassTalents.UpdateLastSelectedSavedConfigID then
+        hooksecurefunc(C_ClassTalents, "UpdateLastSelectedSavedConfigID", function()
+            UpdateBroker()
+            if AniMods.RefreshUI then AniMods.RefreshUI() end
+        end)
+    end
 
     -- Single notifications rather than per-item bursts, so there is nothing to
     -- coalesce; and none fires while nothing is happening, so there is nothing

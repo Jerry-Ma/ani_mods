@@ -882,13 +882,25 @@ both toggleable in **General**.
   controls in EUI as well. Its dropdowns already look like ours (the `DD_ITEM_*`
   constants came from EUI's), while its data bar popups are their own thing.
 
-  One piece is deliberately **not** inherited. EUI's block displays the loadout name on
-  the bar, so it must know when that name settles — and Blizzard writes the
-  "last selected" pointer *after* the talent-commit events fire, so `TRAIT_CONFIG_UPDATED`
-  reads the old one. It solves that by hooking `UpdateLastSelectedSavedConfigID` itself
-  plus four extra events. Nothing here shows the name outside a menu or tooltip built at
-  the moment it opens, so there is no stale copy to keep fresh and the race has no
-  surface to land on.
+  The bar can show the applied **loadout name before the spec** (`Raid  Frost🔹`) —
+  optional, on by default, and absent when the character has saved none. Loadout first
+  because it's the narrower thing: "Raid" qualifies "Frost", not the reverse. It's a
+  setting because it's the one part of this widget that makes it wider, and loadout names
+  are user-chosen — a bar with three widgets and a loadout called "Single Target Cleave
+  Build" has a different opinion about that than one with two and "Raid". The tooltip
+  shows it either way, where there's no width pressure.
+
+  Displaying that name is what forces the module's one hook, and it's worth knowing why
+  the obvious approach fails: Blizzard writes the "last selected loadout" pointer *after*
+  the talent-commit events fire, so `TRAIT_CONFIG_UPDATED` and `SPELLS_CHANGED` both race
+  it and read the name that was current a moment ago — listening to them gives a display
+  reliably one swap behind. So the **write** is hooked instead
+  (`C_ClassTalents.UpdateLastSelectedSavedConfigID`), which every path funnels through:
+  Blizzard's talent UI, loadout addons, and this module's own `SwitchLoadout`.
+  EllesmereUIDataBars reaches the same conclusion for the same display
+  (its `HookLoadoutPointer`). Unlike EUI's, this handler needs no combat guard or
+  `PLAYER_REGEN_ENABLED` catch-up: theirs re-measures and re-anchors frames, which is
+  protected, while this assigns a string to an LDB object and repaints a panel we own.
 
   It **cycled** at first, and that was wrong. With four specs, reaching a known
   destination took up to three clicks *and three intermediate spec changes* — and a spec
