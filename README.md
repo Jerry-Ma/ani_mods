@@ -917,10 +917,19 @@ both toggleable in **General**.
 
   Spec switching is guarded on `InCombatLockdown()` and reports why it refused, because
   the API simply does nothing in lockdown and the click would otherwise look broken.
-  Loot spec switching is combat-legal (a server preference), so it isn't guarded. The
-  broker shows the loot spec as a second part **only when it differs** from the active
-  spec — that's the state worth noticing, since it's the one that silently gives you the
-  wrong loot.
+  Loot spec switching is combat-legal (a server preference), so it isn't guarded.
+
+  **The text is the spec you play; the icon beside it is the spec you loot** — NDui's
+  scheme (`Modules/Infobar/Spec.lua`), and a better answer than anything with labels in
+  it. The two roles are told apart by *medium* rather than by wording, so no "S:"/"L:" is
+  needed in any language; width is constant, because the icon is always present and
+  falls back to the active spec's own when loot follows it, so the widget doesn't grow
+  and shove its neighbours along the bar the moment you pin a loot spec; and the common
+  case reads as decoration while the odd case reads as odd — a *different* icon sitting
+  beside the name is exactly the state worth noticing, the one that silently gives you
+  the wrong loot. Text Only mode drops the icon and so drops the loot spec entirely,
+  which is the right degradation: it loses information rather than becoming ambiguous the
+  way "Frost/Fire" would.
 - **SoundSwitch** — switch the game's sound output device from a databar.
   **Left-click** cycles to the next device; **right-click** opens this module's tab,
   where each detected device has an in-the-cycle checkbox (the active one carries a

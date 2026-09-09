@@ -201,7 +201,11 @@ local function ShowSpecMenu(anchor)
             if AniMods.OpenModuleTab then AniMods.OpenModuleTab("SpecSwitch") end
         end,
     }
+    -- `key` distinguishes this widget's three menus, so right-clicking while
+    -- this one is open switches straight to the loot menu instead of just
+    -- closing this one.
     AniMods.W.Menu(anchor, entries, {
+        key = "spec",
         title = "Change Spec",
         footer = CLICK_HINTS,
     })
@@ -299,7 +303,7 @@ local function ShowLoadoutMenu(anchor)
             onClick = function() SwitchLoadout(spec.id, loadout.configID) end,
         }
     end
-    AniMods.W.Menu(anchor, entries, { title = "Change Loadout" })
+    AniMods.W.Menu(anchor, entries, { key = "loadout", title = "Change Loadout" })
 end
 
 local function ShowLootMenu(anchor)
@@ -333,20 +337,37 @@ local function ShowLootMenu(anchor)
             onClick = function() SetLootSpecialization(spec.id) end,
         }
     end
-    AniMods.W.Menu(anchor, entries, { title = "Change Loot Spec" })
+    AniMods.W.Menu(anchor, entries, { key = "loot", title = "Change Loot Spec" })
 end
 
 -- ---------------------------------------------------------------------------
 -- Broker
 -- ---------------------------------------------------------------------------
 
--- The active spec, plus the loot spec only when it differs.
+-- Text is the spec you PLAY; the icon beside it is the spec you LOOT.
 --
--- A second part is added ONLY when the loot spec is pinned to something other
--- than the active spec, because that is the state worth noticing -- it is the
--- one that silently gives you the wrong loot. When loot follows the spec there
--- is nothing to say, and saying it anyway would double the widget's width for
--- no information.
+-- NDui's own spec infobar does exactly this (Modules/Infobar/Spec.lua: the
+-- displayed string is the spec name followed by GetLootSpecialization's icon,
+-- falling back to the current spec's icon when loot follows it), and it is a
+-- better answer than anything with labels in it:
+--
+--   * The two roles are told apart by MEDIUM -- one is text, one is art -- so
+--     no "S:" / "L:" wording is needed in any language.
+--   * Width is constant. The loot icon is always present, so the widget does
+--     not grow and shove its neighbours along the bar the moment you pin a
+--     loot spec, which a second text part would.
+--   * The common case reads as decoration and the odd case reads as odd:
+--     while loot follows your spec the icon simply matches the name, and the
+--     moment it does not you have a visibly different icon sitting next to it.
+--     That is the exact state worth noticing -- the one that silently gives you
+--     the wrong loot.
+--
+-- Text Only mode drops the icon and so drops the loot spec entirely. That is
+-- the right degradation: it loses information rather than becoming ambiguous,
+-- which is what a scheme carrying the distinction in art alone would do if the
+-- text were "Frost/Fire". The tooltip states it in full either way.
+local classColor
+
 UpdateBroker = function()
     if not ldbObject then return end
 
@@ -356,13 +377,18 @@ UpdateBroker = function()
         return
     end
 
-    local parts = { { text = spec.name, texture = spec.icon } }
-    local loot = SpecByID(LootSpecID())
-    if loot and loot.id ~= spec.id then
-        parts[#parts + 1] = { text = loot.name, texture = loot.icon, color = "ffd100" }
-    end
+    -- Loot spec, or the active spec when loot follows it -- so there is always
+    -- exactly one icon.
+    local loot = SpecByID(LootSpecID()) or spec
 
-    Broker.SetText(ldbObject, Broker.BuildText(ModuleDB, parts))
+    Broker.SetText(ldbObject, Broker.BuildText(ModuleDB, {
+        {
+            text = spec.name,
+            texture = loot.icon,
+            iconAfter = true,
+            color = classColor,
+        },
+    }))
 end
 
 local function ShowTooltip(tt)
@@ -506,6 +532,15 @@ function SpecSwitch:GetInfoRows()
 end
 
 function SpecSwitch:Enable()
+    -- Resolved once: a character's class cannot change, and this is only read
+    -- when the Colored text setting is on. NDui tints the spec name the class
+    -- colour and it is the obvious colour for the name of a spec.
+    local _, classToken = UnitClass("player")
+    local c = classToken and RAID_CLASS_COLORS and RAID_CLASS_COLORS[classToken]
+    if c then
+        classColor = ("%02x%02x%02x"):format(c.r * 255, c.g * 255, c.b * 255)
+    end
+
     InitLDB()
     UpdateBroker()
 

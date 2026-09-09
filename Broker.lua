@@ -65,12 +65,26 @@ function Broker.BuildText(getDB, parts)
     for i, part in ipairs(parts) do
         local body = part.text or tostring(part.count)
         local numText = (colored and part.color) and ("|cff%s%s|r"):format(part.color, body) or body
+
+        -- `iconAfter` puts the icon on the far side of the text. Normally the
+        -- icon LABELS its number -- a tank icon before a tank count -- so it
+        -- leads. SpecSwitch is the other case: its icon is a second, different
+        -- fact (the loot spec) sitting beside the first (the spec being
+        -- played), so it trails, and "name then icon" reads as "playing this,
+        -- looting that". Borrowed from NDui's own spec infobar.
+        local icon
         if showIcon and part.atlas then
-            rendered[i] = ("|A:%s:14:14|a%s"):format(part.atlas, numText)
+            icon = ("|A:%s:14:14|a"):format(part.atlas)
         elseif showIcon and part.texture then
-            rendered[i] = ("|T%s:14|t%s"):format(part.texture, numText)
-        else
+            icon = ("|T%s:14|t"):format(part.texture)
+        end
+
+        if not icon then
             rendered[i] = numText
+        elseif part.iconAfter then
+            rendered[i] = numText .. icon
+        else
+            rendered[i] = icon .. numText
         end
     end
 

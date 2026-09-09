@@ -1486,13 +1486,13 @@ local POPUP_TITLE_H = 18
 local clickPopup, clickPopupInner, clickPopupCatcher
 local popupRows, popupFooters = {}, {}
 local popupTitle
-local popupOwner
+local popupOwner, popupKey
 
 local function HideClickPopup()
     if not clickPopup then return end
     clickPopup:Hide()
     if clickPopupCatcher then clickPopupCatcher:Hide() end
-    popupOwner = nil
+    popupOwner, popupKey = nil, nil
 end
 W.CloseMenu = HideClickPopup
 
@@ -1504,7 +1504,31 @@ local function EnsureClickPopup()
     clickPopupCatcher:SetFrameStrata("FULLSCREEN_DIALOG")
     clickPopupCatcher:SetFrameLevel(400)
     clickPopupCatcher:RegisterForClicks("AnyUp")
-    clickPopupCatcher:SetScript("OnClick", HideClickPopup)
+
+    -- The catcher covers the entire screen, which means it also covers the
+    -- widget the popup belongs to -- so while a menu is open, clicking that
+    -- widget again lands HERE and the widget's own handler never runs. That is
+    -- why right-clicking for the loot menu while the spec menu was open did
+    -- nothing but close it: the right-click was eaten, and a second click was
+    -- needed to reach the widget at all.
+    --
+    -- So a click that lands on the owner is forwarded to it, button and all,
+    -- and the owner's handler decides. Deliberately WITHOUT hiding first: the
+    -- toggle test in W.Menu compares the menu key, so the same button closes
+    -- (same key, already shown) while a different button switches (different
+    -- key, reopens) -- one click either way.
+    clickPopupCatcher:SetScript("OnClick", function(_, button)
+        local owner = popupOwner
+        if owner and owner:IsMouseOver() then
+            local handler = owner:GetScript("OnClick")
+            if handler then
+                handler(owner, button)
+                return
+            end
+        end
+        HideClickPopup()
+    end)
+
     clickPopupCatcher:Hide()
 
     clickPopup = W.Panel(UIParent)
@@ -1565,13 +1589,20 @@ function W.Menu(anchor, entries, opts)
     opts = opts or {}
     entries = entries or {}
 
-    -- A second click on the same widget closes, which is what makes the widget
-    -- feel like a toggle; a click on a different one re-points the popup.
-    if popupOwner == anchor and clickPopup:IsShown() then
+    -- Toggle on the same MENU, switch on a different one.
+    --
+    -- Keyed by anchor plus `opts.key`, not by anchor alone: one widget can own
+    -- several menus (SpecSwitch has three -- spec, loadout, loot), and keying
+    -- on the widget made them all the same thing, so asking for the loot menu
+    -- while the spec menu was open just closed it. Callers that pass no key
+    -- get one menu per widget, which is the single-menu case behaving as
+    -- before.
+    local key = opts.key or true
+    if popupOwner == anchor and popupKey == key and clickPopup:IsShown() then
         HideClickPopup()
         return
     end
-    popupOwner = anchor
+    popupOwner, popupKey = anchor, key
 
     local ar, ag, ab = W.Accent()
     local widest, y = 0, POPUP_PAD
