@@ -305,10 +305,17 @@ end
 -- option the marker explains the setting, so it belongs beside its name; on a
 -- statement it explains the answer, so it belongs beside the answer.
 --
--- A false is grey by default, red only when the caller says the answer matters
--- -- conditions do, because an unmet one stops the module. "In group: No" is
--- not a fault, and painting it red would spend the panel's only alarm colour on
--- a fact about the player's evening.
+-- Yes is green, No is red. Always -- there is no per-caller tone.
+--
+-- There briefly was one: grey for an informational No, red only for a condition
+-- whose failure actually stops the module, on the reasoning that "In group: No"
+-- is a fact rather than a fault and should not spend the panel's alarm colour.
+-- That reasoning survives, but it was invisible. The rule lives in whether a row
+-- happens to be a condition, which the reader has no way to see, so the panel
+-- just showed two different colours for the same word and looked inconsistent --
+-- and a rendering difference nobody can decode is worse than a distinction not
+-- drawn at all. If the fact/fault split is worth making again, it needs to be
+-- visible in the LABEL, not smuggled into a shade.
 local function BuildStatementRow(parent)
     local row = CreateFrame("Frame", nil, parent)
     row:SetHeight(18)
@@ -330,12 +337,12 @@ local function BuildStatementRow(parent)
     return { frame = row, label = label, badge = badge, help = help }
 end
 
-local function ApplyStatement(built, descriptor, badWhenFalse)
+local function ApplyStatement(built, descriptor)
     built.label:SetText(descriptor.label or "")
     if descriptor.state then
         built.badge:Set("Yes", W.BADGE_OK)
     else
-        built.badge:Set("No", badWhenFalse and W.BADGE_BAD or W.BADGE_IDLE)
+        built.badge:Set("No", W.BADGE_BAD)
     end
     built.help:SetText(descriptor.help)
     built.help:SetShown(true)   -- W.Help hides itself when the text is empty
@@ -787,9 +794,7 @@ local function RefreshConditionRows(entry, cache)
                 satisfied = (ok and result) and true or false
             end
 
-            -- `true`: an unmet condition genuinely stops the module, so this is
-            -- one of the few places a red answer is earned.
-            ApplyStatement(built, { label = dep.text, state = satisfied, help = dep.help }, true)
+            ApplyStatement(built, { label = dep.text, state = satisfied, help = dep.help })
         end
     end
 end

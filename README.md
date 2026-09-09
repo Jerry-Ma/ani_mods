@@ -211,8 +211,11 @@ end
 *measurement* ("Tanks: 2", "Version: 1.4"); a boolean dressed as a value string is what
 produced four vocabularies for one question — Met/Not met, Found/Not found, `No (Raid
 Tools disabled, mode: never)`, and `N/A` — with the reason smuggled into the value as a
-parenthetical. The reason belongs in `help`. A false answer is grey (a fact, not a
-fault); only conditions paint it red, because an unmet one actually stops the module.
+parenthetical. The reason belongs in `help`. Yes is green and No is red, always — there
+is no per-caller tone. A grey/red split briefly existed (grey for an informational No,
+red only where the failure stops a module), but the rule lived in whether a row happened
+to be a condition, which the reader can't see, so it just looked inconsistent. A
+rendering difference nobody can decode is worse than a distinction not drawn.
 
 Any row may carry `help`, which attaches a `?` marker revealing the long explanation on
 hover. That is what keeps the panel scannable: the label states the setting, the

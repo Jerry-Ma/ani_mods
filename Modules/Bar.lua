@@ -84,6 +84,8 @@ local WATCHED = {
 local bar, itemHost
 local barFill, barEdges   -- the bar's own configurable background and border
 local barGrip             -- drag handle, visible only while unlocked
+local barOverlay          -- unlocked-state wash over the bar's whole extent
+local overlayWash, overlayEdges
 local items = {}          -- objName -> { button, fs, icon, text, hasIcon, textW }
 local ldb
 local enabled = {}        -- objName -> true, a lookup over db.order
@@ -513,6 +515,21 @@ local function ApplyAppearance()
         edge:SetColorTexture(0, 0, 0, 0.8)
         edge:SetShown(db.border ~= false)
     end
+
+    -- The unlocked overlay is accent-coloured, and painted here rather than
+    -- registered for accent updates: this function is already the module's
+    -- OnLooksChanged handler, so it follows a theme change for free.
+    --
+    -- The wash is deliberately faint. It has to read as "this region is in
+    -- play" without competing with the widget text it sits over, so the OUTLINE
+    -- does the work of showing the bounds and the wash only tints them.
+    if overlayWash then
+        local ar, ag, ab = AniMods.W.Accent()
+        overlayWash:SetColorTexture(ar, ag, ab, 0.10)
+        for _, edge in ipairs(overlayEdges) do
+            edge:SetColorTexture(ar, ag, ab, 0.85)
+        end
+    end
 end
 
 -- Applies the lock to the live frame. EnableMouse stays ON either way: the
@@ -526,9 +543,11 @@ local function ApplyLock()
     else
         bar:RegisterForDrag("LeftButton")
     end
-    -- The handle IS the "unlocked" indicator: its presence is what tells you
-    -- the bar can be moved, so there is no separate state to display.
+    -- The handle and the overlay are the "unlocked" indicator between them:
+    -- their presence is what tells you the bar can be moved, so there is no
+    -- separate state to display. Shown and hidden together, always.
     if barGrip then barGrip:SetShown(not locked) end
+    if barOverlay then barOverlay:SetShown(not locked) end
 end
 
 -- Everything below goes through ApplyVisibility rather than calling
@@ -609,6 +628,37 @@ local function BuildBar()
 
     bar:SetScript("OnDragStart", bar.StartMoving)
     bar:SetScript("OnDragStop", StopAndSave)
+
+    -- Unlocked-state overlay: an accent wash and outline over the bar's whole
+    -- extent, paired with the handle below.
+    --
+    -- The handle says WHERE TO GRAB; this says WHAT MOVES. That second question
+    -- is a real one here and not padding, because the bar has a fixed width and
+    -- does not hug its contents -- with three widgets on a 500px bar, most of
+    -- what you are about to drag is empty and invisible, so the handle alone
+    -- gives no sense of the thing's actual bounds. Blizzard's Edit Mode makes
+    -- the same pairing for the same reason.
+    --
+    -- A frame ABOVE itemHost rather than textures on the bar: child frames draw
+    -- over their parent's regions whatever the draw layer, so an outline on
+    -- `bar` would sit under the widgets and its edges would be clipped by them.
+    -- EnableMouse(false) so it is purely visual -- the widgets underneath keep
+    -- taking their clicks, and the bar keeps taking the drag.
+    barOverlay = CreateFrame("Frame", nil, bar)
+    barOverlay:SetAllPoints()
+    barOverlay:SetFrameLevel(bar:GetFrameLevel() + 10)
+    barOverlay:EnableMouse(false)
+    barOverlay:Hide()
+
+    overlayWash = barOverlay:CreateTexture(nil, "BACKGROUND")
+    overlayWash:SetAllPoints()
+
+    overlayEdges = {}
+    for i = 1, 4 do overlayEdges[i] = barOverlay:CreateTexture(nil, "OVERLAY") end
+    overlayEdges[1]:SetPoint("TOPLEFT");    overlayEdges[1]:SetPoint("TOPRIGHT");    overlayEdges[1]:SetHeight(1)
+    overlayEdges[2]:SetPoint("BOTTOMLEFT"); overlayEdges[2]:SetPoint("BOTTOMRIGHT"); overlayEdges[2]:SetHeight(1)
+    overlayEdges[3]:SetPoint("TOPLEFT");    overlayEdges[3]:SetPoint("BOTTOMLEFT");  overlayEdges[3]:SetWidth(1)
+    overlayEdges[4]:SetPoint("TOPRIGHT");   overlayEdges[4]:SetPoint("BOTTOMRIGHT"); overlayEdges[4]:SetWidth(1)
 
     -- Drag handle, shown only while the bar is unlocked.
     --
