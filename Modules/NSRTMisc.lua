@@ -338,9 +338,7 @@ function NSRTMisc:GetInfoRows()
              .. "hand every countdown straight back, but the replacement itself "
              .. "stays until the next reload."
             or  "AniMods has not touched NSRT. Nothing is installed until a "
-             .. "non-NSRT voice is chosen. If a voice IS chosen and this still "
-             .. "says No, NSRT had not loaded in time -- toggle the module off "
-             .. "and on to retry.",
+             .. "non-NSRT voice is chosen.",
     }
 
     rows[#rows + 1] = { section = "Boss alert countdowns" }
@@ -406,6 +404,13 @@ end
 -- Deferred to W.OnReady rather than PLAYER_LOGIN because NSAPI is created by
 -- NSRT's own boot; that callback is the first point after it where everything
 -- is guaranteed up. Same sequencing the other modules use.
+-- No retry ladder here, unlike GroupRoles and EllesmereUI Misc.
+--
+-- Those wait on EllesmereUI FRAMES, which it builds on its own schedule long
+-- after login. This waits on a FUNCTION, and NSRT defines NSAPI.TTSCountdown
+-- while its files load -- so it is already there by PLAYER_LOGIN, which is when
+-- Enable runs. There is no window left to retry into, and a ladder guarding a
+-- case that cannot happen is the kind of code nothing ever proves dead.
 function NSRTMisc:Enable()
     moduleEnabled = true
     if CurrentSource() == SOURCE_NSRT then return end
@@ -415,17 +420,12 @@ end
 -- Toggles live, so the sidebar power button means something here rather than
 -- asking for a reload.
 --
--- Switching ON retries the install when a source is already selected. Not for
--- the "off at login" case -- Core only calls this for a module whose Enable
--- actually ran -- but for the one where the install FAILED: if NSRT had not
--- created NSAPI yet when Enable fired, InstallOverride returned false and
--- nothing ever retried it. Toggling the module is then the only way back, and
--- the status row is what shows it is needed.
+-- Just the flag. Switching on does not need to install anything: every path
+-- that selects a non-NSRT source installs at the moment it is selected
+-- (ApplySource) or at the next login (Enable), so by the time this runs the
+-- override is either already in place or not wanted.
 function NSRTMisc:SetEnabled(on)
     moduleEnabled = on and true or false
-    if moduleEnabled and CurrentSource() ~= SOURCE_NSRT then
-        InstallOverride()
-    end
     return true
 end
 
