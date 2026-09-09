@@ -341,7 +341,9 @@ function NSRTMisc:GetInfoRows()
     }
 
     rows[#rows + 1] = {
-        label  = "Silence every countdown",
+        -- Short enough not to be clamped in the label column; the "?" carries
+        -- what it actually does.
+        label  = "Silence all",
         button = "Apply",
         help   = "Sets every boss alert's countdown to 0 -- exactly what typing "
               .. "0 into NSRT's own Countdown box does, for all of them at once. "
@@ -356,8 +358,8 @@ function NSRTMisc:GetInfoRows()
     }
 
     rows[#rows + 1] = {
-        label  = "Restore to default",
-        button = "Restore",
+        label  = "Restore defaults",
+        button = "Apply",
         help   = "Clears the countdown on every boss alert so they follow NSRT's "
               .. "global setting again -- the state they ship in. This undoes "
               .. "Apply above; it does not turn countdowns off.",

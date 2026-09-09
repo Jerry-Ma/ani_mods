@@ -28,6 +28,31 @@ local SIDEBAR_ROW_H = 24
 local ROW_GAP = 2
 local BLOCK_GAP = 6
 local CONTROL_WIDTH = 220 -- dropdowns/sliders: fixed, never full-width
+-- 170, not 150: the control still clears the widest control (220) inside the
+-- content column, and the extra 20px is the difference between a label being
+-- clamped and being readable for most of the rows that were close to it.
+local CONTROL_X = 170     -- where every row's control starts
+local LABEL_X = 8         -- and where its label starts
+local HELP_W = 20         -- a "?" marker plus its gap
+
+-- Stops a row's label running into the control column.
+--
+-- These labels are anchored LEFT only, on purpose: that is what lets the "?"
+-- marker sit immediately after the text instead of at the far side of the row.
+-- The cost is that nothing bounds their right edge, so a long one runs under
+-- the control -- "Silence every countdown" reaching across its own Apply
+-- button.
+--
+-- Clamped only when it actually overruns, never unconditionally. Setting a
+-- width outright would fix the FontString's rect at that width for every label,
+-- short ones included, and push their "?" markers out to a column of their own
+-- -- undoing the thing the LEFT-only anchor was for.
+local function ClampLabel(fs, hasHelp)
+    fs:SetWordWrap(false)
+    fs:SetWidth(0)
+    local room = CONTROL_X - LABEL_X - 6 - (hasHelp and HELP_W or 0)
+    if (fs:GetStringWidth() or 0) > room then fs:SetWidth(room) end
+end
 
 local frame
 local tabStrip
@@ -476,11 +501,12 @@ local function BuildRow(parent, descriptor, sectionIndex, stripeIndex)
         row:SetHeight(26)
 
         local label = W.Font(row, 12, nil, W.TEXT_DIM_A)
-        label:SetPoint("LEFT", row, "LEFT", 8, 0)
+        label:SetPoint("LEFT", row, "LEFT", LABEL_X, 0)
         label:SetText(descriptor.label or "")
+        ClampLabel(label, descriptor.help)
 
         local dd = W.Dropdown(row, CONTROL_WIDTH)
-        dd.frame:SetPoint("LEFT", row, "LEFT", 150, 0)
+        dd.frame:SetPoint("LEFT", row, "LEFT", CONTROL_X, 0)
         dd:SetList(descriptor.options, descriptor.order)
         dd:SetDisabled(descriptor.disabled)
         dd:SetValue(descriptor.get())
@@ -533,11 +559,12 @@ local function BuildRow(parent, descriptor, sectionIndex, stripeIndex)
         row:SetHeight(26)
 
         local label = W.Font(row, 12, nil, W.TEXT_DIM_A)
-        label:SetPoint("LEFT", row, "LEFT", 8, 0)
+        label:SetPoint("LEFT", row, "LEFT", LABEL_X, 0)
         label:SetText(descriptor.label or "")
+        ClampLabel(label, descriptor.help)
 
         local sw = W.Swatches(row, 14)
-        sw.frame:SetPoint("LEFT", row, "LEFT", 150, 0)
+        sw.frame:SetPoint("LEFT", row, "LEFT", CONTROL_X, 0)
         sw:SetList(descriptor.order, descriptor.swatches, descriptor.hollow, descriptor.disabled)
         sw:SetValue(descriptor.get())
         sw:SetOnChange(function(value)
@@ -593,11 +620,12 @@ local function BuildRow(parent, descriptor, sectionIndex, stripeIndex)
         row:SetHeight(26)
 
         local label = W.Font(row, 12, nil, W.TEXT_DIM_A)
-        label:SetPoint("LEFT", row, "LEFT", 8, 0)
+        label:SetPoint("LEFT", row, "LEFT", LABEL_X, 0)
         label:SetText(descriptor.label or "")
+        ClampLabel(label, descriptor.help)
 
         local picker = W.MultiSelect(row, CONTROL_WIDTH)
-        picker.frame:SetPoint("LEFT", row, "LEFT", 150, 0)
+        picker.frame:SetPoint("LEFT", row, "LEFT", CONTROL_X, 0)
         picker:SetItems(descriptor.picker)
         picker:SetIsChecked(descriptor.isChecked)
         picker:SetText(descriptor.summary or "")
@@ -638,11 +666,12 @@ local function BuildRow(parent, descriptor, sectionIndex, stripeIndex)
         row:SetHeight(26)
 
         local label = W.Font(row, 12, nil, W.TEXT_DIM_A)
-        label:SetPoint("LEFT", row, "LEFT", 8, 0)
+        label:SetPoint("LEFT", row, "LEFT", LABEL_X, 0)
         label:SetText(descriptor.label or "")
+        ClampLabel(label, descriptor.help)
 
         local btn = W.Button(row, 130, 22)
-        btn.frame:SetPoint("LEFT", row, "LEFT", 150, 0)
+        btn.frame:SetPoint("LEFT", row, "LEFT", CONTROL_X, 0)
         btn:SetText(descriptor.button)
         btn:SetOnClick(function()
             if descriptor.onClick then descriptor.onClick() end
@@ -657,11 +686,12 @@ local function BuildRow(parent, descriptor, sectionIndex, stripeIndex)
         row:SetHeight(24)
 
         local label = W.Font(row, 12, nil, W.TEXT_DIM_A)
-        label:SetPoint("LEFT", row, "LEFT", 8, 0)
+        label:SetPoint("LEFT", row, "LEFT", LABEL_X, 0)
         label:SetText(descriptor.label or "")
+        ClampLabel(label, descriptor.help)
 
         local sw = W.ColorSwatch(row, 18)
-        sw.frame:SetPoint("LEFT", row, "LEFT", 150, 0)
+        sw.frame:SetPoint("LEFT", row, "LEFT", CONTROL_X, 0)
         sw:SetColor(descriptor.get())
         sw:SetOnChange(function(r, g, b, a)
             descriptor.set(r, g, b, a)
