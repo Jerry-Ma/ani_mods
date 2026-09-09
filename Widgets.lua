@@ -1401,45 +1401,225 @@ local function OpenMenuAt(owner, anchor, entries)
     if owner._onOpened then owner._onOpened() end
 end
 
--- ── Click menu ──────────────────────────────────────────────────────────────
--- A menu popped from an arbitrary frame -- a broker widget on a data bar, say --
--- rather than from a dropdown control. Same shared menu, same skin, same
--- check marks as everything else; it just has no closed state of its own.
+-- ── Click popup ─────────────────────────────────────────────────────────────
+-- A menu popped from an arbitrary frame -- a broker widget on a data bar --
+-- rather than from a dropdown control.
 --
--- Entries are { text, checked, onClick } or { header = true, text }. `checked`
--- present (even as false) draws the check column, so a menu of mutually
--- exclusive choices shows which one is current. Clicking closes.
+-- This does NOT reuse the dropdown menu above, and the reason is that they are
+-- two different controls in EllesmereUI too. Its dropdowns look like ours
+-- already (the DD_ITEM_* constants here came from EUI's); its data bar block
+-- popups are a separate thing with their own treatment, and that is what this
+-- mirrors -- EllesmereUIDataBars_Blocks.lua's BuildPopup:
 --
--- Owners are cached per anchor frame, and that is what makes a second click on
--- the same widget CLOSE the menu (the shared open routine toggles when the
--- owner matches) while a click on a different widget re-points it instead.
-local menuOwners = setmetatable({}, { __mode = "k" })
+--   * a WHITE title, with the accent reserved for the ACTIVE row. Selection is
+--     carried by the accent rather than by a check mark, which is what makes it
+--     read as "you are here" rather than "these are ticked" -- the right idiom
+--     for a list of mutually exclusive choices.
+--   * hover tints the label ACCENT and washes the whole row white at 0.10.
+--     Both, not one: the wash shows the hit area, the tint shows the target.
+--   * icons cropped 4/64..60/64, the standard trim of Blizzard's baked icon
+--     border. Inline |T escapes cannot crop, so spec icons would arrive wearing
+--     their border -- which is why entries take an `icon` field rather than a
+--     caller-formatted string.
+--   * a footer of left/right hint pairs, the same shape EUI's tip footers use.
+--
+-- Metrics are EUI's: 8px padding, 18px rows, 3px between them, 14px icons.
+local POPUP_PAD, POPUP_ROW_H, POPUP_ROW_GAP = 8, 18, 3
+local POPUP_FONT, POPUP_ICON = 12, 14
+local POPUP_TITLE_H = 18
 
-function W.Menu(anchor, entries)
-    local owner = menuOwners[anchor]
-    if not owner then
-        owner = {}
-        menuOwners[anchor] = owner
+local clickPopup, clickPopupInner, clickPopupCatcher
+local popupRows, popupFooters = {}, {}
+local popupTitle
+local popupOwner
+
+local function HideClickPopup()
+    if not clickPopup then return end
+    clickPopup:Hide()
+    if clickPopupCatcher then clickPopupCatcher:Hide() end
+    popupOwner = nil
+end
+W.CloseMenu = HideClickPopup
+
+local function EnsureClickPopup()
+    if clickPopup then return end
+
+    clickPopupCatcher = CreateFrame("Button", nil, UIParent)
+    clickPopupCatcher:SetAllPoints(UIParent)
+    clickPopupCatcher:SetFrameStrata("FULLSCREEN_DIALOG")
+    clickPopupCatcher:SetFrameLevel(400)
+    clickPopupCatcher:RegisterForClicks("AnyUp")
+    clickPopupCatcher:SetScript("OnClick", HideClickPopup)
+    clickPopupCatcher:Hide()
+
+    clickPopup = W.Panel(UIParent)
+    clickPopup:SetFrameStrata("FULLSCREEN_DIALOG")
+    clickPopup:SetFrameLevel(410)
+    clickPopup:SetClampedToScreen(true)
+    clickPopup:EnableMouse(true)
+    clickPopup:Hide()
+
+    -- Content on a child: `clickPopup` went through S.Panel (see the header).
+    clickPopupInner = CreateFrame("Frame", nil, clickPopup)
+    clickPopupInner:SetAllPoints()
+
+    popupTitle = W.Font(clickPopupInner, POPUP_FONT, nil, 1)
+    popupTitle:SetPoint("TOPLEFT", clickPopupInner, "TOPLEFT", POPUP_PAD, -POPUP_PAD)
+end
+
+local function EnsurePopupRow(index)
+    local row = popupRows[index]
+    if row then return row end
+
+    local btn = CreateFrame("Button", nil, clickPopupInner)
+    btn:SetHeight(POPUP_ROW_H)
+    btn:RegisterForClicks("AnyUp")
+
+    local hl = W.Tex(btn, "HIGHLIGHT", 1, 1, 1, 0.10)
+    hl:SetAllPoints()
+
+    local icon = btn:CreateTexture(nil, "OVERLAY")
+    icon:SetSize(POPUP_ICON, POPUP_ICON)
+    icon:SetPoint("LEFT")
+    -- Trims the border Blizzard bakes into icon art, so a spec icon sits flush
+    -- with the label instead of inside a frame of its own.
+    icon:SetTexCoord(4 / 64, 60 / 64, 4 / 64, 60 / 64)
+
+    local label = W.Font(btn, POPUP_FONT, nil, 1)
+
+    row = { frame = btn, icon = icon, label = label }
+    popupRows[index] = row
+    return row
+end
+
+local function EnsurePopupFooter(index)
+    local foot = popupFooters[index]
+    if foot then return foot end
+    foot = {
+        left  = W.Font(clickPopupInner, POPUP_FONT, nil, 1),
+        right = W.Font(clickPopupInner, POPUP_FONT, nil, 1),
+    }
+    popupFooters[index] = foot
+    return foot
+end
+
+-- `entries`: { text, icon, active, onClick }
+-- `opts`:    { title = "...", footer = { { "Left-click", "Choose spec" }, ... } }
+function W.Menu(anchor, entries, opts)
+    EnsureClickPopup()
+    opts = opts or {}
+    entries = entries or {}
+
+    -- A second click on the same widget closes, which is what makes the widget
+    -- feel like a toggle; a click on a different one re-points the popup.
+    if popupOwner == anchor and clickPopup:IsShown() then
+        HideClickPopup()
+        return
+    end
+    popupOwner = anchor
+
+    local ar, ag, ab = W.Accent()
+    local widest, y = 0, POPUP_PAD
+
+    if opts.title and opts.title ~= "" then
+        popupTitle:SetText(opts.title)
+        popupTitle:Show()
+        widest = popupTitle:GetStringWidth() or 0
+        y = POPUP_PAD + POPUP_TITLE_H + POPUP_PAD
+    else
+        popupTitle:Hide()
     end
 
-    local built = {}
-    for i, e in ipairs(entries or {}) do
-        if e.header then
-            built[i] = { mode = "header", text = e.text }
+    for i, entry in ipairs(entries) do
+        local row = EnsurePopupRow(i)
+        row.frame:ClearAllPoints()
+        row.frame:SetPoint("TOPLEFT", clickPopupInner, "TOPLEFT", POPUP_PAD, -y)
+
+        local iconWidth = 0
+        row.label:ClearAllPoints()
+        if entry.icon then
+            row.icon:SetTexture(entry.icon)
+            row.icon:Show()
+            row.label:SetPoint("LEFT", row.icon, "RIGHT", 4, 0)
+            iconWidth = POPUP_ICON + 4
         else
-            built[i] = {
-                mode = (e.checked ~= nil) and "check" or "plain",
-                text = e.text,
-                checked = e.checked,
-                onClick = function()
-                    HideMenu()
-                    if e.onClick then e.onClick() end
-                end,
-            }
+            -- Flush left, not anchored to the hidden icon: its stale rect would
+            -- leave a phantom indent.
+            row.icon:Hide()
+            row.label:SetPoint("LEFT", row.frame, "LEFT", 0, 0)
         end
+
+        row.label:SetText(entry.text or "")
+        if entry.active then
+            row.label:SetTextColor(ar, ag, ab, 1)
+        else
+            row.label:SetTextColor(1, 1, 1, 1)
+        end
+
+        row.frame:SetScript("OnEnter", function()
+            row.label:SetTextColor(W.Accent())
+        end)
+        row.frame:SetScript("OnLeave", function()
+            if entry.active then
+                row.label:SetTextColor(W.Accent())
+            else
+                row.label:SetTextColor(1, 1, 1, 1)
+            end
+        end)
+        row.frame:SetScript("OnClick", function()
+            HideClickPopup()
+            if entry.onClick then entry.onClick() end
+        end)
+        row.frame:Show()
+
+        local w = iconWidth + (row.label:GetStringWidth() or 0)
+        if w > widest then widest = w end
+        y = y + POPUP_ROW_H + POPUP_ROW_GAP
+    end
+    if #entries > 0 then y = y - POPUP_ROW_GAP end
+    for i = #entries + 1, #popupRows do popupRows[i].frame:Hide() end
+
+    local footer = opts.footer or {}
+    if #footer > 0 then
+        y = y + 8
+        for i, pair in ipairs(footer) do
+            local foot = EnsurePopupFooter(i)
+            foot.left:SetText(pair[1] or "")
+            foot.right:SetText(pair[2] or "")
+            foot.left:ClearAllPoints()
+            foot.left:SetPoint("TOPLEFT", clickPopupInner, "TOPLEFT", POPUP_PAD, -y)
+            foot.right:ClearAllPoints()
+            foot.right:SetPoint("TOPRIGHT", clickPopupInner, "TOPRIGHT", -POPUP_PAD, -y)
+            foot.left:Show()
+            foot.right:Show()
+            local fw = (foot.left:GetStringWidth() or 0) + 16 + (foot.right:GetStringWidth() or 0)
+            if fw > widest then widest = fw end
+            y = y + POPUP_FONT + 4
+        end
+        y = y - 4
+    end
+    for i = #footer + 1, #popupFooters do
+        popupFooters[i].left:Hide()
+        popupFooters[i].right:Hide()
     end
 
-    OpenMenuAt(owner, anchor, built)
+    clickPopup:SetSize(widest + POPUP_PAD * 2, y + POPUP_PAD)
+    -- Rows span the full inner width, so the hover wash and the hit area cover
+    -- the row rather than just its text.
+    for i = 1, #entries do popupRows[i].frame:SetWidth(widest) end
+
+    -- Opens away from the screen edge the widget sits nearest, which is how
+    -- EUI's own popups decide: a data bar along the bottom must open upward.
+    clickPopup:ClearAllPoints()
+    local _, cy = anchor:GetCenter()
+    if cy and cy < (UIParent:GetHeight() or 0) / 2 then
+        clickPopup:SetPoint("BOTTOM", anchor, "TOP", 0, 4)
+    else
+        clickPopup:SetPoint("TOP", anchor, "BOTTOM", 0, -4)
+    end
+
+    clickPopupCatcher:Show()
+    clickPopup:Show()
 end
 
 -- The closed-state chrome both dropdown flavours wear: house block, border,

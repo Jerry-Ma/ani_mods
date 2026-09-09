@@ -807,14 +807,24 @@ both toggleable in **General**.
   reason its role-icon PNGs are referenced rather than bundled (see GroupRoles). What is
   taken is the *design*: which click does what, and which Blizzard APIs answer it.
 
+  The popups follow EUI's look and interaction too (`W.Menu`, modelled on its
+  `BuildPopup`): white title, the **accent reserved for the active row** rather than a
+  check mark, hover tinting the label accent *and* washing the whole row white at 0.10,
+  icons cropped `4/64..60/64` to trim Blizzard's baked border, and a footer of
+  left/right hint pairs. Selection-by-accent is the right idiom for mutually exclusive
+  choices — it reads as "you are here", where a tick reads as "these are on".
+
+  This is why `W.Menu` does **not** reuse the dropdown menu: they are two different
+  controls in EUI as well. Its dropdowns already look like ours (the `DD_ITEM_*`
+  constants came from EUI's), while its data bar popups are their own thing.
+
   One piece is deliberately **not** inherited. EUI's block displays the loadout name on
   the bar, so it must know when that name settles — and Blizzard writes the
   "last selected" pointer *after* the talent-commit events fire, so `TRAIT_CONFIG_UPDATED`
   reads the old one. It solves that by hooking `UpdateLastSelectedSavedConfigID` itself
   plus four extra events. Nothing here shows the name outside a menu or tooltip built at
   the moment it opens, so there is no stale copy to keep fresh and the race has no
-  surface to land on. The hints likewise stay in the hover tooltip rather than being
-  repeated in a footer inside every menu.
+  surface to land on.
 
   It **cycled** at first, and that was wrong. With four specs, reaching a known
   destination took up to three clicks *and three intermediate spec changes* — and a spec

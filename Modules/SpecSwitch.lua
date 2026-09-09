@@ -166,9 +166,17 @@ end
 --
 -- Cycling suits SoundSwitch because switching outputs is instant, reversible,
 -- and you are usually alternating between two. None of that holds here.
-local function SpecIcon(spec)
-    return spec.icon and ("|T%s:14|t "):format(spec.icon) or ""
-end
+-- The hint footer, the same four rows EllesmereUIDataBars' spec popup carries.
+-- In the popup rather than the hover tooltip, because that is where EUI puts
+-- them and matching its feel is the point -- and a footer inside the menu is
+-- read at the moment you are choosing, which is when a modifier hint is
+-- actually useful.
+local CLICK_HINTS = {
+    { "Left-click",       "Change spec" },
+    { "Ctrl-left-click",  "Change loadout" },
+    { "Shift-left-click", "Open talents" },
+    { "Right-click",      "Change loot spec" },
+}
 
 local function ShowSpecMenu(anchor)
     local specs = GetSpecs()
@@ -178,11 +186,12 @@ local function ShowSpecMenu(anchor)
     end
 
     local current = CurrentSpec()
-    local entries = { { header = true, text = "Specialization" } }
+    local entries = {}
     for _, spec in ipairs(specs) do
         entries[#entries + 1] = {
-            text = SpecIcon(spec) .. spec.name,
-            checked = current and current.id == spec.id or false,
+            text = spec.name,
+            icon = spec.icon,
+            active = current and current.id == spec.id or false,
             onClick = function() SwitchSpec(spec) end,
         }
     end
@@ -192,7 +201,10 @@ local function ShowSpecMenu(anchor)
             if AniMods.OpenModuleTab then AniMods.OpenModuleTab("SpecSwitch") end
         end,
     }
-    AniMods.W.Menu(anchor, entries)
+    AniMods.W.Menu(anchor, entries, {
+        title = "Change Spec",
+        footer = CLICK_HINTS,
+    })
 end
 
 -- ---------------------------------------------------------------------------
@@ -277,15 +289,17 @@ local function ShowLoadoutMenu(anchor)
         return
     end
 
-    local entries = { { header = true, text = "Loadout" } }
+    -- No icons: loadouts have none, and EUI's own loadout rows sit flush left
+    -- for exactly that reason rather than reserving an empty icon column.
+    local entries = {}
     for _, loadout in ipairs(loadouts) do
         entries[#entries + 1] = {
             text = loadout.name,
-            checked = loadout.isActive,
+            active = loadout.isActive,
             onClick = function() SwitchLoadout(spec.id, loadout.configID) end,
         }
     end
-    AniMods.W.Menu(anchor, entries)
+    AniMods.W.Menu(anchor, entries, { title = "Change Loadout" })
 end
 
 local function ShowLootMenu(anchor)
@@ -299,22 +313,27 @@ local function ShowLootMenu(anchor)
     -- "Follow current spec" leads, as it does in EUI's own loot menu: it is
     -- Blizzard's default and the state people want back after borrowing a loot
     -- spec for one boss.
+    local current = CurrentSpec()
     local entries = {
-        { header = true, text = "Loot specialization" },
         {
             text = "Follow current spec",
-            checked = (lootID == 0),
+            -- The active spec's own icon, as EUI's loot menu does: the row
+            -- means "whatever I am playing", so showing that spec's art says
+            -- what it currently resolves to.
+            icon = current and current.icon or nil,
+            active = (lootID == 0),
             onClick = function() SetLootSpecialization(0) end,
         },
     }
     for _, spec in ipairs(specs) do
         entries[#entries + 1] = {
-            text = SpecIcon(spec) .. spec.name,
-            checked = (lootID == spec.id),
+            text = spec.name,
+            icon = spec.icon,
+            active = (lootID == spec.id),
             onClick = function() SetLootSpecialization(spec.id) end,
         }
     end
-    AniMods.W.Menu(anchor, entries)
+    AniMods.W.Menu(anchor, entries, { title = "Change Loot Spec" })
 end
 
 -- ---------------------------------------------------------------------------
@@ -379,16 +398,9 @@ local function ShowTooltip(tt)
         tt:AddDoubleLine("Loadout", activeLoadout, 0.8, 0.8, 0.8, 1, 1, 1)
     end
 
-    -- The click hints live here rather than in a footer inside each menu, which
-    -- is where EllesmereUIDataBars puts them. Its block needs them there
-    -- because its tooltip is spent on other content; ours is not, and a hover
-    -- hint is readable BEFORE you commit to a click. Repeating them in both
-    -- would be two renderings of one fact.
-    tt:AddLine(" ")
-    tt:AddLine("Left-click: choose spec", 0.6, 0.6, 0.6)
-    tt:AddLine("Ctrl-click: choose loadout", 0.6, 0.6, 0.6)
-    tt:AddLine("Shift-click: open talents", 0.6, 0.6, 0.6)
-    tt:AddLine("Right-click: choose loot spec", 0.6, 0.6, 0.6)
+    -- No click hints here: they live in the spec popup's footer, where EUI puts
+    -- them. Carrying them in both would be two renderings of one fact, and the
+    -- footer is the one read at the moment you are choosing.
 end
 
 local function ShowPopup(anchor)
