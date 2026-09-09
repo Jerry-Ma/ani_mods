@@ -39,6 +39,14 @@ _EUI_RaidTools_DB = nil
 ---@type any
 NDui = nil
 
+---Northern Sky Raid Tools' SAVED VARIABLE table, not its addon namespace (that
+---is `NorthernSkyRaidTools`). NSRTMisc walks NSRT.EncounterAlerts to batch-edit
+---boss alert settings, and reads it defensively at every level: it is another
+---addon's saved data, so it has to survive that addon's upgrades, migrations
+---and profile imports.
+---@type any
+NSRT = nil
+
 ---Not a Blizzard API: a convention that addons reshaping the minimap define,
 ---returning a shape name ("ROUND", "SQUARE", "TRICORNER-TOPLEFT", ...).
 ---LibDBIcon reads it and so does General's minimap button, both guarded --

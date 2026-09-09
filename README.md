@@ -240,6 +240,7 @@ function MyFeature:GetInfoRows()
         { label = "Show widgets", picker = ITEMS, summary = "2 of 7",            -- multi-select dropdown
           isChecked = IsOn, onToggle = SetOn },
         { strip = ORDER, labels = LABELS, onReorder = Apply, onDrop = Apply },   -- drag-to-reorder preview
+        { label = "Silence all", button = "Apply", onClick = DoIt },             -- action button
     }
 end
 ```
@@ -797,6 +798,40 @@ both toggleable in **General**.
     in `MinimapCluster` — an earlier version of this entry skinned that one by mistake,
     and this documented the mistake for a while after the code stopped making it.
     Available only when EllesmereUIMinimap is loaded.
+- **NSRT Misc** — the bag for small Northern Sky Raid Tools tweaks: batch edits its own
+  UI can only make one row at a time. One entry so far, plus the button that undoes it.
+
+  **Silence every boss-alert countdown.** NSRT's encounter alerts each carry a
+  `countdown` field, and what matters is what it means when *absent*
+  (`Reminders.lua:112`): `nil` means **inherit the global setting**. Every built-in boss
+  alert ships without the key, so switching TTS countdowns on for your own note reminders
+  switches them on for all ~200 boss alerts too — one setting, two populations. This
+  separates them.
+
+  It writes `false`, not `0`, and that distinction is the whole reason to read NSRT's
+  source rather than guess. NSRT's own UI writes `false` when you type 0
+  (`EncounterAlerts.lua:2980`: `(v and v > 0) and v or false`), so "countdown for 0
+  seconds" in that UI *is* `countdown = false` in the data — writing the same value is
+  what makes the button equivalent to doing it by hand rather than merely similar. A
+  literal `0` would look right and behave differently: `0` is truthy in Lua, so it skips
+  the inherit branch as intended but survives to `Reminders.lua:1293`'s
+  `if info.countdown then`, scheduling a timer that fires at the end of the alert and
+  calls `TTSCountdown(0)` — a no-op loop (`for i = 0, 1, -1`), so harmless, but pointless
+  work per alert per pull. `false` fails `tonumber` at line 119, becomes nil, and no timer
+  is scheduled at all.
+
+  **Restore to default** clears the key again so alerts follow the global setting — the
+  state they ship in, which is not the same as "countdowns off". Worth having rather than
+  leaving the batch one-way: this edits a couple of hundred rows of another addon's saved
+  settings at a click, and the only other way back is NSRT's own per-alert reset, one
+  alert at a time.
+
+  Every level of `NSRT.EncounterAlerts[encID][diffID][key]` is type-checked on the walk.
+  It is another addon's saved data — it has to survive that addon's upgrades, migrations
+  and profile imports, and an unexpected shape must make this do nothing rather than error
+  halfway through a batch edit. The module has no `Enable()`: it owns no frames, hooks
+  nothing and registers no events, since everything it does happens on a click in its own
+  tab.
 - **SocialStatus** — online guild/friend counts as a broker (LDB) plugin, mirroring
   EllesmereUIMinimap's own "friends" button (the one in its minimap extra button group
   that shows online friends/guildies on hover). That button and its tooltip function

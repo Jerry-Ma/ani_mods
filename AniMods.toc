@@ -8,7 +8,7 @@
 ## AddonCompartmentFuncOnEnter: AniMods_OnAddonCompartmentEnter
 ## AddonCompartmentFuncOnLeave: AniMods_OnAddonCompartmentLeave
 ## SavedVariables: AniModsDB
-## OptionalDeps: EllesmereUI, EllesmereUIBlizzardSkin, EllesmereUIQoL, EllesmereUIChat, EllesmereUIMinimap, NDui
+## OptionalDeps: EllesmereUI, EllesmereUIBlizzardSkin, EllesmereUIQoL, EllesmereUIChat, EllesmereUIMinimap, NDui, NorthernSkyRaidTools
 
 Libs\LibStub\LibStub.lua
 
@@ -22,6 +22,7 @@ Modules\Bar.lua
 Modules\ChatContextSwitch.lua
 Modules\EllesmereUIMisc.lua
 Modules\GroupRoles.lua
+Modules\NSRTMisc.lua
 Modules\SocialStatus.lua
 Modules\SoundSwitch.lua
 Modules\SpecSwitch.lua

@@ -254,6 +254,7 @@ local function RowKind(descriptor)
     if descriptor.section then return "section" end
     if descriptor.strip then return "strip" end
     if descriptor.picker then return "picker" end
+    if descriptor.button then return "button" end
     if descriptor.color then return "color" end
     -- `~= nil`, not truthiness: `state = false` is the whole point of the row.
     if descriptor.state ~= nil then return "state" end
@@ -626,6 +627,29 @@ local function BuildRow(parent, descriptor, sectionIndex, stripeIndex)
         local built = BuildStatementRow(parent)
         ApplyStatement(built, descriptor)
         return { kind = kind, widget = built }, built.frame, ROW_GAP
+
+    elseif kind == "button" then
+        -- An ACTION, not a setting: it does something once when clicked rather
+        -- than holding a value. Laid out like the other rows -- label left,
+        -- control at the same column -- so a card can mix the two without the
+        -- action drifting out of the grid.
+        local row = CreateFrame("Frame", nil, parent)
+        row:SetHeight(26)
+
+        local label = W.Font(row, 12, nil, W.TEXT_DIM_A)
+        label:SetPoint("LEFT", row, "LEFT", 8, 0)
+        label:SetText(descriptor.label or "")
+
+        local btn = W.Button(row, 130, 22)
+        btn.frame:SetPoint("LEFT", row, "LEFT", 150, 0)
+        btn:SetText(descriptor.button)
+        btn:SetOnClick(function()
+            if descriptor.onClick then descriptor.onClick() end
+            if AniMods.RefreshUI then AniMods.RefreshUI() end
+        end)
+
+        AttachHelp(row, descriptor, label)
+        return { kind = kind, widget = btn }, row, ROW_GAP
 
     elseif kind == "color" then
         local row = CreateFrame("Frame", nil, parent)
