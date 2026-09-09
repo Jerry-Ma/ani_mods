@@ -482,6 +482,7 @@ local function BuildRow(parent, descriptor, sectionIndex, stripeIndex)
         local dd = W.Dropdown(row, CONTROL_WIDTH)
         dd.frame:SetPoint("LEFT", row, "LEFT", 150, 0)
         dd:SetList(descriptor.options, descriptor.order)
+        dd:SetDisabled(descriptor.disabled)
         dd:SetValue(descriptor.get())
         dd:SetOnChange(function(value)
             descriptor.set(value)
@@ -744,6 +745,7 @@ local function RefreshRowsInPlace(rows, cache)
             -- outside this dropdown) and, more importantly, the preview
             -- icons: those show the CURRENTLY SELECTED style, so they go
             -- stale the moment a different one is picked.
+            c.widget:SetDisabled(descriptor.disabled)
             c.widget:SetValue(descriptor.get())
             local previews = descriptor.atlas or descriptor.texture
             if previews and c.icons then

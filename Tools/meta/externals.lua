@@ -47,6 +47,29 @@ NDui = nil
 ---@type any
 NSRT = nil
 
+---BigWigs' addon namespace. NSRTMisc uses GetPlugin("Countdown") to read which
+---countdown voice the player has selected.
+---@type any
+BigWigs = nil
+
+---BigWigs' public API table, separate from its namespace. GetCountdownSound(id,
+---n) returns the sound file a registered voice pack uses for n seconds.
+---@type any
+BigWigsAPI = nil
+
+---EXBoss' addon namespace. NSRTMisc calls ExBoss.Voice.Countdown:TryPlayDigit,
+---which plays a digit through whichever voice pack EXBoss currently has
+---selected -- it resolves the pack, its per-digit switches and any LibSharedMedia
+---override itself.
+---@type any
+ExBoss = nil
+
+---Northern Sky Raid Tools' public API table, distinct from its NSRT saved
+---variable. NSRTMisc replaces NSAPI.TTSCountdown to route countdowns to another
+---addon's voice.
+---@type any
+NSAPI = nil
+
 ---Not a Blizzard API: a convention that addons reshaping the minimap define,
 ---returning a shape name ("ROUND", "SQUARE", "TRICORNER-TOPLEFT", ...).
 ---LibDBIcon reads it and so does General's minimap button, both guarded --

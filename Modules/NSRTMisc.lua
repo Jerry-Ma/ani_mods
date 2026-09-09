@@ -114,12 +114,210 @@ local function Report(message)
 end
 
 -- ---------------------------------------------------------------------------
+-- Countdown voice
+-- ---------------------------------------------------------------------------
+-- NSRT counts down in its own bundled voice and offers no way to change it.
+-- BigWigs and EXBoss each already have a voice the player has chosen and is
+-- used to; this borrows whichever one they point at.
+--
+-- ── Why the two are read so differently ─────────────────────────────────────
+--
+-- Both are asked "what should second N sound like", but only one of them
+-- answers with a file:
+--
+--   BigWigs   BigWigsAPI.GetCountdownSound(voiceID, n) -> a sound file path,
+--             which we play. The chosen voice is the Countdown plugin's
+--             db.profile.voice. Voice packs register 5-10 entries, so a
+--             countdown longer than the pack is simply silent past its range,
+--             exactly as it would be inside BigWigs.
+--   EXBoss    ExBoss.Voice.Countdown:TryPlayDigit(n) -- it PLAYS the digit
+--             itself, resolving its own selected pack, that pack's per-digit
+--             enable flags and any per-digit LibSharedMedia override on the
+--             way. Asking it for a path instead would mean reimplementing all
+--             of that and getting it wrong the first time its settings change.
+--             Its range is 1-5.
+--
+-- Take the highest-level call each addon offers, rather than normalising them
+-- into a shape of our own: the shape of our own would be a third opinion about
+-- how their settings work.
+local SOURCE_NSRT, SOURCE_BIGWIGS, SOURCE_EXBOSS = "nsrt", "bigwigs", "exboss"
+
+local SOURCE_LABEL = {
+    [SOURCE_NSRT]    = "NSRT (built-in)",
+    [SOURCE_BIGWIGS] = "BigWigs",
+    [SOURCE_EXBOSS]  = "EXBoss",
+}
+local SOURCE_ORDER = { SOURCE_NSRT, SOURCE_BIGWIGS, SOURCE_EXBOSS }
+
+local function ModuleDB()
+    AniModsDB.nsrtMisc = AniModsDB.nsrtMisc or {}
+    return AniModsDB.nsrtMisc
+end
+
+-- The BigWigs Countdown plugin's chosen voice id, or nil when BigWigs is not
+-- there. Read live rather than cached: it changes in BigWigs' own options, and
+-- nothing tells us when.
+local function BigWigsVoice()
+    local BigWigs = _G.BigWigs
+    if not (BigWigs and BigWigs.GetPlugin) then return nil end
+    local ok, plugin = pcall(BigWigs.GetPlugin, BigWigs, "Countdown", true)
+    if not ok or not plugin then return nil end
+    local db = plugin.db and plugin.db.profile
+    return db and db.voice or nil
+end
+
+local function ExBossCountdown()
+    local ExBoss = _G.ExBoss
+    local countdown = ExBoss and ExBoss.Voice and ExBoss.Voice.Countdown
+    if countdown and type(countdown.TryPlayDigit) == "function" then
+        return countdown
+    end
+    return nil
+end
+
+-- Whether a source could actually produce a countdown right now. Drives both
+-- the greying-out in the dropdown and the fall back to NSRT's own voice, so a
+-- source that disappears mid-session degrades instead of going silent.
+local function SourceAvailable(source)
+    if source == SOURCE_BIGWIGS then
+        local api = _G.BigWigsAPI
+        return (api and api.GetCountdownSound and BigWigsVoice()) and true or false
+    elseif source == SOURCE_EXBOSS then
+        return ExBossCountdown() ~= nil
+    end
+    return true   -- NSRT's own voice is always available; it ships the files
+end
+
+local function CurrentSource()
+    local source = ModuleDB().countdownSource
+    if source and SOURCE_LABEL[source] then return source end
+    return SOURCE_NSRT
+end
+
+-- Plays one digit through the chosen source. Returns false when that source
+-- has nothing for this number -- a countdown longer than the pack's range --
+-- which is silence for that digit, matching what the source itself would do.
+local function PlayDigit(source, digit)
+    if source == SOURCE_BIGWIGS then
+        local api = _G.BigWigsAPI
+        local voice = BigWigsVoice()
+        local path = voice and api and api.GetCountdownSound
+            and api.GetCountdownSound(voice, digit)
+        if not path then return false end
+        PlaySoundFile(path, "Master")
+        return true
+    elseif source == SOURCE_EXBOSS then
+        local countdown = ExBossCountdown()
+        if not countdown then return false end
+        local ok, played = pcall(countdown.TryPlayDigit, countdown, digit)
+        return ok and played ~= false
+    end
+    return false
+end
+
+-- ── The override ────────────────────────────────────────────────────────────
+--
+-- NSAPI.TTSCountdown is REPLACED rather than hooked, and that is the one
+-- invasive thing this addon does to another. A hook can only add: hooksecurefunc
+-- appends, so NSRT's own voice would still play underneath and the result would
+-- be two countdowns at once. The point here is substitution.
+--
+-- It is contained about it: the original is kept and called for every case the
+-- override does not claim -- NSRT selected, the chosen source unavailable, the
+-- module switched off. So the replacement is a router, and NSRT's behaviour is
+-- the default branch rather than something that had to be reimplemented.
+local originalTTSCountdown
+local overrideEnabled = true
+
+local function InstallOverride()
+    if originalTTSCountdown then return end
+    local NSAPI = _G.NSAPI
+    if not (NSAPI and type(NSAPI.TTSCountdown) == "function") then return end
+
+    originalTTSCountdown = NSAPI.TTSCountdown
+
+    -- Assigning over a function this file also read. That is the substitution,
+    -- not an accident.
+    ---@diagnostic disable-next-line: duplicate-set-field
+    NSAPI.TTSCountdown = function(apiSelf, num)
+        local source = CurrentSource()
+        if not overrideEnabled or source == SOURCE_NSRT or not SourceAvailable(source) then
+            return originalTTSCountdown(apiSelf, num)
+        end
+
+        num = tonumber(num)
+        if not num or num < 1 then return end
+
+        -- NSRT gates all of its own audio on this, inside NSAPI:TTS. Reading it
+        -- here keeps "TTS off" meaning what it means everywhere else in NSRT,
+        -- rather than this override being the one sound that ignores it.
+        local settings = _G.NSRT and _G.NSRT.Settings
+        if settings and not settings["TTS"] then return end
+
+        -- Same schedule NSRT uses: the first digit now, each later one at
+        -- (num - i) seconds. One timer per digit, all one-shot.
+        for i = num, 1, -1 do
+            local delay = num - i
+            if delay == 0 then
+                PlayDigit(source, i)
+            else
+                C_Timer.After(delay, function() PlayDigit(source, i) end)
+            end
+        end
+    end
+end
+
+-- ---------------------------------------------------------------------------
 -- Status panel
 -- ---------------------------------------------------------------------------
 
 function NSRTMisc:GetInfoRows()
     local rows = {}
     local total, silenced = CountAlerts()
+
+    -- ── Countdown voice ─────────────────────────────────────────────────────
+    --
+    -- The unavailable sources are greyed rather than dropped. A missing choice
+    -- explains nothing; a greyed one says the option exists and what would make
+    -- it usable.
+    --
+    -- No listener on BigWigs' or EXBoss' settings, deliberately. Both are read
+    -- at the moment a digit plays, so re-configuring either is picked up with
+    -- no notification, no cached copy to invalidate, and nothing to keep in
+    -- step. The dropdown here chooses WHICH addon to ask, never what it says.
+    local disabled = {}
+    for _, source in ipairs(SOURCE_ORDER) do
+        disabled[source] = not SourceAvailable(source)
+    end
+
+    rows[#rows + 1] = { section = "Countdown voice" }
+    rows[#rows + 1] = {
+        label    = "Use voice from",
+        options  = SOURCE_LABEL,
+        order    = SOURCE_ORDER,
+        disabled = disabled,
+        help     = "NSRT counts down in its own bundled voice with no way to "
+                .. "change it. This borrows whichever voice you have already "
+                .. "chosen in BigWigs or EXBoss -- change it there and this "
+                .. "follows, with nothing to set up twice.",
+        get      = CurrentSource,
+        set      = function(v) ModuleDB().countdownSource = v end,
+    }
+
+    local source = CurrentSource()
+    if source ~= SOURCE_NSRT then
+        local ok = SourceAvailable(source)
+        rows[#rows + 1] = {
+            label = ("%s voice available"):format(SOURCE_LABEL[source]),
+            state = ok,
+            help  = (not ok) and (source == SOURCE_BIGWIGS
+                and "BigWigs is not loaded, or its Countdown plugin has no voice "
+                 .. "selected. NSRT's own voice is used until it does."
+                or "EXBoss is not loaded, or its countdown voice module has not "
+                .. "finished loading. NSRT's own voice is used until it does.")
+                or nil,
+        }
+    end
 
     rows[#rows + 1] = { section = "Boss alert countdowns" }
 
@@ -175,9 +373,29 @@ function NSRTMisc:GetInfoRows()
     return rows
 end
 
--- No Enable: this module has nothing to start. It owns no frames, hooks
--- nothing, and registers no events -- everything it does happens on a click in
--- its own tab. Core treats a module with no Enable as active rather than
--- failed, which is the correct reading here.
+-- Installs the countdown router. The batch buttons need no setup at all --
+-- they act on a click -- so this is the module's only startup work.
+--
+-- Deferred to W.OnReady rather than run at PLAYER_LOGIN: NSAPI is created by
+-- NSRT's own boot, and that callback is the first point after it where
+-- everything is guaranteed up. Same sequencing the other modules use.
+function NSRTMisc:Enable()
+    overrideEnabled = true
+    AniMods.W.OnReady(InstallOverride)
+end
+
+-- Toggles live, because the override is a router: switching the module off
+-- makes it take the pass-through branch on the next countdown, which is
+-- indistinguishable from never having been installed.
+--
+-- The replacement itself is NOT uninstalled. Putting the original back is only
+-- safe if nothing else replaced NSAPI.TTSCountdown afterwards, and restoring
+-- over another addon's function would silently undo its work -- the same reason
+-- hooksecurefunc has no inverse. Leaving an inert router in place costs one
+-- boolean test per countdown.
+function NSRTMisc:SetEnabled(on)
+    overrideEnabled = on and true or false
+    return true
+end
 
 AniMods.RegisterModule("NSRTMisc", NSRTMisc)

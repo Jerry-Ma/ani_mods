@@ -798,8 +798,40 @@ both toggleable in **General**.
     in `MinimapCluster` — an earlier version of this entry skinned that one by mistake,
     and this documented the mistake for a while after the code stopped making it.
     Available only when EllesmereUIMinimap is loaded.
-- **NSRT Misc** — the bag for small Northern Sky Raid Tools tweaks: batch edits its own
-  UI can only make one row at a time. One entry so far, plus the button that undoes it.
+- **NSRT Misc** — the bag for small Northern Sky Raid Tools tweaks: things its own UI
+  can't do, either because they're batch edits it only offers one row at a time, or
+  because it offers no setting at all.
+
+  **Countdown voice.** NSRT counts down in its own bundled voice
+  (`Media\Sounds\5.ogg`…) with no way to change it. This borrows whichever voice you've
+  already chosen in **BigWigs** or **EXBoss**. Sources that aren't loaded are greyed in
+  the dropdown rather than dropped — a missing choice explains nothing, a greyed one says
+  what would make it usable.
+
+  The two are read very differently, and taking each addon's *highest-level* call is the
+  point: `BigWigsAPI.GetCountdownSound(voice, n)` returns a file path, which we play, with
+  the chosen voice at the Countdown plugin's `db.profile.voice`; EXBoss instead
+  **plays the digit itself** via `ExBoss.Voice.Countdown:TryPlayDigit(n)`, resolving its
+  selected pack, that pack's per-digit switches and any per-digit LibSharedMedia override
+  on the way. Asking EXBoss for a path would mean reimplementing all of that and getting
+  it wrong the first time its settings changed.
+
+  **It needs no listener on either addon's settings, and that's by construction rather
+  than luck**: both are read at the moment a digit plays, so re-configuring BigWigs or
+  EXBoss is picked up by the very next countdown — nothing is cached, so there's nothing
+  to invalidate and nothing to keep in step. The dropdown chooses *which addon to ask*,
+  never what it says.
+
+  `NSAPI.TTSCountdown` is **replaced**, not hooked — the one invasive thing this addon
+  does to another, and the reason is that a hook can only *add*: `hooksecurefunc` appends,
+  so NSRT's own voice would still play underneath and you'd hear two countdowns. It stays
+  contained by being a **router**: the original is kept and called for every case the
+  override doesn't claim — NSRT selected, chosen source unavailable, module switched off —
+  so NSRT's behaviour is the default branch rather than something reimplemented. The
+  replacement is never uninstalled, because putting the original back is only safe if
+  nothing else replaced the function afterwards; leaving an inert router costs one boolean
+  test per countdown. It also honours `NSRT.Settings.TTS`, so "TTS off" keeps meaning what
+  it means everywhere else in NSRT.
 
   **Silence every boss-alert countdown.** NSRT's encounter alerts each carry a
   `countdown` field, and what matters is what it means when *absent*

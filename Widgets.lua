@@ -1411,6 +1411,18 @@ local function ApplyMenuEntry(item, entry)
         return
     end
 
+    -- Disabled: visible but plainly inert, and NOT hidden. A choice that is
+    -- missing leaves no explanation for why it is missing; a greyed one says
+    -- "this exists, it just does not apply here" -- the same reasoning the
+    -- accent swatches use for a preset that the theme has taken over.
+    if entry.disabled then
+        PaintCheck(item, false)
+        item._fs:SetTextColor(1, 1, 1, 0.3)
+        item:EnableMouse(false)
+        item:SetScript("OnClick", nil)
+        return
+    end
+
     item._fs:SetTextColor(1, 1, 1, W.DD_TXT_A)
     item:EnableMouse(true)
     PaintCheck(item, mode == "check" and entry.checked)
@@ -1751,6 +1763,7 @@ function W.Dropdown(parent, width)
             entries[i] = {
                 text = o.list[key] or tostring(key),
                 selected = (key == o.value),
+                disabled = o.disabled and o.disabled[key] or false,
                 onClick = function()
                     o:SetValue(key)
                     HideMenu()
@@ -1782,6 +1795,10 @@ function W.Dropdown(parent, width)
         o.value = key
         text:SetText(o.list[key] or "")
     end
+    -- A set of keys to render inert. Re-pushed on every refresh, since what is
+    -- unavailable can change while the panel is open (an addon finishing its
+    -- load, say).
+    function o:SetDisabled(set) o.disabled = set end
     function o:GetValue() return o.value end
     function o:SetOnChange(fn) o._onChange = fn end
     function o:SetOnOpened(fn) o._onOpened = fn end
