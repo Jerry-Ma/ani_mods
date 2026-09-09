@@ -202,6 +202,18 @@ shared signature every broker would carry two copies of its tooltip body — the
 divergence that rots. So a broker registers `OnEnter`/`OnLeave` *and* `OnTooltipShow`,
 all three pointing at the same render function.
 
+**Placement is chosen from the widget's own position on screen**, on both axes, and the
+click menus use the same rule so a widget's menu and its tooltip never appear on
+opposite sides of it. A data bar can sit anywhere: a widget in the top half opens
+downward, one in the bottom half upward; one in the left third aligns left edges so the
+popup extends *right*, one in the right third aligns right edges so it extends *left*,
+and the middle is centred. Thirds horizontally rather than halves, because that axis is
+about overflow rather than direction — a widget near the middle has room either way and
+looks best centred. `SetClampedToScreen` stays on as a backstop, but it's the wrong
+primary mechanism: clamping a popup that opened the wrong way shoves it back *over* the
+widget the cursor is on. GroupRoles' docked badge overrides the rule with its own
+setting, since which way it opens decides what it covers.
+
 SocialStatus uses only the *shell*, via the exposed `.inner`: its body is a bespoke
 two-column layout (class-coloured names, Battle.net tag prefix, right-aligned zone,
 grouped under headers with dividers) that no line-based API expresses. Before the shell

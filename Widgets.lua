@@ -877,6 +877,51 @@ function W.Swatches(parent, size)
     return o
 end
 
+-- ── Popup placement ─────────────────────────────────────────────────────────
+-- Puts `frame` beside `anchor` on whichever side keeps it on screen.
+--
+-- A data bar can sit anywhere: along the top, along the bottom, or vertically
+-- down either edge. A popup that always opens downward is fine for the first
+-- and useless for the second, where it would hang off the bottom of the screen
+-- (or, with SetClampedToScreen, get shoved back OVER the widget it belongs to,
+-- covering the thing the cursor is on).
+--
+-- Both axes, from the anchor's own position:
+--   * widget in the TOP half -> open downward; bottom half -> open upward.
+--   * widget in the left third -> align left edges, so it extends RIGHT;
+--     right third -> align right edges, so it extends LEFT; middle -> centred.
+--
+-- Thirds rather than halves horizontally, because the horizontal case is about
+-- overflow rather than direction: a widget near the middle has room either way
+-- and looks best centred, and only the outer thirds actually need to be pushed
+-- inward. Clamping is still on as a backstop for a popup wider than the space
+-- its third leaves.
+local function AnchorNear(frame, anchor, gap)
+    gap = gap or 4
+    frame:ClearAllPoints()
+
+    local cx, cy = anchor:GetCenter()
+    local sw, sh = UIParent:GetWidth() or 0, UIParent:GetHeight() or 0
+    if not (cx and cy) or sw == 0 or sh == 0 then
+        -- No resolved rect yet (an anchor that has never been laid out): below
+        -- is the conventional default and the clamp will rescue it.
+        frame:SetPoint("TOP", anchor, "BOTTOM", 0, -gap)
+        return
+    end
+
+    local openDown = cy >= sh / 2
+    local mine  = openDown and "TOP" or "BOTTOM"
+    local yours = openDown and "BOTTOM" or "TOP"
+
+    if cx < sw / 3 then
+        mine, yours = mine .. "LEFT", yours .. "LEFT"
+    elseif cx > sw * 2 / 3 then
+        mine, yours = mine .. "RIGHT", yours .. "RIGHT"
+    end
+
+    frame:SetPoint(mine, anchor, yours, 0, openDown and -gap or gap)
+end
+
 -- ── Tooltip ─────────────────────────────────────────────────────────────────
 -- A themed hover popup for broker widgets.
 --
@@ -991,13 +1036,23 @@ function W.Tooltip()
         cursor = cursor + 4
     end
 
-    -- Anchored below the widget by default, which is where a data bar's
-    -- hover popup belongs; SetClampedToScreen keeps a bar near the bottom of
-    -- the screen from pushing it off.
+    -- Placed on whichever side of the widget keeps it on screen (see
+    -- AnchorNear): a bar along the bottom gets its tooltip above, one along the
+    -- top gets it below, and a widget near either side edge has the tooltip
+    -- extend inward rather than off the screen.
+    --
+    -- `point` overrides that entirely, for the one caller that has its own
+    -- rule: GroupRoles' docked badge, whose direction is a user setting because
+    -- it sits right under EllesmereUI's Raid Tools icon and which way it opens
+    -- is a matter of what it would cover.
     function o:Show(anchor, point, relPoint, x, y)
         f:SetSize(widest + TT_PAD * 2, cursor + TT_PAD)
-        f:ClearAllPoints()
-        f:SetPoint(point or "TOP", anchor, relPoint or "BOTTOM", x or 0, y or -4)
+        if point then
+            f:ClearAllPoints()
+            f:SetPoint(point, anchor, relPoint or "BOTTOM", x or 0, y or 0)
+        else
+            AnchorNear(f, anchor)
+        end
         f:Show()
     end
 
@@ -1608,15 +1663,11 @@ function W.Menu(anchor, entries, opts)
     -- the row rather than just its text.
     for i = 1, #entries do popupRows[i].frame:SetWidth(widest) end
 
-    -- Opens away from the screen edge the widget sits nearest, which is how
-    -- EUI's own popups decide: a data bar along the bottom must open upward.
-    clickPopup:ClearAllPoints()
-    local _, cy = anchor:GetCenter()
-    if cy and cy < (UIParent:GetHeight() or 0) / 2 then
-        clickPopup:SetPoint("BOTTOM", anchor, "TOP", 0, 4)
-    else
-        clickPopup:SetPoint("TOP", anchor, "BOTTOM", 0, -4)
-    end
+    -- Same placement rule as the hover tooltip, so a widget's menu and its
+    -- tooltip appear on the same side of it rather than disagreeing. This used
+    -- to flip vertically only, which left a menu opened from a widget at the
+    -- far right of a bar running off the screen edge.
+    AnchorNear(clickPopup, anchor)
 
     clickPopupCatcher:Show()
     clickPopup:Show()
