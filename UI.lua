@@ -1354,6 +1354,9 @@ local function BuildUI()
     -- wrapped text against a width that hadn't resolved yet, and only a
     -- relayout (not an in-place text update) re-measures it.
     frame:HookScript("OnShow", function()
+        -- Toplevel raises on CLICK; showing is not a click, so a panel reopened
+        -- while another DIALOG-strata window is up would appear behind it.
+        frame:Raise()
         RefreshTabs()
         RefreshCurrentTab()
         RelayoutContent(tabCache[currentTabName])

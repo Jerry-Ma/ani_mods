@@ -2237,7 +2237,28 @@ function W.Window(name, titleText, width, height, opts)
     local f = CreateFrame("Frame", nil, UIParent)
     f:SetSize(width or 700, height or 500)
     f:SetPoint("CENTER")
-    f:SetFrameStrata("HIGH")
+
+    -- DIALOG, and toplevel.
+    --
+    -- HIGH was the problem: Northern Sky Raid Tools' main window is HIGH too
+    -- (its UI/Core.lua), so the two interleaved by frame level -- NSRT's rows
+    -- drawing between this window's background and its own cards, which reads
+    -- as one window shredded through another rather than as two windows.
+    --
+    -- DIALOG clears NSRT's main window outright and puts this level with its
+    -- sub-panels, where SetToplevel settles it properly: a toplevel frame is
+    -- raised to the top of its strata when clicked, so whichever window you are
+    -- actually using is the one in front.
+    --
+    -- Deliberately NOT FULLSCREEN_DIALOG, which is what EllesmereUI's own
+    -- options windows use and would have been the obvious suite-matching
+    -- choice. That is the strata of THIS addon's dropdown menus, click menus
+    -- and popups: raising the window into it would let the window cover its own
+    -- open dropdown. Our layering stays strictly ordered instead --
+    -- DIALOG window < FULLSCREEN_DIALOG menus < TOOLTIP hover popups -- and no
+    -- Raise() within DIALOG can disturb it.
+    f:SetFrameStrata("DIALOG")
+    f:SetToplevel(true)
     f:SetClampedToScreen(true)
     f:EnableMouse(true)
     f:SetMovable(true)
