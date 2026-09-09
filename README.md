@@ -797,10 +797,18 @@ both toggleable in **General**.
   means it survives every EUI update untouched, at the cost of using EllesmereUIDataBars'
   generic "Broker Plugin" block type instead of a dedicated one.
 - **SpecSwitch** — switch specialization and loot spec from a data bar. **Left-click**
-  cycles to the next spec, **Shift+left-click** cycles the loot spec (including back to
-  "follow current spec", which is part of the cycle so it's reachable without opening the
-  panel), **right-click** opens this module's tab, where each spec has an in-the-cycle
-  checkbox and the loot spec gets a dropdown of its own.
+  opens a menu of specs, **right-click** a menu of loot specs (led by "Follow current
+  spec", Blizzard's default and the state you want back after borrowing one for a boss).
+  Settings live at the bottom of the spec menu rather than claiming right-click, so the
+  two menus keep the split anyone who has used EUI's block already knows.
+
+  It **cycled** at first, and that was wrong. With four specs, reaching a known
+  destination took up to three clicks *and three intermediate spec changes* — and a spec
+  change is a cast on the global cooldown, so the intermediates aren't free the way
+  cycling a sound device is. It also forced a whole "specs in the cycle" settings section
+  into existence whose only job was to make cycling less bad. A menu names the
+  destination and goes there; both the section and the cycle are gone. Cycling still
+  suits SoundSwitch, where switching is instant, reversible, and usually between two.
 
   **Stock UI only** — its conditions are "EllesmereUI not installed" and "NDui not
   installed", both hard. Each ships this exact widget already (EllesmereUIDataBars' spec

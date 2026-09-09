@@ -1,8 +1,8 @@
 -- SpecSwitch
 -- Switch talent specialization and loot specialization from a data bar.
 --
--- Left-click cycles to the next spec, Shift+left-click cycles the loot spec,
--- right-click opens this module's tab to choose which specs are in the cycle.
+-- Left-click opens a menu of specs, right-click a menu of loot specs -- the
+-- same split EllesmereUIDataBars' spec block uses.
 --
 -- ── Why this is gated to a stock UI ──────────────────────────────────────────
 --
@@ -50,15 +50,6 @@ local function ModuleDB()
     return AniModsDB.specSwitch
 end
 
--- Keyed by spec ID, not index: indices are positional and would silently
--- re-point at a different spec if Blizzard ever reordered them, while the ID
--- is the same number the loot-spec API speaks in.
-local function CycleDB()
-    local db = ModuleDB()
-    db.specs = db.specs or {}
-    return db.specs
-end
-
 -- ---------------------------------------------------------------------------
 -- Specs
 -- ---------------------------------------------------------------------------
@@ -101,19 +92,6 @@ local function CurrentSpec()
     return index and specCache[index] or nil
 end
 
--- Absent means in the cycle: a newly learned spec should participate without
--- having to be found in the options first. Same default as SoundSwitch's
--- devices, and for the same reason.
-local function IsInCycle(id)
-    local v = CycleDB()[id]
-    if v == nil then return true end
-    return v
-end
-
-local function SetInCycle(id, enabled)
-    CycleDB()[id] = enabled and true or false
-end
-
 -- 0 means "whatever the active spec is", which is Blizzard's own default and
 -- is a real choice rather than an absence -- so it is reported as such.
 local function LootSpecID()
@@ -135,43 +113,22 @@ end
 -- flag. Defined below, with the rest of the broker.
 local UpdateBroker
 
--- Returns the next in-cycle spec after the current one, wrapping; or nil plus
--- a reason.
-local function NextSpec()
-    local cycle = {}
-    for _, spec in ipairs(GetSpecs()) do
-        if IsInCycle(spec.id) then cycle[#cycle + 1] = spec end
-    end
-    if #cycle == 0 then
-        return nil, "every spec is excluded from the cycle"
-    end
-    if #cycle == 1 then
-        return nil, "only one spec is in the cycle"
-    end
-
-    local current = CurrentSpec()
-    local at = 0
-    for i, spec in ipairs(cycle) do
-        if current and spec.id == current.id then at = i break end
-    end
-    return cycle[(at % #cycle) + 1]
-end
-
 local function Warn(message)
     UIErrorsFrame:AddMessage("AniMods: " .. message, 1, 0.3, 0.3, 1)
 end
 
-local function SwitchSpec()
+local function SwitchSpec(spec)
+    if not spec then return end
+    -- Already there: SetSpecialization on the active spec would start a cast
+    -- to arrive where you are.
+    local current = CurrentSpec()
+    if current and current.id == spec.id then return end
+
     -- Changing spec is not combat-legal. Checked rather than attempted: the
     -- API failing in lockdown produces nothing visible, so the click would
     -- appear to do nothing at all.
     if InCombatLockdown() then
         Warn("can't change spec in combat")
-        return
-    end
-    local spec, reason = NextSpec()
-    if not spec then
-        Warn(reason or "no spec to switch to")
         return
     end
     -- Both suppressions are for the API metadata, not for a real problem:
@@ -192,33 +149,79 @@ local function SwitchSpec()
     -- PLAYER_SPECIALIZATION_CHANGED is what reports it actually happening.
 end
 
--- Cycles: follow-current -> each spec in turn -> back to follow-current.
+-- ---------------------------------------------------------------------------
+-- Menus
+-- ---------------------------------------------------------------------------
+
+-- Left-click picks a spec, right-click picks a loot spec, exactly as
+-- EllesmereUIDataBars' own spec block does it (its ToggleSpecPopup /
+-- ToggleLootSpecPopup).
 --
--- "Follow current spec" is part of the cycle rather than a separate control,
--- because it is the state most people want back after borrowing a loot spec
--- for one boss, and it would otherwise be reachable only from the panel.
-local function SwitchLootSpec()
+-- This CYCLED at first, which was wrong. With four specs, reaching a known
+-- destination took up to three clicks and three intermediate spec changes --
+-- and a spec change is a cast with a global cooldown, so the intermediates are
+-- not free the way cycling a sound device is. It also forced a whole settings
+-- section into existence ("specs in the cycle") whose only purpose was to make
+-- cycling less bad. A menu names the destination and goes there.
+--
+-- Cycling suits SoundSwitch because switching outputs is instant, reversible,
+-- and you are usually alternating between two. None of that holds here.
+local function SpecIcon(spec)
+    return spec.icon and ("|T%s:14|t "):format(spec.icon) or ""
+end
+
+local function ShowSpecMenu(anchor)
     local specs = GetSpecs()
     if #specs == 0 then
         Warn("no specializations available yet")
         return
     end
 
-    local currentID = LootSpecID()
-    if currentID == 0 then
-        SetLootSpecialization(specs[1].id)
+    local current = CurrentSpec()
+    local entries = { { header = true, text = "Specialization" } }
+    for _, spec in ipairs(specs) do
+        entries[#entries + 1] = {
+            text = SpecIcon(spec) .. spec.name,
+            checked = current and current.id == spec.id or false,
+            onClick = function() SwitchSpec(spec) end,
+        }
+    end
+    entries[#entries + 1] = {
+        text = "AniMods settings",
+        onClick = function()
+            if AniMods.OpenModuleTab then AniMods.OpenModuleTab("SpecSwitch") end
+        end,
+    }
+    AniMods.W.Menu(anchor, entries)
+end
+
+local function ShowLootMenu(anchor)
+    local specs = GetSpecs()
+    if #specs == 0 then
+        Warn("no specializations available yet")
         return
     end
-    for i, spec in ipairs(specs) do
-        if spec.id == currentID then
-            local nextSpec = specs[i + 1]
-            SetLootSpecialization(nextSpec and nextSpec.id or 0)
-            return
-        end
+
+    local lootID = LootSpecID()
+    -- "Follow current spec" leads, as it does in EUI's own loot menu: it is
+    -- Blizzard's default and the state people want back after borrowing a loot
+    -- spec for one boss.
+    local entries = {
+        { header = true, text = "Loot specialization" },
+        {
+            text = "Follow current spec",
+            checked = (lootID == 0),
+            onClick = function() SetLootSpecialization(0) end,
+        },
+    }
+    for _, spec in ipairs(specs) do
+        entries[#entries + 1] = {
+            text = SpecIcon(spec) .. spec.name,
+            checked = (lootID == spec.id),
+            onClick = function() SetLootSpecialization(spec.id) end,
+        }
     end
-    -- Current loot spec is not one of this character's specs (it can be left
-    -- over from a spec change): reset to following the active spec.
-    SetLootSpecialization(0)
+    AniMods.W.Menu(anchor, entries)
 end
 
 -- ---------------------------------------------------------------------------
@@ -264,17 +267,9 @@ local function ShowTooltip(tt)
 
     for _, spec in ipairs(specs) do
         local isCurrent = current and spec.id == current.id
-        local inCycle = IsInCycle(spec.id)
-        local r, g, b
-        if isCurrent then
-            r, g, b = 0.35, 1, 0.35
-        elseif inCycle then
-            r, g, b = 1, 1, 1
-        else
-            r, g, b = 0.5, 0.5, 0.5
-        end
-        tt:AddDoubleLine((isCurrent and "> " or "   ") .. spec.name,
-            inCycle and "" or "skipped", r, g, b, 0.5, 0.5, 0.5)
+        local r, g, b = 1, 1, 1
+        if isCurrent then r, g, b = 0.35, 1, 0.35 end
+        tt:AddLine((isCurrent and "> " or "   ") .. spec.name, r, g, b)
     end
 
     tt:AddLine(" ")
@@ -283,9 +278,8 @@ local function ShowTooltip(tt)
         0.8, 0.8, 0.8, 1, 0.82, 0)
 
     tt:AddLine(" ")
-    tt:AddLine("Left-click: next spec", 0.6, 0.6, 0.6)
-    tt:AddLine("Shift-click: next loot spec", 0.6, 0.6, 0.6)
-    tt:AddLine("Right-click: settings", 0.6, 0.6, 0.6)
+    tt:AddLine("Left-click: choose spec", 0.6, 0.6, 0.6)
+    tt:AddLine("Right-click: choose loot spec", 0.6, 0.6, 0.6)
 end
 
 local function ShowPopup(anchor)
@@ -298,11 +292,18 @@ end
 local function InitLDB()
     ldbObject = Broker.Register("AniModsSpecSwitch", {
         label = "AniMods: Spec Switch",
-        OnClick = function(_, button)
+        -- EllesmereUIDataBars' own split: left for spec, right for loot spec.
+        -- Settings move into the spec menu rather than claiming right-click, so
+        -- the two menus keep the layout anyone who has used EUI's block already
+        -- knows.
+        --
+        -- `frame` is the button the data bar drew for this widget, and it is
+        -- what the menu anchors to.
+        OnClick = function(frame, button)
             if button == "LeftButton" then
-                if IsShiftKeyDown() then SwitchLootSpec() else SwitchSpec() end
-            elseif AniMods.OpenModuleTab then
-                AniMods.OpenModuleTab("SpecSwitch")
+                ShowSpecMenu(frame)
+            else
+                ShowLootMenu(frame)
             end
         end,
         -- Themed popup where the display supports it, plain GameTooltip where
@@ -364,16 +365,8 @@ function SpecSwitch:GetInfoRows()
         end,
     }
 
-    rows[#rows + 1] = { section = "Specs in the cycle" }
-    for _, spec in ipairs(specs) do
-        local id = spec.id
-        rows[#rows + 1] = {
-            label = spec.name,
-            get   = function() return IsInCycle(id) end,
-            set   = function(v) SetInCycle(id, v) end,
-            note  = (current and current.id == id) and "Current" or nil,
-        }
-    end
+    -- No "specs in the cycle" section: there is no cycle. It existed only to
+    -- make cycling tolerable, and the menus made both unnecessary.
 
     for _, row in ipairs(Broker.SectionRows(ModuleDB, UpdateBroker, "AniModsSpecSwitch")) do
         rows[#rows + 1] = row

@@ -1401,6 +1401,47 @@ local function OpenMenuAt(owner, anchor, entries)
     if owner._onOpened then owner._onOpened() end
 end
 
+-- ── Click menu ──────────────────────────────────────────────────────────────
+-- A menu popped from an arbitrary frame -- a broker widget on a data bar, say --
+-- rather than from a dropdown control. Same shared menu, same skin, same
+-- check marks as everything else; it just has no closed state of its own.
+--
+-- Entries are { text, checked, onClick } or { header = true, text }. `checked`
+-- present (even as false) draws the check column, so a menu of mutually
+-- exclusive choices shows which one is current. Clicking closes.
+--
+-- Owners are cached per anchor frame, and that is what makes a second click on
+-- the same widget CLOSE the menu (the shared open routine toggles when the
+-- owner matches) while a click on a different widget re-points it instead.
+local menuOwners = setmetatable({}, { __mode = "k" })
+
+function W.Menu(anchor, entries)
+    local owner = menuOwners[anchor]
+    if not owner then
+        owner = {}
+        menuOwners[anchor] = owner
+    end
+
+    local built = {}
+    for i, e in ipairs(entries or {}) do
+        if e.header then
+            built[i] = { mode = "header", text = e.text }
+        else
+            built[i] = {
+                mode = (e.checked ~= nil) and "check" or "plain",
+                text = e.text,
+                checked = e.checked,
+                onClick = function()
+                    HideMenu()
+                    if e.onClick then e.onClick() end
+                end,
+            }
+        end
+    end
+
+    OpenMenuAt(owner, anchor, built)
+end
+
 -- The closed-state chrome both dropdown flavours wear: house block, border,
 -- left-aligned text and a caret.
 local function BuildDropdownFace(parent, width)
