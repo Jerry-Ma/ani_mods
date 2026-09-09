@@ -139,10 +139,15 @@ end
 -- next to the controls they govern.
 --
 -- Each entry's `text` is phrased as a STATEMENT that is true or false --
--- "EllesmereUI installed", "NDui chat module off" -- which is what makes the
--- panel's Met / Not met badge read correctly against it, and what the name
+-- "EllesmereUI loaded", "NDui chat module off" -- which is what makes the
+-- panel's Yes / No badge read correctly against it, and what the name
 -- `conditions` is describing. It was `dependencies` first, a noun for the
 -- things rather than for the claims being made about them.
+--
+-- "loaded", not "installed": these are all AniMods.IsAddOnLoaded checks, and an
+-- addon that is installed but switched off in the addon list is not loaded. The
+-- panel would otherwise tell someone an addon they can see on disk is "not
+-- installed".
 --
 -- Returns:
 --   allMet   every condition is satisfied

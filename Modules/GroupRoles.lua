@@ -68,7 +68,7 @@ local GroupRoles = {
     -- and belongs with the feature rather than in a checklist about whether the
     -- module may run at all.
     conditions = {
-        { text = "NDui not installed",
+        { text = "NDui not loaded",
           help = "NDui's raid tool shows the same role counts, so this stands "
               .. "down rather than displaying them twice.",
           met = function() return not AniMods.IsAddOnLoaded("NDui") end },

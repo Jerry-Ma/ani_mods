@@ -115,7 +115,7 @@ local MyFeature = {
     -- never fails.
     conditions = {
         -- Required (the default): unmet means the module cannot run.
-        { text = "SomeAddon installed",
+        { text = "SomeAddon loaded",
           help = "The long explanation, revealed by the row's ? marker.",
           met  = function() return AniMods.IsAddOnLoaded("SomeAddon") end },
 
@@ -294,11 +294,17 @@ this off" with a checklist rather than silence.
 The rule that decides whether something belongs here: **a condition is right when another
 addon already _does_ this, and wrong when another addon merely _inspired_ it.**
 
+Say **"loaded", never "installed"** — every one of these is an `AniMods.IsAddOnLoaded`
+check, and an addon sitting on disk but switched off in the addon list is installed yet
+not loaded. "Not installed" would tell someone a folder they can see doesn't exist. It's
+also the more precise word for the third case: an enabled load-on-demand addon isn't
+loaded until something demands it.
+
 Both halves have been learned the hard way. GroupRoles and SocialStatus each carried a
 "requires EllesmereUIQoL" / "requires EllesmereUIMinimap" for a while, which gated the
 *data* on a *presentation* concern — the counts are plain Blizzard API and the brokers
 work on a stock UI, so those conditions denied a working feature to anyone without the
-addon they merely resembled. Both are gone. Both now instead carry "NDui not installed",
+addon they merely resembled. Both are gone. Both now instead carry "NDui not loaded",
 which is the other half of the rule: NDui genuinely ships the same counts
 (`Modules/Misc/RaidTool.lua`, `Modules/Infobar/Friends.lua`), so running alongside it
 means two widgets showing one number.
@@ -562,7 +568,7 @@ both toggleable in **General**.
   when there are any. EllesmereUI's QoL Raid Tools panel has no composition display the
   way NDui's raid tool does, so this fills the gap.
 
-  **One condition: NDui not installed** — its raid tool draws the same three counts
+  **One condition: NDui not loaded** — its raid tool draws the same three counts
   (`Modules/Misc/RaidTool.lua`, `M:RaidTool_RoleCount`), so this stands down rather than
   showing them twice.
 
@@ -792,7 +798,7 @@ both toggleable in **General**.
   against combat lockdown. Refreshes on `GUILD_ROSTER_UPDATE`/`FRIENDLIST_UPDATE`/
   `BN_FRIEND_INFO_CHANGED`/`BN_FRIEND_ACCOUNT_ONLINE`/`BN_FRIEND_ACCOUNT_OFFLINE`.
 
-  **One condition: NDui not installed** — its infobar ships both of these counts already
+  **One condition: NDui not loaded** — its infobar ships both of these counts already
   (`Modules/Infobar/Friends.lua` and `Guild.lua`), so this stands down rather than
   showing them twice.
 
@@ -850,8 +856,8 @@ both toggleable in **General**.
   destination and goes there; both the section and the cycle are gone. Cycling still
   suits SoundSwitch, where switching is instant, reversible, and usually between two.
 
-  **Stock UI only** — its conditions are "EllesmereUI not installed" and "NDui not
-  installed", both hard. Each ships this exact widget already (EllesmereUIDataBars' spec
+  **Stock UI only** — its conditions are "EllesmereUI not loaded" and "NDui not
+  loaded", both hard. Each ships this exact widget already (EllesmereUIDataBars' spec
   block, `NDui/Modules/Infobar/Spec.lua`) and EUI's is better: it offers loadout
   switching and a talent-frame shortcut from the same button. Hard rather than soft
   because a soft condition is an advisory the user may overrule with **Run anyway**, and

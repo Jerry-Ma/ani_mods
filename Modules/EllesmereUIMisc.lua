@@ -26,7 +26,7 @@ local EUIMisc = {
     title = "EllesmereUI Misc",
     description = "Small tweaks to EllesmereUI's own elements.",
     conditions = {
-        { text = "EllesmereUI installed",
+        { text = "EllesmereUI loaded",
           help = "Everything here adjusts EllesmereUI's own elements, so it "
               .. "needs EllesmereUI.",
           met = function() return AniMods.IsAddOnLoaded("EllesmereUI") end },

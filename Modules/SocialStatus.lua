@@ -48,7 +48,7 @@ local SocialStatus = {
     -- The distinction that matters: a condition is right when another addon
     -- already DOES this, and wrong when another addon merely INSPIRED it.
     conditions = {
-        { text = "NDui not installed",
+        { text = "NDui not loaded",
           help = "NDui's infobar shows the same guild and friend counts, so "
               .. "this stands down rather than displaying them twice.",
           met = function() return not AniMods.IsAddOnLoaded("NDui") end },

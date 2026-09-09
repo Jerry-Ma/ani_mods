@@ -30,11 +30,11 @@ local SpecSwitch = {
     title = "Spec Switch",
     description = "Switch your specialization and loot spec.",
     conditions = {
-        { text = "EllesmereUI not installed",
+        { text = "EllesmereUI not loaded",
           help = "EllesmereUIDataBars ships a spec block that already does this, "
               .. "with loadout switching too.",
           met = function() return not AniMods.IsAddOnLoaded("EllesmereUI") end },
-        { text = "NDui not installed",
+        { text = "NDui not loaded",
           help = "NDui's infobar ships its own spec and loot-spec switcher.",
           met = function() return not AniMods.IsAddOnLoaded("NDui") end },
     },

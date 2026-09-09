@@ -762,7 +762,7 @@ local scrollPos = {}   -- name -> saved scroll offset
 -- them read as unrelated facts instead of a checklist.
 --
 -- Yes/No, because each row is already phrased as a STATEMENT --
--- "EllesmereUI installed", "NDui chat module off" -- and the badge answers it.
+-- "EllesmereUI loaded", "NDui chat module off" -- and the badge answers it.
 -- Read together they form a question and its answer, which is how the rows are
 -- written; Met/Not met made the reader translate the label into a requirement
 -- first and then judge that. The label carries the specifics either way, which
@@ -948,7 +948,7 @@ local function BuildTabContent(name)
     -- rather than by reading prose.
     --
     -- "Conditions" rather than "Dependencies" or "Requirements", because each
-    -- row is a STATEMENT that is true or false -- "EllesmereUI installed",
+    -- row is a STATEMENT that is true or false -- "EllesmereUI loaded",
     -- "NDui chat module off" -- not the name of a thing. A noun header over a
     -- column of statements reads as a mislabel.
     local deps = entry.conditions
