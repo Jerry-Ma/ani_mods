@@ -2,7 +2,9 @@
 -- Switch talent specialization and loot specialization from a data bar.
 --
 -- Left-click opens a menu of specs, right-click a menu of loot specs -- the
--- same split EllesmereUIDataBars' spec block uses.
+-- same split EllesmereUIDataBars' spec block uses. Its modifier-clicks (Ctrl
+-- for loadouts, Shift for the talent frame) are deliberately not copied: see
+-- the loadout section below.
 --
 -- ── Why this is gated to a stock UI ──────────────────────────────────────────
 --
@@ -180,10 +182,8 @@ end
 -- read at the moment you are choosing, which is when a modifier hint is
 -- actually useful.
 local CLICK_HINTS = {
-    { "Left-click",       "Change spec" },
-    { "Ctrl-left-click",  "Change loadout" },
-    { "Shift-left-click", "Open talents" },
-    { "Right-click",      "Change loot spec" },
+    { "Left-click",  "Change spec" },
+    { "Right-click", "Change loot spec" },
 }
 
 local function ShowSpecMenu(anchor)
@@ -222,36 +222,35 @@ end
 -- ---------------------------------------------------------------------------
 -- Loadouts
 -- ---------------------------------------------------------------------------
--- Talent loadouts for the ACTIVE spec, newest API only.
+-- The applied loadout's NAME, for display. Reading it is all this module does
+-- with loadouts.
 --
---   C_ClassTalents.GetConfigIDsBySpecID(specID)         -- the saved loadouts
 --   C_ClassTalents.GetLastSelectedSavedConfigID(specID) -- which one is applied
 --   C_Traits.GetConfigInfo(configID)                    -- its name
---   C_ClassTalents.LoadConfig(configID, true)           -- apply it
 --
--- Read live on every open rather than cached, and that is worth stating because
--- it is the whole reason this module does not inherit EllesmereUIDataBars' most
--- delicate piece of machinery. Its block DISPLAYS the loadout name, so it has to
--- know when the name settles -- and Blizzard writes the "last selected" pointer
--- AFTER the talent-commit events fire, so TRAIT_CONFIG_UPDATED reads the old
--- name. EUI solves that by hooking UpdateLastSelectedSavedConfigID itself and
--- listening to four extra events.
+-- Switching loadouts lived here too, on Ctrl+left-click, mirroring
+-- EllesmereUIDataBars' spec block. It went because a modifier-click on a data
+-- bar widget is a poor place to put an action: nothing on the bar advertises
+-- it, so it is undiscoverable to anyone who has not read the tooltip, and it is
+-- reachable by accident by anyone holding Ctrl for another reason. Shift+click
+-- for the talent frame went with it, for the same reason and with less excuse
+-- -- the talent frame already has a keybind.
 --
--- Nothing here displays the name outside a menu or tooltip that is built at the
--- moment it opens, so there is no stale copy to keep fresh: the race has no
--- surface to land on.
+-- Left and right click, spec and loot spec, is the whole surface now. Both are
+-- things this widget exists to show, so clicking the thing you are looking at
+-- to change it needs no explanation.
+--
+-- Reading the name is kept, because that is display rather than action, and it
+-- costs one hook rather than a menu (see Enable).
 local function LoadoutsAvailable()
-    return (C_ClassTalents and C_ClassTalents.GetConfigIDsBySpecID
-        and C_ClassTalents.GetLastSelectedSavedConfigID
+    return (C_ClassTalents and C_ClassTalents.GetLastSelectedSavedConfigID
         and C_Traits and C_Traits.GetConfigInfo) and true or false
 end
 
--- The applied loadout's name, read live and allocating nothing.
---
--- Separate from GetLoadouts (which builds the whole list for the menu) because
--- this one runs on every broker update, and building a table of every saved
--- loadout to read one field off one of them is the shape of waste the audit
--- went looking for.
+-- Reads the one name directly. It runs on every broker update, so building a
+-- list of every saved loadout to take one field off one of them -- which is
+-- what the removed menu needed -- would be the shape of waste the performance
+-- audit went looking for.
 local function ActiveLoadoutName()
     if not LoadoutsAvailable() then return nil end
     local spec = CurrentSpec()
@@ -260,74 +259,6 @@ local function ActiveLoadoutName()
     if not configID then return nil end
     local info = C_Traits.GetConfigInfo(configID)
     return info and info.name or nil
-end
-
-local function GetLoadouts()
-    local out = {}
-    if not LoadoutsAvailable() then return out end
-    local spec = CurrentSpec()
-    if not spec then return out end
-
-    local activeID = C_ClassTalents.GetLastSelectedSavedConfigID(spec.id)
-    for _, configID in ipairs(C_ClassTalents.GetConfigIDsBySpecID(spec.id) or {}) do
-        local info = C_Traits.GetConfigInfo(configID)
-        if info and info.name then
-            out[#out + 1] = {
-                name = info.name,
-                configID = configID,
-                isActive = (configID == activeID),
-            }
-        end
-    end
-    return out
-end
-
-local function SwitchLoadout(specID, configID)
-    if InCombatLockdown() then
-        Warn("can't change loadout in combat")
-        return
-    end
-
-    -- Blizzard's own sequence, and the branch matters: when the loadout is
-    -- already applied talent-wise, LoadConfig reports NoChangesNecessary and
-    -- commits nothing -- so the "last selected" pointer has to be moved by hand
-    -- or the game keeps thinking the previous loadout is the current one.
-    local result = C_ClassTalents.LoadConfig(configID, true)
-    if result == Enum.LoadConfigResult.NoChangesNecessary then
-        C_ClassTalents.UpdateLastSelectedSavedConfigID(specID, configID)
-    end
-end
-
--- PlayerSpellsUtil only. EllesmereUIDataBars keeps the pre-11.0
--- ToggleTalentFrame global as a second branch, which is right for an addon
--- supporting older clients; this one targets current retail, and carrying a
--- branch for a client it never runs on is the kind of debt that never gets
--- removed because nothing ever proves it dead.
-local function OpenTalents()
-    if PlayerSpellsUtil and PlayerSpellsUtil.ToggleClassTalentFrame then
-        PlayerSpellsUtil.ToggleClassTalentFrame()
-    end
-end
-
-local function ShowLoadoutMenu(anchor)
-    local spec = CurrentSpec()
-    local loadouts = GetLoadouts()
-    if not spec or #loadouts == 0 then
-        Warn("no saved talent loadouts for this spec")
-        return
-    end
-
-    -- No icons: loadouts have none, and EUI's own loadout rows sit flush left
-    -- for exactly that reason rather than reserving an empty icon column.
-    local entries = {}
-    for _, loadout in ipairs(loadouts) do
-        entries[#entries + 1] = {
-            text = loadout.name,
-            active = loadout.isActive,
-            onClick = function() SwitchLoadout(spec.id, loadout.configID) end,
-        }
-    end
-    AniMods.W.Menu(anchor, entries, { key = "loadout", title = "Change Loadout" })
 end
 
 local function ShowLootMenu(anchor)
@@ -482,18 +413,13 @@ local function InitLDB()
         --
         -- `frame` is the button the data bar drew for this widget, and it is
         -- what the menu anchors to.
+        -- Left for spec, right for loot spec, and nothing else. No modifier
+        -- variants: on a data bar widget nothing advertises them, so they are
+        -- undiscoverable to anyone who has not read the tooltip and reachable
+        -- by accident by anyone holding a modifier for another reason.
         OnClick = function(frame, button)
             if button == "LeftButton" then
-                -- Modifier order matters: Ctrl is checked first because
-                -- Ctrl+Shift should reach the loadout menu rather than
-                -- whichever branch happened to be tested first.
-                if IsControlKeyDown() then
-                    ShowLoadoutMenu(frame)
-                elseif IsShiftKeyDown() then
-                    OpenTalents()
-                else
-                    ShowSpecMenu(frame)
-                end
+                ShowSpecMenu(frame)
             else
                 ShowLootMenu(frame)
             end
@@ -601,10 +527,12 @@ function SpecSwitch:Enable()
     -- to them would produce a display that is reliably one swap behind.
     --
     -- So hook the WRITE instead: every path that changes which loadout is
-    -- current -- Blizzard's talent UI, loadout addons, and this module's own
-    -- SwitchLoadout in its NoChangesNecessary branch -- funnels through
+    -- current -- Blizzard's talent UI and any loadout addon -- funnels through
     -- UpdateLastSelectedSavedConfigID. EllesmereUIDataBars reaches the same
     -- conclusion for the same display (its HookLoadoutPointer).
+    --
+    -- This module no longer changes loadouts itself, which makes the hook the
+    -- ONLY way it learns of a swap: there is no local action to update from.
     --
     -- Unlike EUI's, this handler needs no combat guard and no
     -- PLAYER_REGEN_ENABLED catch-up: theirs re-measures and re-anchors frames,

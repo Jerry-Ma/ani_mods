@@ -860,12 +860,18 @@ both toggleable in **General**.
   own files directly — silently wiped on its next update. Staying a plain LDB broker
   means it survives every EUI update untouched, at the cost of using EllesmereUIDataBars'
   generic "Broker Plugin" block type instead of a dedicated one.
-- **SpecSwitch** — switch specialization, talent loadout and loot spec from a data bar.
-  The click map is EllesmereUIDataBars' spec block, feature for feature: **left-click**
-  a menu of specs, **Ctrl+left-click** a menu of talent loadouts, **Shift+left-click**
-  opens the talent frame, **right-click** a menu of loot specs (led by "Follow current
+- **SpecSwitch** — switch specialization and loot spec from a data bar. **Left-click**
+  opens a menu of specs, **right-click** a menu of loot specs (led by "Follow current
   spec", Blizzard's default and the state you want back after borrowing one for a boss).
   Settings live at the bottom of the spec menu rather than claiming right-click.
+
+  That's the whole click surface. EllesmereUIDataBars' block also puts a loadout menu on
+  Ctrl+left-click and the talent frame on Shift+left-click, and those are deliberately
+  **not** copied: a modifier-click on a data bar widget is a poor place for an action —
+  nothing on the bar advertises it, so it's undiscoverable to anyone who hasn't read the
+  tooltip, and it's reachable by accident by anyone holding a modifier for another
+  reason. The talent frame already has a keybind. Left and right for the two things the
+  widget *displays* needs no explanation: you click what you're looking at.
 
   Reimplemented, not copied — EllesmereUI's licence is all-rights-reserved, the same
   reason its role-icon PNGs are referenced rather than bundled (see GroupRoles). What is
@@ -896,9 +902,10 @@ both toggleable in **General**.
   it and read the name that was current a moment ago — listening to them gives a display
   reliably one swap behind. So the **write** is hooked instead
   (`C_ClassTalents.UpdateLastSelectedSavedConfigID`), which every path funnels through:
-  Blizzard's talent UI, loadout addons, and this module's own `SwitchLoadout`.
-  EllesmereUIDataBars reaches the same conclusion for the same display
-  (its `HookLoadoutPointer`). Unlike EUI's, this handler needs no combat guard or
+  Blizzard's talent UI and any loadout addon. EllesmereUIDataBars reaches the same
+  conclusion for the same display (its `HookLoadoutPointer`). With loadout *switching*
+  removed, that hook is the only way this module learns of a swap — there's no local
+  action to update from. Unlike EUI's, the handler needs no combat guard or
   `PLAYER_REGEN_ENABLED` catch-up: theirs re-measures and re-anchors frames, which is
   protected, while this assigns a string to an LDB object and repaints a panel we own.
 
