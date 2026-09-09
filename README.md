@@ -802,43 +802,38 @@ both toggleable in **General**.
   can't do, either because they're batch edits it only offers one row at a time, or
   because it offers no setting at all.
 
-  **Countdown voice.** NSRT counts down in its own bundled voice
-  (`Media\Sounds\5.ogg`…) with no way to change it. This borrows whichever voice you've
-  already chosen in **BigWigs** or **EXBoss**. Sources that aren't loaded are greyed in
-  the dropdown rather than dropped — a missing choice explains nothing, a greyed one says
-  what would make it usable.
+  **Countdown voice.** NSRT counts down in its own bundled voice with no way to change
+  it; this borrows the one you already chose in **BigWigs** or **EXBoss**. Unavailable
+  sources are greyed in the dropdown rather than dropped.
 
-  The two are read very differently, and taking each addon's *highest-level* call is the
-  point: `BigWigsAPI:GetCountdownSound(voice, n)` returns a file path, which we play, with
-  the chosen voice at the Countdown plugin's `db.profile.voice`; EXBoss instead
-  **plays the digit itself** via `ExBoss.Voice.Countdown:TryPlayDigit(n)`, resolving its
-  selected pack, that pack's per-digit switches and any per-digit LibSharedMedia override
-  on the way. Asking EXBoss for a path would mean reimplementing all of that and getting
-  it wrong the first time its settings changed.
+  **Nothing is replaced until a non-NSRT source is chosen.** On the default setting this
+  module doesn't touch `NSAPI` at all — reads no field, assigns none. That isn't
+  politeness, it's the property that makes the feature *diagnosable*: setting the source
+  back to NSRT returns AniMods to zero footprint on NSRT, so "is this addon involved?" is
+  answerable by one dropdown change rather than by disabling things and reloading. A
+  status row reports whether the replacement is currently installed.
 
-  A trap worth recording: `BigWigsAPI` is **colon-defined**, so `GetCountdownSound`'s real
-  first parameter is `self`. Calling it with a dot passes the voice id as `self` and the
-  digit as `id`, looking up a voice *named* "5" and returning nil every time — silence, no
-  error. BigWigs' own code reads `BigWigsAPI.GetCountdownList()` with a dot in places,
-  which works only because that function ignores `self` and proves nothing about the rest
-  of the table; its colon calls (`BigWigsAPI:HasCountdown`) are what state the convention.
+  It matters because `NSAPI.TTSCountdown` has other claimants —
+  `NSRT_Countdown_Companion` replaces the same function when enabled, and a function has
+  room for exactly one owner: whoever installs second wraps the first, decided by load
+  order. Installing lazily keeps us out of that contest unless asked in.
 
-  **It needs no listener on either addon's settings, and that's by construction rather
-  than luck**: both are read at the moment a digit plays, so re-configuring BigWigs or
-  EXBoss is picked up by the very next countdown — nothing is cached, so there's nothing
-  to invalidate and nothing to keep in step. The dropdown chooses *which addon to ask*,
-  never what it says.
+  Each addon is asked at its *highest* level, since a shape of our own would be a third
+  opinion about how their settings work: `BigWigsAPI:GetCountdownSound(voice, n)` returns
+  a path we play, while EXBoss **plays the digit itself** via
+  `ExBoss.Voice.Countdown:TryPlayDigit(n)`, resolving its pack, per-digit switches and any
+  LibSharedMedia override. Neither is cached, so neither needs a listener — reconfiguring
+  either is picked up by the very next countdown.
 
-  `NSAPI.TTSCountdown` is **replaced**, not hooked — the one invasive thing this addon
-  does to another, and the reason is that a hook can only *add*: `hooksecurefunc` appends,
-  so NSRT's own voice would still play underneath and you'd hear two countdowns. It stays
-  contained by being a **router**: the original is kept and called for every case the
-  override doesn't claim — NSRT selected, chosen source unavailable, module switched off —
-  so NSRT's behaviour is the default branch rather than something reimplemented. The
-  replacement is never uninstalled, because putting the original back is only safe if
-  nothing else replaced the function afterwards; leaving an inert router costs one boolean
-  test per countdown. It also honours `NSRT.Settings.TTS`, so "TTS off" keeps meaning what
-  it means everywhere else in NSRT.
+  A trap worth recording: `BigWigsAPI` is **colon-defined**, so a dot call passes the
+  voice id as `self` and the digit as `id`, looks up a voice *named* "5", and returns nil
+  every time — silence, no error. BigWigs' own code reads
+  `BigWigsAPI.GetCountdownList()` with a dot in places, which works only because that one
+  ignores `self`.
+
+  The replacement is a **router**: the original is kept and called for every case the
+  override doesn't claim, so NSRT's behaviour is the default branch rather than something
+  reimplemented. It also honours `NSRT.Settings.TTS`.
 
   **Silence every boss-alert countdown.** NSRT's encounter alerts each carry a
   `countdown` field, and what matters is what it means when *absent*

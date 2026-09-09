@@ -52,21 +52,22 @@ NSRT = nil
 ---@type any
 BigWigs = nil
 
----BigWigs' public API table, separate from its namespace. GetCountdownSound(id,
----n) returns the sound file a registered voice pack uses for n seconds.
+---BigWigs' public API table, separate from its namespace. Colon-defined:
+---BigWigsAPI:GetCountdownSound(id, n) returns the file a voice pack uses for n
+---seconds, and a dot call silently returns nil instead.
 ---@type any
 BigWigsAPI = nil
 
 ---EXBoss' addon namespace. NSRTMisc calls ExBoss.Voice.Countdown:TryPlayDigit,
 ---which plays a digit through whichever voice pack EXBoss currently has
----selected -- it resolves the pack, its per-digit switches and any LibSharedMedia
----override itself.
+---selected -- it resolves the pack, its per-digit switches and any
+---LibSharedMedia override itself.
 ---@type any
 ExBoss = nil
 
 ---Northern Sky Raid Tools' public API table, distinct from its NSRT saved
----variable. NSRTMisc replaces NSAPI.TTSCountdown to route countdowns to another
----addon's voice.
+---variable. NSRTMisc replaces NSAPI.TTSCountdown -- but only once a non-NSRT
+---countdown voice has been chosen.
 ---@type any
 NSAPI = nil
 

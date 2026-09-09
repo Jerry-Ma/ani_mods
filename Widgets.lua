@@ -1414,7 +1414,7 @@ local function ApplyMenuEntry(item, entry)
     -- Disabled: visible but plainly inert, and NOT hidden. A choice that is
     -- missing leaves no explanation for why it is missing; a greyed one says
     -- "this exists, it just does not apply here" -- the same reasoning the
-    -- accent swatches use for a preset that the theme has taken over.
+    -- accent swatches use for a preset the theme has taken over.
     if entry.disabled then
         PaintCheck(item, false)
         item._fs:SetTextColor(1, 1, 1, 0.3)
