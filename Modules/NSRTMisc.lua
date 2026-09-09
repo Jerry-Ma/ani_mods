@@ -239,6 +239,17 @@ end
 -- player has chosen a source, so the claimed case is the one they asked for.
 local originalTTSCountdown
 
+-- Switched off by the module's own power button. Checked inside the router
+-- rather than used to uninstall anything: putting the original function back is
+-- only safe if nothing else has replaced it since, and restoring over another
+-- addon's replacement would silently undo its work -- the same reason
+-- hooksecurefunc has no inverse.
+--
+-- So "off" means the router hands every countdown straight through, which is
+-- indistinguishable from never having been installed, at the cost of one
+-- boolean test per countdown.
+local moduleEnabled = true
+
 local function InstallOverride()
     if originalTTSCountdown then return true end
     local NSAPI = _G.NSAPI
@@ -251,7 +262,7 @@ local function InstallOverride()
     ---@diagnostic disable-next-line: duplicate-set-field
     NSAPI.TTSCountdown = function(apiSelf, num)
         local source = CurrentSource()
-        if source == SOURCE_NSRT or not SourceAvailable(source) then
+        if not moduleEnabled or source == SOURCE_NSRT or not SourceAvailable(source) then
             return originalTTSCountdown(apiSelf, num)
         end
 
@@ -323,10 +334,13 @@ function NSRTMisc:GetInfoRows()
         state = OverrideInstalled(),
         help  = OverrideInstalled()
             and "AniMods owns NSRT's countdown until you reload. Setting the "
-             .. "source back to NSRT makes it hand every countdown straight "
-             .. "back, but the replacement itself stays until the next reload."
+             .. "source back to NSRT -- or switching this module off -- makes it "
+             .. "hand every countdown straight back, but the replacement itself "
+             .. "stays until the next reload."
             or  "AniMods has not touched NSRT. Nothing is installed until a "
-             .. "non-NSRT voice is chosen.",
+             .. "non-NSRT voice is chosen. If a voice IS chosen and this still "
+             .. "says No, NSRT had not loaded in time -- toggle the module off "
+             .. "and on to retry.",
     }
 
     rows[#rows + 1] = { section = "Boss alert countdowns" }
@@ -393,8 +407,26 @@ end
 -- NSRT's own boot; that callback is the first point after it where everything
 -- is guaranteed up. Same sequencing the other modules use.
 function NSRTMisc:Enable()
+    moduleEnabled = true
     if CurrentSource() == SOURCE_NSRT then return end
     AniMods.W.OnReady(InstallOverride)
+end
+
+-- Toggles live, so the sidebar power button means something here rather than
+-- asking for a reload.
+--
+-- Switching ON retries the install when a source is already selected. Not for
+-- the "off at login" case -- Core only calls this for a module whose Enable
+-- actually ran -- but for the one where the install FAILED: if NSRT had not
+-- created NSAPI yet when Enable fired, InstallOverride returned false and
+-- nothing ever retried it. Toggling the module is then the only way back, and
+-- the status row is what shows it is needed.
+function NSRTMisc:SetEnabled(on)
+    moduleEnabled = on and true or false
+    if moduleEnabled and CurrentSource() ~= SOURCE_NSRT then
+        InstallOverride()
+    end
+    return true
 end
 
 AniMods.RegisterModule("NSRTMisc", NSRTMisc)
