@@ -188,6 +188,38 @@ local function ShowCopyPopup(titleText, text)
 end
 
 -- ── Info rows ────────────────────────────────────────────────────────────────
+
+-- A module's rows, or nil when it is not running.
+--
+-- **Nothing after the Conditions card is built for an inactive module, and its
+-- GetInfoRows() is never called.** That is a correctness point before it is a
+-- performance one: these rows report LIVE state, and a module that never ran
+-- has none -- its Enable() did not fire, so its frames do not exist, its hooks
+-- are not installed, and anything it would report is either a default or a lie.
+--
+-- The cost is real too. GetInfoRows runs on every refresh while its tab is
+-- open, and some are expensive by nature: SocialStatus' walks the whole guild
+-- roster and both friend lists. Doing that for a module deliberately switched
+-- off -- or standing down because NDui is loaded -- is work for an answer
+-- nobody can act on.
+--
+-- `active` rather than a narrower test on purpose: it is false for conditions
+-- unmet, for user-disabled, and for an Enable() that threw, and in all three
+-- the module is not running. The tradeoff is that a switched-off module's
+-- settings are not reachable until it is switched back on; that is the right
+-- way round, since settings shown for something that is not running invite
+-- changes that quietly do nothing.
+--
+-- Defensive pcall: GetInfoRows can run from a module's own event handlers, not
+-- just from clicks here, so one buggy module must never break the whole panel.
+local function InfoRows(entry)
+    if not entry.active then return nil end
+    if not (entry.module and entry.module.GetInfoRows) then return nil end
+    local ok, result = pcall(entry.module.GetInfoRows, entry.module)
+    if ok then return result end
+    return nil
+end
+
 -- A module's GetInfoRows() (optional) returns an ordered list of rows:
 --   { section = "Status" }                                                -- header, starts a new section
 --   { label = "Tanks", value = "2" }                                      -- status (a measurement)
@@ -999,16 +1031,8 @@ local function BuildTabContent(name)
         end
     end
 
-    -- Defensive: a module's GetInfoRows() can run from that module's own
-    -- event handlers, not just clicks in this panel -- one buggy module's
-    -- debug hook must never break the whole panel.
-    local rows
-    if entry.module and entry.module.GetInfoRows then
-        local ok, result = pcall(entry.module.GetInfoRows, entry.module)
-        if ok then rows = result end
-    end
-
-    local groups = SplitIntoSections(rows)
+    -- nil for an inactive module, so the tab ends at the Conditions card.
+    local groups = SplitIntoSections(InfoRows(entry))
     cache.groupCount = #groups
     for gi, slice in ipairs(groups) do
         -- "Settings" is the fallback title for a leading slice that has no
@@ -1035,17 +1059,14 @@ local function TryRefreshTabInPlace(name)
     local entry = AniMods.status[name]
     if not entry then return false end
 
-    local rows
-    if entry.module and entry.module.GetInfoRows then
-        local ok, result = pcall(entry.module.GetInfoRows, entry.module)
-        if ok then rows = result end
-    end
-
     -- Gaining or losing the error block is structural, so it forces a rebuild
     -- rather than an in-place update.
     if cache.hasError ~= HasError(entry) then return false end
 
-    local groups = SplitIntoSections(rows)
+    -- A module going active or inactive changes the section COUNT (to or from
+    -- zero), which the check below already treats as a rebuild -- so becoming
+    -- active brings its settings back without a special case here.
+    local groups = SplitIntoSections(InfoRows(entry))
     if #groups ~= cache.groupCount then return false end
 
     ApplyLiveValues(entry, cache)

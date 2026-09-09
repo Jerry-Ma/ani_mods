@@ -269,6 +269,17 @@ dragging — for a setting that is genuinely a number, like Data Bar's width. A 
 plain `get`/`set` renders as a checkbox, for real booleans. Everything else is a plain
 read-only label/value line, for a *measurement*; a yes/no belongs in `state` instead.
 
+**An inactive module's `GetInfoRows()` is never called**, and its tab ends at the
+Conditions card. That is correctness before performance: these rows report *live* state,
+and a module that never ran has none — `Enable()` didn't fire, so its frames don't exist
+and anything it reported would be a default or a lie. The cost is real too: `GetInfoRows`
+runs on every refresh while its tab is open, and SocialStatus' walks the entire guild
+roster and both friend lists. The test is `active`, which is false for conditions unmet,
+for user-disabled, and for an `Enable()` that threw — in all three the module isn't
+running. The tradeoff is that a switched-off module's settings aren't reachable until
+it's switched back on, which is the right way round: settings shown for something that
+isn't running invite changes that quietly do nothing.
+
 Refreshes are **in place**, not rebuilds. `AniMods.RefreshUI()` (called by a toggle, or
 by a module's own event handler noticing its data changed) updates the text of existing
 widgets, so a counter ticking over never disturbs an open dropdown or the scroll
@@ -377,7 +388,8 @@ Each tab shows: the module's title, a `?` for its description, a state badge, an
 a `forceable` module held back only by soft conditions — a "Run anyway" switch. Below
 that, its **Conditions** card (one row per entry, each with a Yes / No badge and its
 own `?`) — which is the whole explanation of why a module is inactive, so there is no
-prose reason line beside it — then its `GetInfoRows()` (see above),
+prose reason line beside it — then, **only if the module is actually running**, its
+`GetInfoRows()` (see above),
 grouped into titled cards. If a
 module's `Enable()` threw an error (state "Failed"), a **Show Error** button opens a
 popup with the full traceback (message + `debugstack()`) — not just the one-line `pcall`
