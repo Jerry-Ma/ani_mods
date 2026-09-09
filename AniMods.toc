@@ -24,3 +24,4 @@ Modules\EllesmereUIMisc.lua
 Modules\GroupRoles.lua
 Modules\SocialStatus.lua
 Modules\SoundSwitch.lua
+Modules\SpecSwitch.lua

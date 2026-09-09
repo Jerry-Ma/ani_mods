@@ -270,32 +270,23 @@ local MAX_ROWS_PER_SECTION = 30 -- EUI's own hard cap; its user-configurable fri
 -- it mirrors -- a nicety that cost a private GetFontPath(addonKey) call, and
 -- one the theme font satisfies anyway in every configuration that doesn't
 -- deliberately set the minimap apart.
-local function TTFont()
-    return AniMods.W.FontPath()
-end
 
-local socialTT, socialTTInner
+local socialPopup
 local ttRows, ttHeaders, ttDividers = {}, {}, {}
 
+-- The shared popup shell (W.Tooltip): themed panel, correct strata, and the
+-- inner child the restrip rule requires.
+--
+-- Only the SHELL is shared. This popup's body is a bespoke two-column layout --
+-- class-coloured names with a Battle.net tag prefix and a right-aligned zone,
+-- grouped under headers with dividers -- which no line-based API expresses, so
+-- it builds its own content on `.inner` instead of calling AddLine. That is
+-- what `.inner` is exposed for; the alternative was this module keeping a
+-- private copy of the shell, which is precisely why SoundSwitch had nothing to
+-- reuse and fell back to a bare GameTooltip.
 local function GetSocialTT()
-    if socialTT then return socialTT end
-    -- House panel fill and border from the theme, rather than the literal
-    -- near-black this used to hard-code: the popup now tracks the user's
-    -- window colours the same way EllesmereUI's own do.
-    local f = AniMods.W.Panel(UIParent)
-    f:SetFrameStrata("TOOLTIP")
-    f:SetFrameLevel(200)
-    f:SetClampedToScreen(true)
-    f:Hide()
-
-    -- Rows go on this child, never on `f`: W.Panel hands the frame to
-    -- S.Panel, which enrols it in EllesmereUI's restrip registry (see
-    -- Widgets.lua's header).
-    socialTTInner = CreateFrame("Frame", nil, f)
-    socialTTInner:SetAllPoints()
-
-    socialTT = f
-    return f
+    socialPopup = socialPopup or AniMods.W.Tooltip()
+    return socialPopup.frame
 end
 
 -- The child every piece of tooltip content is parented to. Anything created
@@ -305,7 +296,7 @@ end
 -- the player opened a Blizzard window.
 local function TTInner()
     GetSocialTT()
-    return socialTTInner
+    return socialPopup.inner
 end
 
 local function EnsureTTRow(idx)
@@ -344,7 +335,12 @@ local function ShowSocialTooltip(anchor)
     local guild, favorites, friends = GatherOnlineFriends()
     local tt = GetSocialTT()
     local total = #guild + #favorites + #friends
-    local font = TTFont()
+    -- Re-applied per show rather than once at creation, so the popup follows a
+    -- live theme font change. Through W.SetFont, which carries the theme's
+    -- OUTLINE FLAG as well as the path -- the four hand-rolled
+    -- `SetFont(font, N, "")` calls this replaced hardcoded no-outline and so
+    -- silently ignored an outline-configured theme.
+    local SetFont = AniMods.W.SetFont
 
     for i = 1, #ttRows do
         ttRows[i].frame:Hide()
@@ -359,7 +355,7 @@ local function ShowSocialTooltip(anchor)
 
     if total == 0 then
         local row = EnsureTTRow(1)
-        row.name:SetFont(font, 10, "")
+        SetFont(row.name, 10)
         row.name:SetText("|cff888888No friends online|r")
         row.zone:SetText("")
         row.frame:ClearAllPoints()
@@ -403,7 +399,7 @@ local function ShowSocialTooltip(anchor)
         curY = curY - 5
         hdrIdx = hdrIdx + 1
         local hdr = EnsureTTHeader(hdrIdx)
-        hdr:SetFont(font, 12, "")
+        SetFont(hdr, 12)
         hdr:SetText(sec.title .. " (|cff" .. acHex .. #sec.list .. "|r)")
         hdr:ClearAllPoints()
         hdr:SetPoint("TOP", tt, "TOP", 0, curY)
@@ -415,8 +411,8 @@ local function ShowSocialTooltip(anchor)
             local e = sec.list[i]
             rowIdx = rowIdx + 1
             local row = EnsureTTRow(rowIdx)
-            row.name:SetFont(font, 10, "")
-            row.zone:SetFont(font, 10, "")
+            SetFont(row.name, 10)
+            SetFont(row.zone, 10)
 
             local cc = e.class and RAID_CLASS_COLORS and RAID_CLASS_COLORS[e.class]
             local colored = cc and cc:WrapTextInColorCode(e.name) or e.name
@@ -451,7 +447,7 @@ local function ShowSocialTooltip(anchor)
         if #sec.list > MAX_ROWS_PER_SECTION then
             rowIdx = rowIdx + 1
             local row = EnsureTTRow(rowIdx)
-            row.name:SetFont(font, 10, "")
+            SetFont(row.name, 10)
             row.name:SetText("|cff888888...and " .. (#sec.list - MAX_ROWS_PER_SECTION) .. " more|r")
             row.zone:SetText("")
             row.frame:ClearAllPoints()
@@ -472,7 +468,7 @@ local function ShowSocialTooltip(anchor)
 end
 
 local function HideSocialTooltip()
-    if socialTT then socialTT:Hide() end
+    if socialPopup then socialPopup:Hide() end
 end
 
 -- Plain-GameTooltip fallback for any LDB display that doesn't support the

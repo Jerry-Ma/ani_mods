@@ -158,6 +158,12 @@ local function SwitchNext()
     if AniMods.RefreshUI then AniMods.RefreshUI() end
 end
 
+-- Renders into EITHER AniMods' own themed popup or a plain GameTooltip.
+--
+-- One function, because W.Tooltip deliberately mirrors GameTooltip's AddLine /
+-- AddDoubleLine signatures. The second sink is not optional: a data bar that
+-- does not support the OnEnter(anchor) contract calls OnTooltipShow with its own
+-- tooltip, and writing this twice is how the two renderings would drift.
 local function ShowTooltip(tt)
     local current = CurrentDeviceName()
     tt:AddLine("Sound Output", 1, 0.82, 0)
@@ -188,16 +194,31 @@ local function ShowTooltip(tt)
     tt:AddLine("Right-click: settings", 0.6, 0.6, 0.6)
 end
 
+-- The themed popup, built on first hover.
+local popup
+
+local function ShowPopup(anchor)
+    popup = popup or AniMods.W.Tooltip()
+    popup:Clear()
+    ShowTooltip(popup)
+    popup:Show(anchor)
+end
+
 local function InitLDB()
     ldbObject = Broker.Register("AniModsSoundSwitch", {
         label = "AniMods: Sound Switch",
-        OnClick = function(frame, button)
+        OnClick = function(_, button)
             if button == "LeftButton" then
                 SwitchNext()
             elseif AniMods.OpenModuleTab then
                 AniMods.OpenModuleTab("SoundSwitch")
             end
         end,
+        -- OnEnter takes precedence in every data bar that supports it (EUI's
+        -- and AniMods' own both do), so the themed popup is what is normally
+        -- seen; OnTooltipShow remains for displays that only offer that path.
+        OnEnter = ShowPopup,
+        OnLeave = function() if popup then popup:Hide() end end,
         OnTooltipShow = ShowTooltip,
     })
 end

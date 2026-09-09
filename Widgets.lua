@@ -216,13 +216,28 @@ function W.FontPath()
     return path
 end
 
-function W.Font(parent, size, flags, alpha)
+-- Applies the theme font to an EXISTING FontString.
+--
+-- Split out of W.Font because the outline flag is the part callers get wrong:
+-- S.GetFont() returns path AND the theme's outline flag, and code that reads
+-- only the path then passes "" hardcodes no-outline, so that one surface
+-- silently ignores an outline-configured theme. SocialStatus' popup did exactly
+-- that at four call sites.
+--
+-- Also what lets a long-lived FontString follow a live theme change: re-call
+-- this rather than reaching for SetFont directly.
+function W.SetFont(fs, size, flags, alpha)
     local s = Need()
-    local fs = parent:CreateFontString(nil, "OVERLAY")
     local path, themeFlag = "Fonts\\FRIZQT__.TTF", ""
     if s then path, themeFlag = s.GetFont() end
     fs:SetFont(path, size or 12, flags or themeFlag or "")
-    fs:SetTextColor(1, 1, 1, alpha or W.TEXT_A)
+    if alpha then fs:SetTextColor(1, 1, 1, alpha) end
+    return fs
+end
+
+function W.Font(parent, size, flags, alpha)
+    local fs = parent:CreateFontString(nil, "OVERLAY")
+    W.SetFont(fs, size, flags, alpha or W.TEXT_A)
     return fs
 end
 
@@ -859,6 +874,137 @@ function W.Swatches(parent, size)
         if btn and c then btn.swatch:SetColorTexture(c[1], c[2], c[3], 1) end
     end
 
+    return o
+end
+
+-- ── Tooltip ─────────────────────────────────────────────────────────────────
+-- A themed hover popup for broker widgets.
+--
+-- Why not GameTooltip: it carries Blizzard's own art, so on a stock UI it is the
+-- one surface in the addon that does not follow the theme. Under EllesmereUI it
+-- happens to look right because EUI reskins the global tooltip -- which is
+-- worse, not better, since it means the same code produces a consistent
+-- rendering only when a particular other addon is installed.
+--
+-- **AddLine and AddDoubleLine take GameTooltip's exact signatures**, and that is
+-- the point rather than a coincidence: a module writes ONE render function and
+-- passes it either this or a real GameTooltip. That matters because the
+-- fallback is not optional -- LDB display addons that do not support the
+-- `OnEnter(anchor)` contract get `OnTooltipShow(tt)` with their own tooltip, and
+-- without a shared signature every broker would need two copies of its tooltip
+-- body, which is exactly the kind of divergence that rots.
+--
+-- Each caller owns an instance. A single shared one would be cheaper and only
+-- ever one is on screen, but SocialStatus builds a persistent pool of custom
+-- rows on `.inner`, and that cannot share a frame with the line API.
+local TT_PAD, TT_LINE_H, TT_COL_GAP = 8, 14, 16
+
+function W.Tooltip()
+    local f = W.Panel(UIParent)
+    f:SetFrameStrata("TOOLTIP")
+    f:SetFrameLevel(200)
+    f:SetClampedToScreen(true)
+    f:Hide()
+
+    -- Content goes on this child, never on `f`: W.Panel hands the frame to
+    -- S.Panel, which enrols it in the restrip registry -- and dividers are
+    -- Textures, exactly what the sweep alpha-zeroes (see the file header).
+    local inner = CreateFrame("Frame", nil, f)
+    inner:SetAllPoints()
+
+    local o = { frame = f, inner = inner, lines = {}, dividers = {} }
+    local count, divCount, cursor, widest = 0, 0, 0, 0
+
+    local function EnsureLine(i)
+        local line = o.lines[i]
+        if line then return line end
+        local row = CreateFrame("Frame", nil, inner)
+        row:SetHeight(TT_LINE_H)
+        local left = W.Font(row, 11, nil, 1)
+        left:SetPoint("LEFT")
+        left:SetJustifyH("LEFT")
+        local right = W.Font(row, 11, nil, 1)
+        right:SetPoint("RIGHT")
+        right:SetJustifyH("RIGHT")
+        line = { frame = row, left = left, right = right }
+        o.lines[i] = line
+        return line
+    end
+
+    local function EnsureDivider(i)
+        local d = o.dividers[i]
+        if d then return d end
+        d = W.Tex(inner, "ARTWORK", 1, 1, 1, 0.12)
+        d:SetHeight(1)
+        o.dividers[i] = d
+        return d
+    end
+
+    function o:Clear()
+        for i = 1, #o.lines do o.lines[i].frame:Hide() end
+        for i = 1, #o.dividers do o.dividers[i]:Hide() end
+        count, divCount, cursor, widest = 0, 0, TT_PAD, 0
+    end
+
+    -- GameTooltip:AddLine(text, r, g, b) -- the trailing wrap argument is
+    -- accepted and ignored, since these popups size to their content.
+    function o:AddLine(text, r, g, b)
+        count = count + 1
+        local line = EnsureLine(count)
+        line.left:SetText(text or "")
+        line.left:SetTextColor(r or 1, g or 1, b or 1, 1)
+        line.right:SetText("")
+        line.frame:ClearAllPoints()
+        line.frame:SetPoint("TOPLEFT", inner, "TOPLEFT", TT_PAD, -cursor)
+        line.frame:SetPoint("TOPRIGHT", inner, "TOPRIGHT", -TT_PAD, -cursor)
+        line.frame:Show()
+        cursor = cursor + TT_LINE_H
+        local w = (line.left:GetStringWidth() or 0)
+        if w > widest then widest = w end
+    end
+
+    function o:AddDoubleLine(textL, textR, lr, lg, lb, rr, rg, rb)
+        count = count + 1
+        local line = EnsureLine(count)
+        line.left:SetText(textL or "")
+        line.left:SetTextColor(lr or 1, lg or 1, lb or 1, 1)
+        line.right:SetText(textR or "")
+        line.right:SetTextColor(rr or 1, rg or 1, rb or 1, 1)
+        line.frame:ClearAllPoints()
+        line.frame:SetPoint("TOPLEFT", inner, "TOPLEFT", TT_PAD, -cursor)
+        line.frame:SetPoint("TOPRIGHT", inner, "TOPRIGHT", -TT_PAD, -cursor)
+        line.frame:Show()
+        cursor = cursor + TT_LINE_H
+        local w = (line.left:GetStringWidth() or 0) + TT_COL_GAP
+                + (line.right:GetStringWidth() or 0)
+        if w > widest then widest = w end
+    end
+
+    function o:AddDivider()
+        divCount = divCount + 1
+        cursor = cursor + 3
+        local d = EnsureDivider(divCount)
+        d:ClearAllPoints()
+        d:SetPoint("TOPLEFT", inner, "TOPLEFT", TT_PAD, -cursor)
+        d:SetPoint("TOPRIGHT", inner, "TOPRIGHT", -TT_PAD, -cursor)
+        d:Show()
+        cursor = cursor + 4
+    end
+
+    -- Anchored below the widget by default, which is where a data bar's
+    -- hover popup belongs; SetClampedToScreen keeps a bar near the bottom of
+    -- the screen from pushing it off.
+    function o:Show(anchor, point, relPoint, x, y)
+        f:SetSize(widest + TT_PAD * 2, cursor + TT_PAD)
+        f:ClearAllPoints()
+        f:SetPoint(point or "TOP", anchor, relPoint or "BOTTOM", x or 0, y or -4)
+        f:Show()
+    end
+
+    function o:Hide() f:Hide() end
+    function o:IsShown() return f:IsShown() end
+
+    o:Clear()
     return o
 end
 

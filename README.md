@@ -64,10 +64,15 @@ addon's globals — most of what this addon does — is an "undefined field" war
 every site, and a checker that cries wolf on the core idiom is one nobody reads. Types
 there are deliberately loose (`any`): these are foreign, undocumented, version-dependent
 objects, and pretending to know their shape would invent a contract nothing enforces.
-The one place a warning is suppressed inline rather than by configuration is
-`EllesmereUIMisc.lua`'s `FindFlyoutToggle`, where probing EUI's private
-`_norm`/`_pushed`/`_hl`
-fields *is* the identification — suppressed at that single line, not loosened globally.
+Warnings are suppressed **inline at the exact line**, never by loosening a check
+globally, and there are two: `EllesmereUIMisc.lua`'s `FindFlyoutToggle`, where probing
+EUI's private `_norm`/`_pushed`/`_hl` fields *is* the identification; and
+`SpecSwitch.lua`'s `C_SpecializationInfo.SetSpecialization`, which neither the LuaLS
+annotations nor the generated globals list knows about even though it is the current
+call and four addons in this folder use it. The second needs a directive for *each*
+checker (`-- luacheck: push ignore 143` and `---@diagnostic disable-next-line`), since
+silencing one says nothing to the other — worth knowing before assuming a suppression
+took.
 
 `.luacheckrc` is a **generated artifact and is gitignored** — it is the ~44,000-entry
 Blizzard globals list from [Jayrgo/wow-luacheckrc](https://github.com/Jayrgo/wow-luacheckrc)
@@ -180,6 +185,28 @@ drifted to differently-named copies of the same getter before this was pulled ou
 `getDB` is the module's own lazy settings accessor (its `ModuleDB` function), so each
 broker's settings live in that module's own saved-variables table — shared *behaviour*,
 not shared state.
+
+### Broker hover popups (`W.Tooltip`)
+
+Every broker's hover popup is `W.Tooltip` — a themed panel, so it follows the user's
+window colours on a stock UI instead of wearing Blizzard's tooltip art. Under
+EllesmereUI a plain `GameTooltip` happens to look right, because EUI reskins the global
+tooltip; that's worse rather than better, since it means the same code renders
+consistently only when a particular other addon is installed.
+
+**`AddLine` and `AddDoubleLine` take `GameTooltip`'s exact signatures**, deliberately. A
+module writes *one* tooltip body and hands it either the themed popup or a real
+`GameTooltip`, because the second sink isn't optional: LDB displays that don't support
+the `OnEnter(anchor)` contract call `OnTooltipShow(tt)` with their own tooltip. Without a
+shared signature every broker would carry two copies of its tooltip body — the exact
+divergence that rots. So a broker registers `OnEnter`/`OnLeave` *and* `OnTooltipShow`,
+all three pointing at the same render function.
+
+SocialStatus uses only the *shell*, via the exposed `.inner`: its body is a bespoke
+two-column layout (class-coloured names, Battle.net tag prefix, right-aligned zone,
+grouped under headers with dividers) that no line-based API expresses. Before the shell
+was shared it owned a private copy, which is exactly why SoundSwitch had nothing to reuse
+and fell back to a bare `GameTooltip`.
 
 A module can optionally expose `GetInfoRows()`, returning an ordered list of rows
 rendered in its detail pane — this is the "debug + options" section every module gets
@@ -769,6 +796,35 @@ both toggleable in **General**.
   own files directly — silently wiped on its next update. Staying a plain LDB broker
   means it survives every EUI update untouched, at the cost of using EllesmereUIDataBars'
   generic "Broker Plugin" block type instead of a dedicated one.
+- **SpecSwitch** — switch specialization and loot spec from a data bar. **Left-click**
+  cycles to the next spec, **Shift+left-click** cycles the loot spec (including back to
+  "follow current spec", which is part of the cycle so it's reachable without opening the
+  panel), **right-click** opens this module's tab, where each spec has an in-the-cycle
+  checkbox and the loot spec gets a dropdown of its own.
+
+  **Stock UI only** — its conditions are "EllesmereUI not installed" and "NDui not
+  installed", both hard. Each ships this exact widget already (EllesmereUIDataBars' spec
+  block, `NDui/Modules/Infobar/Spec.lua`) and EUI's is better: it offers loadout
+  switching and a talent-frame shortcut from the same button. Hard rather than soft
+  because a soft condition is an advisory the user may overrule with **Run anyway**, and
+  that only makes sense when running both is merely odd — here the alternative is
+  strictly better, so there's nothing to overrule.
+
+  Modelled on EUI's block, including its spec **cache** (`BuildSpecCache`): the list only
+  changes when a character learns a spec, while the broker text, tooltip and cycler read
+  it on every hover and click. The first version rebuilt it inside each, so one broker
+  update walked `GetSpecializationInfo` three times to answer an unchanged question. Not
+  copied are the events that exist for EUI's loadout *name* — `TRAIT_CONFIG_UPDATED`,
+  `SPELLS_CHANGED`, `CONFIG_COMMIT_FAILED` — which are there because that display races
+  Blizzard's last-selected pointer; showing no loadout means inheriting neither the
+  problem nor the events.
+
+  Spec switching is guarded on `InCombatLockdown()` and reports why it refused, because
+  the API simply does nothing in lockdown and the click would otherwise look broken.
+  Loot spec switching is combat-legal (a server preference), so it isn't guarded. The
+  broker shows the loot spec as a second part **only when it differs** from the active
+  spec — that's the state worth noticing, since it's the one that silently gives you the
+  wrong loot.
 - **SoundSwitch** — switch the game's sound output device from a databar.
   **Left-click** cycles to the next device; **right-click** opens this module's tab,
   where each detected device has an in-the-cycle checkbox (the active one carries a

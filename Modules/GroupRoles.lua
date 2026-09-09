@@ -144,6 +144,10 @@ end
 -- per member in that role) rather than a bare count -- used by both the
 -- broker (LDB) plugin's tooltip (always on) and the docked badge's tooltip
 -- (optional, see "Show tooltip on docked badge" in GetInfoRows).
+--
+-- `tt` is either AniMods' themed popup or a plain GameTooltip; W.Tooltip
+-- mirrors GameTooltip's AddLine/AddDoubleLine signatures so this renders into
+-- either without knowing which it was handed.
 local function ShowCompositionTooltip(tt)
     if not IsInGroup() then
         tt:AddLine("Not in a group", 0.6, 0.6, 0.6)
@@ -277,6 +281,21 @@ local dockedBadge  -- compact badge anchored to EllesmereUIRaidToolsIcon
 local docked = false -- true once EUI's icon has been found and the badge wired to it
 local ldbObject    -- LibDataBroker data source, if LDB is available
 
+-- One themed popup, shared by the broker widget and the docked badge: only one
+-- can be hovered at a time, and they render identical content.
+local popup
+
+local function ShowCompositionPopup(anchor)
+    popup = popup or AniMods.W.Tooltip()
+    popup:Clear()
+    ShowCompositionTooltip(popup)
+    popup:Show(anchor)
+end
+
+local function HideCompositionPopup()
+    if popup then popup:Hide() end
+end
+
 local function InitLDB()
     -- NOTE: this name is an ID, not a label -- EllesmereUIDataBars stores it
     -- verbatim in its own saved variables as the block's `source`, and shows
@@ -304,6 +323,13 @@ local function InitLDB()
         -- No self-titled header line -- the tooltip already only ever shows
         -- up when hovering this exact plugin, so "AniMods: Group Roles" was
         -- just noise.
+        --
+        -- OnEnter draws AniMods' own themed popup and takes precedence wherever
+        -- it is supported; OnTooltipShow renders the SAME function into a plain
+        -- GameTooltip for displays that only offer that path (W.Tooltip mirrors
+        -- its AddLine signatures precisely so this body is not written twice).
+        OnEnter = ShowCompositionPopup,
+        OnLeave = HideCompositionPopup,
         OnTooltipShow = ShowCompositionTooltip,
     })
 end
@@ -351,16 +377,31 @@ local function SetIconStyle(key)
     UpdateCounts() -- broker text embeds the icon style too
 end
 
--- The 8 standard GameTooltip anchor points -- badge is tiny (36x12) and sits
--- right below EUI's own Raid Tools icon, so where the tooltip pops out
--- relative to it matters (e.g. straight up overlaps the icon above it);
--- letting it be picked beats guessing one default that won't suit every
--- setup.
+-- 8 directions -- badge is tiny (36x12) and sits right below EUI's own Raid
+-- Tools icon, so where the popup comes out relative to it matters (straight up
+-- overlaps the icon above it); letting it be picked beats guessing one default
+-- that won't suit every setup.
 local TOOLTIP_ANCHOR_LABEL = {
     TOP = "Top", BOTTOM = "Bottom", LEFT = "Left", RIGHT = "Right",
     TOPLEFT = "Top Left", TOPRIGHT = "Top Right", BOTTOMLEFT = "Bottom Left", BOTTOMRIGHT = "Bottom Right",
 }
 local TOOLTIP_ANCHOR_ORDER = { "TOP", "BOTTOM", "LEFT", "RIGHT", "TOPLEFT", "TOPRIGHT", "BOTTOMLEFT", "BOTTOMRIGHT" }
+
+-- Each direction as the (popup point, badge point) pair that puts the popup on
+-- that side. These used to be GameTooltip's ANCHOR_* names passed straight
+-- through; the themed popup is anchored like any other frame, so the direction
+-- is spelled out rather than relying on what Blizzard's shorthand happens to
+-- mean for the diagonals.
+local ANCHOR_POINTS = {
+    TOP         = { "BOTTOM",      "TOP" },
+    BOTTOM      = { "TOP",         "BOTTOM" },
+    LEFT        = { "RIGHT",       "LEFT" },
+    RIGHT       = { "LEFT",        "RIGHT" },
+    TOPLEFT     = { "BOTTOMRIGHT", "TOPLEFT" },
+    TOPRIGHT    = { "BOTTOMLEFT",  "TOPRIGHT" },
+    BOTTOMLEFT  = { "TOPRIGHT",    "BOTTOMLEFT" },
+    BOTTOMRIGHT = { "TOPLEFT",     "BOTTOMRIGHT" },
+}
 
 local function GetTooltipAnchor()
     local key = ModuleDB().dockedTooltipAnchor
@@ -398,11 +439,13 @@ local function BuildDockedBadge(iconBtn)
     badge:EnableMouse(true)
     badge:SetScript("OnEnter", function(self)
         if not ModuleDB().dockedTooltip then return end
-        GameTooltip:SetOwner(self, "ANCHOR_" .. GetTooltipAnchor())
-        ShowCompositionTooltip(GameTooltip)
-        GameTooltip:Show()
+        local pt = ANCHOR_POINTS[GetTooltipAnchor()] or ANCHOR_POINTS.RIGHT
+        popup = popup or AniMods.W.Tooltip()
+        popup:Clear()
+        ShowCompositionTooltip(popup)
+        popup:Show(self, pt[1], pt[2], 0, 0)
     end)
-    badge:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    badge:SetScript("OnLeave", HideCompositionPopup)
 
     return badge
 end
