@@ -2133,6 +2133,91 @@ function W.Button(parent, width, height)
     return o
 end
 
+-- ── Text box ────────────────────────────────────────────────────────────────
+-- A window holding one multiline, copy-pasteable field.
+--
+-- Both directions of an import/export string want the same widget: an export
+-- pre-fills it and selects everything so Ctrl+C works without aiming, an import
+-- starts empty and hands whatever was pasted to an action button. The only
+-- difference is whether `action` is set.
+--
+-- opts = {
+--   title    = window title
+--   text     = initial contents
+--   action   = label for the action button; omit for a read-only box
+--   onAction = function(text) -> ok, message   -- message is shown in the footer
+-- }
+function W.TextBox(opts)
+    opts = opts or {}
+    local PAD, BTN_H, GAP = 12, 22, 8
+
+    local win = W.Window(nil, opts.title or "", opts.width or 620, opts.height or 440)
+    local body = win.content
+
+    -- The field surface goes on a child frame. `win` is restrip-registered, so
+    -- a texture drawn straight onto it would be alpha-zeroed.
+    local box = CreateFrame("Frame", nil, body)
+    box:SetPoint("TOPLEFT", PAD, -PAD)
+    box:SetPoint("BOTTOMRIGHT", -PAD, PAD + BTN_H + GAP)
+    local bg = W.Tex(box, "BACKGROUND", 1, 1, 1, 0.05)
+    bg:SetAllPoints()
+
+    local scroll = CreateFrame("ScrollFrame", nil, box)
+    scroll:SetPoint("TOPLEFT", 6, -6)
+    scroll:SetPoint("BOTTOMRIGHT", -6, 6)
+
+    local edit = CreateFrame("EditBox", nil, scroll)
+    edit:SetMultiLine(true)
+    edit:SetAutoFocus(false)
+    edit:SetFontObject("ChatFontNormal")
+    edit:SetTextInsets(4, 4, 4, 4)
+    edit:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+    scroll:SetScrollChild(edit)
+    -- The scroll child has no width of its own; without this the text never
+    -- wraps and a 4 KB export string becomes one unreadable line.
+    scroll:SetScript("OnSizeChanged", function(_, w) edit:SetWidth(w) end)
+
+    scroll:EnableMouseWheel(true)
+    scroll:SetScript("OnMouseWheel", function(self, delta)
+        local maxScroll = math.max(0, (edit:GetHeight() or 0) - (self:GetHeight() or 0))
+        local target = self:GetVerticalScroll() - delta * 28
+        if target < 0 then target = 0 end
+        if target > maxScroll then target = maxScroll end
+        self:SetVerticalScroll(target)
+    end)
+
+    local status = W.Font(body, 11, nil, W.TEXT_DIM_A)
+    status:SetPoint("BOTTOMLEFT", body, "BOTTOMLEFT", PAD, PAD + 4)
+
+    local close = W.Button(body, 90, BTN_H)
+    close.frame:SetPoint("BOTTOMRIGHT", body, "BOTTOMRIGHT", -PAD, PAD)
+    close:SetText("Close")
+    close:SetOnClick(function() win:Hide() end)
+
+    if opts.action then
+        local act = W.Button(body, 120, BTN_H)
+        act.frame:SetPoint("RIGHT", close.frame, "LEFT", -GAP, 0)
+        act:SetText(opts.action)
+        act:SetOnClick(function()
+            if not opts.onAction then return end
+            local ok, msg = opts.onAction(edit:GetText() or "")
+            status:SetText(msg or "")
+            status:SetTextColor(ok and 0.45 or 1, ok and 0.9 or 0.35, ok and 0.45 or 0.35, 1)
+        end)
+    end
+
+    edit:SetText(opts.text or "")
+    win:Show()
+    -- Select everything on an export so the user can copy without aiming.
+    if opts.text and opts.text ~= "" then
+        edit:SetFocus()
+        edit:HighlightText()
+    end
+
+    win.edit = edit
+    return win
+end
+
 -- ── Icon ────────────────────────────────────────────────────────────────────
 -- Accepts either a Blizzard atlas name or a plain texture path, so style
 -- previews can show either without the caller resolving anything.

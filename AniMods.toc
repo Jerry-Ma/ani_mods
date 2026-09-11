@@ -26,3 +26,4 @@ Modules\NSRTMisc.lua
 Modules\SocialStatus.lua
 Modules\SoundSwitch.lua
 Modules\SpecSwitch.lua
+Modules\TalentLoadouts.lua

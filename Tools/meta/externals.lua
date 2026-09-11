@@ -71,6 +71,14 @@ ExBoss = nil
 ---@type any
 NSAPI = nil
 
+---Talent Loadout Manager's public API table. TalentLoadouts uses
+---TalentLoadoutManagerAPI.GlobalAPI to enumerate loadouts, read Blizzard export
+---strings for them and import them back. Deliberately the API rather than
+---TalentLoadoutManagerDB: the API asserts its arguments and is a documented
+---contract, while the saved table is private and reshapes between releases.
+---@type any
+TalentLoadoutManagerAPI = nil
+
 ---Not a Blizzard API: a convention that addons reshaping the minimap define,
 ---returning a shape name ("ROUND", "SQUARE", "TRICORNER-TOPLEFT", ...).
 ---LibDBIcon reads it and so does General's minimap button, both guarded --
