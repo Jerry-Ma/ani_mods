@@ -122,10 +122,7 @@ end
 -- the flat line-art the rest of the panel uses); it is referenced on disk,
 -- never copied.
 local ICON_CANDIDATES = {
-    -- 100x100, so not a power of two: the size is declared here so the inline
-    -- escape can crop past the padding WoW adds (see Broker.TextureEscape).
-    { texture = "Interface\\AddOns\\EllesmereUIChat\\Media\\chat_voice.png",
-      addon = "EllesmereUIChat", w = 100, h = 100 },
+    { texture = "Interface\\AddOns\\EllesmereUIChat\\Media\\chat_voice.png", addon = "EllesmereUIChat" },
     { atlas = "voicechat-icon-speaker" },
     { atlas = "chatframe-button-icon-voicechat" },
 }
@@ -146,7 +143,6 @@ local function UpdateBroker()
     if icon then
         part.atlas = icon.atlas
         part.texture = icon.texture
-        part.texW, part.texH = icon.w, icon.h
     end
 
     Broker.SetText(ldbObject, Broker.BuildText(ModuleDB, { part }))

@@ -52,39 +52,10 @@ end
 -- In "Icon + Text" mode each part's icon is packed directly against its
 -- count with no padding (the most compact rendering, and the icon itself is
 -- enough to tell the parts apart, so no separator is needed either); inline
--- escape sequences are |A:name:h:w|a for an atlas and the cropped |T...|t
--- form for a texture file (see TextureEscape). A texture part may carry
--- `texW`/`texH`, the file's real pixel size, which is what lets that crop
--- work. In "Text Only" mode there's nothing but a "/" separator to tell the
+-- escape sequences are |A:name:h:w|a for an atlas, |Tpath:h|t for a texture
+-- file. In "Text Only" mode there's nothing but a "/" separator to tell the
 -- numbers apart. `color` is only applied when the module's own "Colored
 -- text" setting is on.
--- An inline texture escape, cropped to the artwork when the file's real size
--- is known.
---
--- WoW pads a texture whose dimensions are not powers of two up to the next
--- power of two, and the escape's default UVs address the PADDED image -- so
--- EllesmereUIChat's 100x100 sidebar icons rendered at 100/128 of their box,
--- shoved into one corner and sitting wrong against the text baseline. That is
--- invisible where those files are normally used (a Texture with SetAllPoints
--- on a 22px button, where the inset just reads as padding) and obvious at
--- 14px inline.
---
--- Blizzard atlases never need this: the atlas definition carries its own crop.
-local function NextPOT(n)
-    local p = 1
-    while p < n do p = p * 2 end
-    return p
-end
-
-local function TextureEscape(path, w, h)
-    -- Without the real dimensions there is nothing to crop against, so ask for
-    -- a 14px square and accept whatever the file is.
-    if not (w and h) then return ("|T%s:14|t"):format(path) end
-    -- |Tpath:height:width:offsetX:offsetY:texWidth:texHeight:left:right:top:bottom|t
-    return ("|T%s:14:14:0:0:%d:%d:0:%d:0:%d|t")
-        :format(path, NextPOT(w), NextPOT(h), w, h)
-end
-
 function Broker.BuildText(getDB, parts)
     local db = getDB()
     local showIcon = Broker.GetDisplayMode(getDB) == "icon"
@@ -105,7 +76,7 @@ function Broker.BuildText(getDB, parts)
         if showIcon and part.atlas then
             icon = ("|A:%s:14:14|a"):format(part.atlas)
         elseif showIcon and part.texture then
-            icon = TextureEscape(part.texture, part.texW, part.texH)
+            icon = ("|T%s:14|t"):format(part.texture)
         end
 
         if not icon then

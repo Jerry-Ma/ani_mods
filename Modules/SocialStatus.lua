@@ -528,16 +528,12 @@ local CATEGORY_COLOR = { GUILD = "ffd700", FRIENDS = "59c0ff" }
 local EUI_CHAT_MEDIA = "Interface\\AddOns\\EllesmereUIChat\\Media\\"
 local ICON_CANDIDATES = {
     GUILD = {
-        -- 100x100, not a power of two: the declared size lets the inline escape
-        -- crop past WoW's padding (see Broker.TextureEscape).
-        { texture = EUI_CHAT_MEDIA .. "chat_guild.png", addon = "EllesmereUIChat",
-          w = 100, h = 100 },
+        { texture = EUI_CHAT_MEDIA .. "chat_guild.png", addon = "EllesmereUIChat" },
         { atlas = "UI-HUD-Minimap-GuildBanner-Up" },
         { atlas = "communities-icon-addgroupplus" },
     },
     FRIENDS = {
-        { texture = EUI_CHAT_MEDIA .. "chat_friends.png", addon = "EllesmereUIChat",
-          w = 100, h = 100 },
+        { texture = EUI_CHAT_MEDIA .. "chat_friends.png", addon = "EllesmereUIChat" },
         -- EllesmereUIMinimap's own friends button draws this one, so it is
         -- known good even though the rest of the list isn't.
         { atlas = "housefinder_neighborhood-friends-icon" },
@@ -584,7 +580,6 @@ local function BrokerPart(category, count)
     if icon then
         part.atlas = icon.atlas
         part.texture = icon.texture
-        part.texW, part.texH = icon.w, icon.h
     end
     return part
 end

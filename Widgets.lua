@@ -256,26 +256,19 @@ end
 
 -- Picks the first usable icon from an ordered candidate list. Candidates are
 --   { atlas = "some-atlas" }                        -- used if it exists here
---   { texture = "Interface\\...", addon = "Name", w = 100, h = 100 }
+--   { texture = "Interface\\...", addon = "Name" }  -- used if that addon is loaded
 -- The addon-scoped texture form REFERENCES a file already on disk rather
 -- than bundling a copy, so it carries no redistribution question -- it just
 -- has to degrade gracefully when that addon isn't there, which is what the
--- rest of the list is for.
---
--- `w`/`h` are the file's real pixel dimensions, and are worth supplying for
--- any texture that is not already a power of two: WoW pads such a file up to
--- the next power of two, and a caller that does not crop to the artwork draws
--- the padding too. Atlases never need this -- the atlas definition already
--- carries the crop.
---
--- Returns { atlas = ... } or { texture = ..., w = ..., h = ... }, or nil.
+-- rest of the list is for. Returns { atlas = ... } or { texture = ... }, or
+-- nil if nothing is usable.
 function W.ResolveIcon(candidates)
     for _, candidate in ipairs(candidates or {}) do
         if candidate.atlas then
             if W.AtlasExists(candidate.atlas) then return { atlas = candidate.atlas } end
         elseif candidate.texture then
             if (not candidate.addon) or AniMods.IsAddOnLoaded(candidate.addon) then
-                return { texture = candidate.texture, w = candidate.w, h = candidate.h }
+                return { texture = candidate.texture }
             end
         end
     end
