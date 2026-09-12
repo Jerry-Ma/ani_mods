@@ -35,11 +35,19 @@ end
 
 local EUI_CHAT_MEDIA = "Interface\\AddOns\\EllesmereUIChat\\Media\\"
 
--- The three files the real brokers borrow, all 100x100 (measured on disk).
+local EUI_MEDIA = "Interface\\AddOns\\EllesmereUI\\media\\micromenu\\"
+
+-- Two families, so the difference is visible rather than argued about.
+--
+-- chat_* are EllesmereUIChat's sidebar icons: 100x100, thin white LINE work.
+-- menu-* are EllesmereUI's own micromenu icons: 128x128 (a power of two) and
+-- solid SILHOUETTES -- the same set the EUI data bar draws for its item-level
+-- block, and so the look the rest of the bar already has.
 local TEXTURES = {
-    { label = "chat_voice",   path = EUI_CHAT_MEDIA .. "chat_voice.png" },
-    { label = "chat_guild",   path = EUI_CHAT_MEDIA .. "chat_guild.png" },
-    { label = "chat_friends", path = EUI_CHAT_MEDIA .. "chat_friends.png" },
+    { label = "chat_guild   (line art)",  path = EUI_CHAT_MEDIA .. "chat_guild.png" },
+    { label = "menu-guild   (silhouette)", path = EUI_MEDIA .. "menu-guild.png" },
+    { label = "menu-friends (silhouette)", path = EUI_MEDIA .. "menu-friends.png" },
+    { label = "menu-group   (silhouette)", path = EUI_MEDIA .. "menu-group.png" },
 }
 
 -- Round two. The first pass settled voice and friends -- both have a solid

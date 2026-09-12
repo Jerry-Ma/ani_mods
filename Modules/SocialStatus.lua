@@ -535,14 +535,25 @@ local CATEGORY_COLOR = { GUILD = "ffd700", FRIENDS = "59c0ff" }
 --
 -- UI-HUD-Minimap-GuildBanner-Up is confirmed MISSING on this client (the probe
 -- reported it so), which is what the note above always suspected.
-local EUI_CHAT_MEDIA = "Interface\\AddOns\\EllesmereUIChat\\Media\\"
+local EUI_MEDIA = "Interface\\AddOns\\EllesmereUI\\media\\"
 local ICON_CANDIDATES = {
     GUILD = {
-        -- No solid guild atlas found yet: communities-icon-addgroupplus exists
-        -- (64x64) but is a green PLUS, which means "add a group", not "guild".
-        -- The line-art PNG stays here until the probe turns one up -- a wrong
-        -- meaning is worse than weak art.
-        { texture = EUI_CHAT_MEDIA .. "chat_guild.png", addon = "EllesmereUIChat" },
+        -- EllesmereUI's OWN guild icon, from the same micromenu set its data
+        -- bar draws for the item-level block (menu-character.png). A solid
+        -- silhouette, 128x128, and it matches the look the rest of the bar has
+        -- -- which is the whole reason to prefer it over the chat sidebar's
+        -- line art.
+        --
+        -- Guild is the one category with no usable atlas: the probe found
+        -- UI-HUD-Minimap-GuildBanner-Up MISSING, and the guild-ish atlases that
+        -- DO exist are either the wrong thing entirely
+        -- (communities-icon-addgroupplus is a green plus meaning "add a group")
+        -- or frame furniture rather than an icon
+        -- (communities-guildbanner-background/-border, 74x69).
+        { texture = EUI_MEDIA .. "micromenu\\menu-guild.png", addon = "EllesmereUI" },
+        -- 16x20 and present: the real guild micro-button icon, if the art above
+        -- ever goes away.
+        { atlas = "UI-HUD-MicroMenu-GuildCommunities-Up" },
     },
     FRIENDS = {
         -- Measured 16x16 and present, solid, and EllesmereUIMinimap's own
