@@ -22,6 +22,7 @@ Modules\Bar.lua
 Modules\ChatContextSwitch.lua
 Modules\EllesmereUIMisc.lua
 Modules\GroupRoles.lua
+Modules\IconProbe.lua
 Modules\NSRTMisc.lua
 Modules\SocialStatus.lua
 Modules\SoundSwitch.lua
