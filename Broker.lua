@@ -29,6 +29,32 @@ function Broker.GetDisplayMode(getDB)
     return "icon"
 end
 
+-- Which family of art an icon is drawn from.
+--
+-- "eui" means EllesmereUI's own micromenu set: one designed family, every file
+-- 128x128, solid silhouettes. "blizzard" means the game's atlases, which are
+-- guaranteed present but are not a set -- their natural sizes run from 16x16 to
+-- 70x70, and squeezing all of them into the same 14px box gives them visibly
+-- different weight next to each other.
+--
+-- This is a PREFERENCE, not a requirement. Resolution always falls through to
+-- whatever actually exists, and every category here terminates in a Blizzard
+-- atlas, so picking "eui" on a machine without EllesmereUI quietly yields the
+-- Blizzard art rather than no icon at all.
+Broker.ICON_STYLE_LABEL = { eui = "EllesmereUI art", blizzard = "Blizzard atlas" }
+Broker.ICON_STYLE_ORDER = { "eui", "blizzard" }
+
+function Broker.GetIconStyle(getDB)
+    local style = getDB().brokerIconStyle
+    if style and Broker.ICON_STYLE_LABEL[style] then return style end
+    return "eui"
+end
+
+-- What W.ResolveIcon wants: which candidate KIND to try first.
+function Broker.PreferredIconKind(getDB)
+    return Broker.GetIconStyle(getDB) == "blizzard" and "atlas" or "texture"
+end
+
 -- Registers a data object, or returns nil if LibDataBroker isn't available.
 -- EllesmereUI ships LibStub + LibDataBroker-1.1 itself (EllesmereUI/Libs/),
 -- and every module using this is already gated on some EUI component being
@@ -161,6 +187,25 @@ function Broker.SectionRows(getDB, onChange, objectName)
             get     = function() return Broker.GetDisplayMode(getDB) end,
             set     = function(v) getDB().brokerDisplayMode = v; onChange() end,
         }
+        -- Only meaningful while icons are being drawn at all.
+        if Broker.GetDisplayMode(getDB) == "icon" then
+            rows[#rows + 1] = {
+                label   = "Icon style",
+                options = Broker.ICON_STYLE_LABEL,
+                order   = Broker.ICON_STYLE_ORDER,
+                get     = function() return Broker.GetIconStyle(getDB) end,
+                set     = function(v) getDB().brokerIconStyle = v; onChange() end,
+                help    = AniMods.IsAddOnLoaded("EllesmereUI")
+                    and "EllesmereUI's micromenu art is one designed set, so the "
+                     .. "icons match each other. Blizzard's atlases are guaranteed "
+                     .. "present, but their natural sizes vary enough that they "
+                     .. "carry visibly different weight side by side."
+                    or "EllesmereUI is not loaded, so both settings currently give "
+                     .. "the Blizzard atlas -- every icon falls back to one rather "
+                     .. "than going missing.",
+            }
+        end
+
         rows[#rows + 1] = {
             label = "Colored text",
             get   = function() return getDB().brokerColoredText ~= false end,

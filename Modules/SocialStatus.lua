@@ -551,23 +551,30 @@ local ICON_CANDIDATES = {
         -- or frame furniture rather than an icon
         -- (communities-guildbanner-background/-border, 74x69).
         { texture = EUI_MEDIA .. "micromenu\\menu-guild.png", addon = "EllesmereUI" },
-        -- 16x20 and present: the real guild micro-button icon, if the art above
-        -- ever goes away.
+        -- 16x20 and present: the real guild micro-button icon. Last on purpose
+        -- -- a Blizzard atlas is the one thing guaranteed to be there, so every
+        -- list ends in one and no category can go iconless.
         { atlas = "UI-HUD-MicroMenu-GuildCommunities-Up" },
     },
     FRIENDS = {
-        -- Measured 16x16 and present, solid, and EllesmereUIMinimap's own
-        -- friends button draws this one too.
+        { texture = EUI_MEDIA .. "micromenu\\menu-friends.png", addon = "EllesmereUI" },
+        -- 16x16 and present, and EllesmereUIMinimap's own friends button draws
+        -- this one too.
         { atlas = "housefinder_neighborhood-friends-icon" },
     },
 }
 
 -- Resolved once, on first use: C_Texture.GetAtlasInfo needs the client up,
 -- so this can't be decided at file-load time. `false` caches a genuine miss.
+-- Keyed by style as well as category: the Icon style setting changes which
+-- candidate wins, so a cache keyed on category alone would keep serving the
+-- art from before the switch.
 local resolvedIcons = {}
 local function CategoryIcon(category)
-    if resolvedIcons[category] == nil then
-        resolvedIcons[category] = AniMods.W.ResolveIcon(ICON_CANDIDATES[category]) or false
+    local key = category .. ":" .. AniMods.Broker.GetIconStyle(ModuleDB)
+    if resolvedIcons[key] == nil then
+        resolvedIcons[key] = AniMods.W.ResolveIcon(ICON_CANDIDATES[category],
+            AniMods.Broker.PreferredIconKind(ModuleDB)) or false
     end
     return resolvedIcons[category] or nil
 end

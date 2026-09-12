@@ -260,10 +260,17 @@ end
 -- The addon-scoped texture form REFERENCES a file already on disk rather
 -- than bundling a copy, so it carries no redistribution question -- it just
 -- has to degrade gracefully when that addon isn't there, which is what the
--- rest of the list is for. Returns { atlas = ... } or { texture = ... }, or
--- nil if nothing is usable.
-function W.ResolveIcon(candidates)
-    for _, candidate in ipairs(candidates or {}) do
+-- rest of the list is for.
+--
+-- `prefer` is "texture" or "atlas": candidates of that kind are tried first,
+-- then the whole list in its written order. It is a PREFERENCE and never a
+-- filter, which is what lets a list that ends in a guaranteed Blizzard atlas
+-- still produce an icon when the preferred art is not installed. Ordering, not
+-- selecting -- so no caller has to handle "the style you asked for is absent".
+--
+-- Returns { atlas = ... } or { texture = ... }, or nil if nothing is usable.
+function W.ResolveIcon(candidates, prefer)
+    local function Usable(candidate)
         if candidate.atlas then
             if W.AtlasExists(candidate.atlas) then return { atlas = candidate.atlas } end
         elseif candidate.texture then
@@ -271,6 +278,21 @@ function W.ResolveIcon(candidates)
                 return { texture = candidate.texture }
             end
         end
+        return nil
+    end
+
+    if prefer then
+        for _, candidate in ipairs(candidates or {}) do
+            if candidate[prefer] then
+                local found = Usable(candidate)
+                if found then return found end
+            end
+        end
+    end
+
+    for _, candidate in ipairs(candidates or {}) do
+        local found = Usable(candidate)
+        if found then return found end
     end
     return nil
 end

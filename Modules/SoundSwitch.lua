@@ -128,17 +128,25 @@ end
 --
 -- Both atlases are Blizzard-provided and measured present (32x32 and 29x29),
 -- so the second is a genuine alternative rather than dead weight.
+-- No EllesmereUI silhouette here: its micromenu set has no speaker, so the Icon
+-- style setting has nothing to switch to for this one and both settings land on
+-- the same atlas. That is the fallthrough working as intended rather than a
+-- gap -- an atlas is the one thing guaranteed present.
 local ICON_CANDIDATES = {
     { atlas = "voicechat-icon-speaker" },
     { atlas = "chatframe-button-icon-voicechat" },
 }
 
-local resolvedIcon
+-- Keyed by style: the Icon style setting changes which candidate wins, so a
+-- single cached value would outlive the switch.
+local resolvedIcons = {}
 local function SpeakerIcon()
-    if resolvedIcon == nil then
-        resolvedIcon = AniMods.W.ResolveIcon(ICON_CANDIDATES) or false
+    local style = Broker.GetIconStyle(ModuleDB)
+    if resolvedIcons[style] == nil then
+        resolvedIcons[style] = AniMods.W.ResolveIcon(ICON_CANDIDATES,
+            Broker.PreferredIconKind(ModuleDB)) or false
     end
-    return resolvedIcon or nil
+    return resolvedIcons[style] or nil
 end
 
 local function UpdateBroker()
