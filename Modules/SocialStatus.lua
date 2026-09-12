@@ -576,7 +576,7 @@ local function CategoryIcon(category)
         resolvedIcons[key] = AniMods.W.ResolveIcon(ICON_CANDIDATES[category],
             AniMods.Broker.PreferredIconKind(ModuleDB)) or false
     end
-    return resolvedIcons[category] or nil
+    return resolvedIcons[key] or nil
 end
 
 local function InitLDB()
