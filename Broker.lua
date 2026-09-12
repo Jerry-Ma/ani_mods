@@ -75,13 +75,13 @@ end
 --   { count = 3, color = "59c0ff", texture = "Interface\\..." } -- plain texture file
 --   { text = "Headphones", atlas = "some-atlas" }           -- any label, not just a number
 --
--- In "Icon + Text" mode each part's icon is packed directly against its
--- count with no padding (the most compact rendering, and the icon itself is
--- enough to tell the parts apart, so no separator is needed either); inline
--- escape sequences are |A:name:h:w|a for an atlas, |Tpath:h|t for a texture
--- file. In "Text Only" mode there's nothing but a "/" separator to tell the
--- numbers apart. `color` is only applied when the module's own "Colored
--- text" setting is on.
+-- In "Icon + Text" mode a LEADING icon is packed directly against its count
+-- with no padding (the most compact rendering, and the icon itself is enough
+-- to tell the parts apart, so no separator is needed either). A TRAILING icon
+-- gets a space -- see the note on `iconAfter` below. Inline escape sequences
+-- are |A:name:h:w|a for an atlas, |Tpath:h|t for a texture file. In "Text
+-- Only" mode there's nothing but a "/" separator to tell the numbers apart.
+-- `color` is only applied when the module's own "Colored text" setting is on.
 function Broker.BuildText(getDB, parts)
     local db = getDB()
     local showIcon = Broker.GetDisplayMode(getDB) == "icon"
@@ -105,10 +105,17 @@ function Broker.BuildText(getDB, parts)
             icon = ("|T%s:14|t"):format(part.texture)
         end
 
+        -- The gap is exactly the difference the paragraph above describes. A
+        -- LEADING icon and its number are one fact, so closing the gap binds
+        -- them; a TRAILING icon is a SECOND fact, and butting it against the
+        -- last letter of the first one reads as a single glued token -- the
+        -- spec name wearing the loot icon as a suffix. One space is enough to
+        -- separate them while still grouping tighter than the two spaces
+        -- between parts, so the hierarchy stays readable.
         if not icon then
             rendered[i] = numText
         elseif part.iconAfter then
-            rendered[i] = numText .. icon
+            rendered[i] = numText .. " " .. icon
         else
             rendered[i] = icon .. numText
         end
