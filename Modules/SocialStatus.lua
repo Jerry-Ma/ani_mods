@@ -525,17 +525,28 @@ local CATEGORY_COLOR = { GUILD = "ffd700", FRIENDS = "59c0ff" }
 -- its name came from DandersFrames_Options' atlas browser list, which that
 -- browser itself filters through C_Texture.GetAtlasInfo at runtime -- so
 -- appearing there never meant the atlas exists in this client.
+-- Atlas first, because the art matters more than the match. The PNGs were
+-- preferred once on the theory that EllesmereUIChat's flat line-art reads as
+-- a matched pair -- but the IconProbe widget put them side by side with the
+-- atlases in the data bar, and at 14px the line work loses badly: thin white
+-- strokes look like a scratch where an atlas is solid filled colour, which is
+-- what every other icon on the bar is. Nothing was wrong with how they
+-- rendered; they were simply the wrong art at this size.
+--
+-- UI-HUD-Minimap-GuildBanner-Up is confirmed MISSING on this client (the probe
+-- reported it so), which is what the note above always suspected.
 local EUI_CHAT_MEDIA = "Interface\\AddOns\\EllesmereUIChat\\Media\\"
 local ICON_CANDIDATES = {
     GUILD = {
+        -- No solid guild atlas found yet: communities-icon-addgroupplus exists
+        -- (64x64) but is a green PLUS, which means "add a group", not "guild".
+        -- The line-art PNG stays here until the probe turns one up -- a wrong
+        -- meaning is worse than weak art.
         { texture = EUI_CHAT_MEDIA .. "chat_guild.png", addon = "EllesmereUIChat" },
-        { atlas = "UI-HUD-Minimap-GuildBanner-Up" },
-        { atlas = "communities-icon-addgroupplus" },
     },
     FRIENDS = {
-        { texture = EUI_CHAT_MEDIA .. "chat_friends.png", addon = "EllesmereUIChat" },
-        -- EllesmereUIMinimap's own friends button draws this one, so it is
-        -- known good even though the rest of the list isn't.
+        -- Measured 16x16 and present, solid, and EllesmereUIMinimap's own
+        -- friends button draws this one too.
         { atlas = "housefinder_neighborhood-friends-icon" },
     },
 }

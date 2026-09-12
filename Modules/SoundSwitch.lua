@@ -117,12 +117,18 @@ end
 -- ---------------------------------------------------------------------------
 
 -- Resolved against the client rather than hard-coded: an atlas that doesn't
--- exist draws nothing at all, with no error. EllesmereUIChat's own voice
--- icon is preferred when that addon is present (known to render, and matches
--- the flat line-art the rest of the panel uses); it is referenced on disk,
--- never copied.
+-- exist draws nothing at all, with no error.
+--
+-- Atlas first, and EllesmereUIChat's sidebar PNG dropped entirely. That file
+-- was preferred once on the theory that it "matches the flat line-art the rest
+-- of the panel uses" -- but the IconProbe widget put the two side by side in
+-- the data bar and the line-art loses badly at 14px: thin white strokes read
+-- as a scratch, where the atlas is solid filled colour like every other icon
+-- on the bar. Nothing was wrong with how it rendered; it was the wrong art.
+--
+-- Both atlases are Blizzard-provided and measured present (32x32 and 29x29),
+-- so the second is a genuine alternative rather than dead weight.
 local ICON_CANDIDATES = {
-    { texture = "Interface\\AddOns\\EllesmereUIChat\\Media\\chat_voice.png", addon = "EllesmereUIChat" },
     { atlas = "voicechat-icon-speaker" },
     { atlas = "chatframe-button-icon-voicechat" },
 }

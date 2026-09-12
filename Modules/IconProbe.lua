@@ -42,16 +42,36 @@ local TEXTURES = {
     { label = "chat_friends", path = EUI_CHAT_MEDIA .. "chat_friends.png" },
 }
 
--- Every atlas either module currently lists as a candidate, plus one known-good
--- control: the role icons render correctly today, so whatever they do is the
--- shape to copy.
+-- Round two. The first pass settled voice and friends -- both have a solid
+-- atlas, both are now used -- and killed the rendering theory outright: the
+-- PNGs draw fine, they are just thin line work that dies at 14px.
+--
+-- What is left is GUILD, which has no solid atlas yet. Guessing names one at a
+-- time is what the probe exists to avoid, so the whole shortlist goes in at
+-- once and the report says which exist.
+--
+-- Only one of these is confirmed to exist anywhere: the delves guild banner,
+-- which !KalielsTracker draws (System/Media.lua). The rest are plausible
+-- shapes for how Blizzard names micro-menu and communities art -- appearing in
+-- an atlas browser or in someone's addon is NOT evidence an atlas exists in
+-- THIS client, which is the mistake the original guild candidate came from.
 local ATLASES = {
+    -- Settled, kept as controls: these are what the two fixed modules now use.
     "voicechat-icon-speaker",
-    "chatframe-button-icon-voicechat",
-    "UI-HUD-Minimap-GuildBanner-Up",
-    "communities-icon-addgroupplus",
     "housefinder_neighborhood-friends-icon",
-    "UI-LFG-RoleIcon-Tank",   -- control: a role-style icon that works
+    "UI-LFG-RoleIcon-Tank",
+
+    -- The guild hunt.
+    "ui-hud-minimap-guildbanner-delves-large",
+    "UI-HUD-MicroMenu-Guild-Up",
+    "UI-HUD-MicroMenu-GuildCommunities-Up",
+    "hud-microbutton-Guild-Up",
+    "communities-guildbanner-background",
+    "communities-guildbanner-border",
+    "GuildBanner-Background",
+    "communities-icon-guildbannerbackground",
+    "groupfinder-icon-guild",
+    "communities-icon-addgroupplus",   -- exists, wrong meaning: a green plus
 }
 
 -- Each variant is one hypothesis about the right escape. `desc` says what it
