@@ -5,7 +5,10 @@
 --
 -- Behaviour:
 --   Tab        -> cycle forward through active AND enabled chat types
---   Shift+Tab  -> cycle backward; from WHISPER/BN_WHISPER always jumps to SAY
+--   Shift+Tab  -> cycle backward
+--   Either one, from a context outside the cycle (whisper, BN whisper, yell,
+--   emote) -> enter at the first eligible entry. NDui only escapes a whisper
+--   on Shift+Tab; plain Tab there does nothing at all, which is a dead end.
 --
 -- The cycle: SAY -> PARTY -> RAID -> INSTANCE_CHAT -> GUILD -> OFFICER -> (CHANNEL if in world channel) -> SAY
 -- Each entry can be individually enabled/disabled from the AniMods status panel
@@ -185,12 +188,6 @@ local function OnCustomTabPressed(self)
     local isShift       = IsShiftKeyDown()
     local currentType   = self:GetAttribute("chatType")
 
-    -- Shift+Tab from a whisper context → jump straight to SAY
-    if isShift and (currentType == "WHISPER" or currentType == "BN_WHISPER") then
-        SwitchToChannel(self, "SAY")
-        return
-    end
-
     local cycles = BuildCycles()
     local numCycles = #cycles
     for i = 1, numCycles do
@@ -217,6 +214,27 @@ local function OnCustomTabPressed(self)
                 end
             end
             break
+        end
+    end
+
+    -- The current type is not in the cycle at all -- a whisper, a BN whisper,
+    -- a yell, an emote. Enter the cycle at its first eligible entry instead of
+    -- doing nothing.
+    --
+    -- This is a deliberate DIVERGENCE from NDui, which special-cases only
+    -- Shift+Tab out of WHISPER/BN_WHISPER and hardcodes SAY. Plain Tab there
+    -- falls through its `currentType == cycle.chatType` loop, matches nothing,
+    -- and leaves you stuck in the whisper with no visible way out -- which is
+    -- exactly the dead end that prompted this. Nothing is being overridden:
+    -- plain Tab had no behaviour here to preserve.
+    --
+    -- First ELIGIBLE rather than SAY, because SAY can be switched off in the
+    -- panel and jumping to a channel the player disabled would be its own bug.
+    for i = 1, numCycles do
+        local candidate = cycles[i]
+        if candidate:IsActive(self) then
+            SwitchToChannel(self, candidate.chatType)
+            return
         end
     end
 end
