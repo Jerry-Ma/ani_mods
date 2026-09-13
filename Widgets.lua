@@ -2169,11 +2169,24 @@ end
 --   action   = label for the action button; omit for a read-only box
 --   onAction = function(text) -> ok, message   -- message is shown in the footer
 -- }
+--
+-- Built ONCE and reconfigured per call. It was built fresh every time, which
+-- left a new window behind on every click and passed nil where W.Window wanted
+-- a global name -- UISpecialFrames holds names, so that indexed _G with nil and
+-- threw. One named window fixes all three: no leak, Esc closes it, and the
+-- second "Show" reuses the first one's frame.
+local textBox
+
 function W.TextBox(opts)
     opts = opts or {}
     local PAD, BTN_H, GAP = 12, 22, 8
 
-    local win = W.Window(nil, opts.title or "", opts.width or 620, opts.height or 440)
+    if textBox then
+        textBox:Configure(opts)
+        return textBox
+    end
+
+    local win = W.Window("AniModsTextBox", opts.title or "", opts.width or 620, opts.height or 440)
     local body = win.content
 
     -- The field surface goes on a child frame. `win` is restrip-registered, so
@@ -2216,27 +2229,48 @@ function W.TextBox(opts)
     close:SetText("Close")
     close:SetOnClick(function() win:Hide() end)
 
-    if opts.action then
-        local act = W.Button(body, 120, BTN_H)
-        act.frame:SetPoint("RIGHT", close.frame, "LEFT", -GAP, 0)
-        act:SetText(opts.action)
-        act:SetOnClick(function()
-            if not opts.onAction then return end
-            local ok, msg = opts.onAction(edit:GetText() or "")
-            status:SetText(msg or "")
-            status:SetTextColor(ok and 0.45 or 1, ok and 0.9 or 0.35, ok and 0.45 or 0.35, 1)
-        end)
-    end
+    -- Always built, shown only when this call wants one. Creating it on demand
+    -- would mean the reused window could never grow an action button it did not
+    -- have the first time.
+    local act = W.Button(body, 120, BTN_H)
+    act.frame:SetPoint("RIGHT", close.frame, "LEFT", -GAP, 0)
 
-    edit:SetText(opts.text or "")
-    win:Show()
-    -- Select everything on an export so the user can copy without aiming.
-    if opts.text and opts.text ~= "" then
-        edit:SetFocus()
-        edit:HighlightText()
+    -- Everything that varies between calls lives here, so the window has
+    -- exactly one place that knows how to become a different window.
+    function win:Configure(o)
+        win.titleText:SetText(o.title or "")
+        status:SetText("")
+
+        if o.action then
+            act:SetText(o.action)
+            act:SetOnClick(function()
+                if not o.onAction then return end
+                local ok, msg = o.onAction(edit:GetText() or "")
+                status:SetText(msg or "")
+                status:SetTextColor(ok and 0.45 or 1, ok and 0.9 or 0.35, ok and 0.45 or 0.35, 1)
+            end)
+            act.frame:Show()
+        else
+            -- Cleared as well as hidden: a stale handler on a hidden button is
+            -- the kind of thing that fires again the next time it is shown.
+            act:SetOnClick(nil)
+            act.frame:Hide()
+        end
+
+        edit:SetText(o.text or "")
+        win:Show()
+        -- Select everything on an export so the user can copy without aiming.
+        if o.text and o.text ~= "" then
+            edit:SetFocus()
+            edit:HighlightText()
+        else
+            edit:ClearFocus()
+        end
     end
 
     win.edit = edit
+    textBox = win
+    win:Configure(opts)
     return win
 end
 
@@ -2415,6 +2449,8 @@ function W.Window(name, titleText, width, height, opts)
     local ar, ag, ab = W.Accent()
     title:SetTextColor(ar, ag, ab, 1)
     W.RegisterAccent(title, "text")
+    -- Exposed so a reusable window can be retitled instead of rebuilt.
+    f.titleText = title
 
     local close = W.Button(titleBar, 22, 20)
     close:SetText("\195\151") -- U+00D7 multiplication sign
@@ -2452,9 +2488,14 @@ function W.Window(name, titleText, width, height, opts)
     content:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", 0, footer and FOOTER_H or 0)
     f.content = content
 
-    -- Esc closes it, matching every other panel in the game.
-    _G[name] = f
-    tinsert(UISpecialFrames, name)
+    -- Esc closes it, matching every other panel in the game. UISpecialFrames
+    -- holds GLOBAL NAMES, so this only works for a window that has one --
+    -- an anonymous window silently goes without rather than indexing _G with
+    -- nil, which is what it used to do.
+    if name then
+        _G[name] = f
+        tinsert(UISpecialFrames, name)
+    end
 
     f.titleBar = titleBar
     return f
