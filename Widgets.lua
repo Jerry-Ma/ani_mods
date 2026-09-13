@@ -275,7 +275,7 @@ function W.ResolveIcon(candidates, prefer)
             if W.AtlasExists(candidate.atlas) then return { atlas = candidate.atlas } end
         elseif candidate.texture then
             if (not candidate.addon) or AniMods.IsAddOnLoaded(candidate.addon) then
-                return { texture = candidate.texture }
+                return { texture = candidate.texture, art = candidate.art }
             end
         end
         return nil

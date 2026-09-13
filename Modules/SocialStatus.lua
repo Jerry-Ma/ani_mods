@@ -550,14 +550,20 @@ local ICON_CANDIDATES = {
         -- (communities-icon-addgroupplus is a green plus meaning "add a group")
         -- or frame furniture rather than an icon
         -- (communities-guildbanner-background/-border, 74x69).
-        { texture = EUI_MEDIA .. "micromenu\\menu-guild.png", addon = "EllesmereUI" },
+        -- `art` is the MEASURED opaque bounds of the glyph inside the file,
+        -- not the file's size. menu-guild is a 105x67 band in the bottom half
+        -- of a 128x128 canvas, so drawing the canvas square rendered it at
+        -- half height and low on the line. See Broker.TextureEscape.
+        { texture = EUI_MEDIA .. "micromenu\\menu-guild.png", addon = "EllesmereUI",
+          art = { w = 105, h = 67, x = 11, y = 58, cw = 128, ch = 128 } },
         -- 16x20 and present: the real guild micro-button icon. Last on purpose
         -- -- a Blizzard atlas is the one thing guaranteed to be there, so every
         -- list ends in one and no category can go iconless.
         { atlas = "UI-HUD-MicroMenu-GuildCommunities-Up" },
     },
     FRIENDS = {
-        { texture = EUI_MEDIA .. "micromenu\\menu-friends.png", addon = "EllesmereUI" },
+        { texture = EUI_MEDIA .. "micromenu\\menu-friends.png", addon = "EllesmereUI",
+          art = { w = 105, h = 60, x = 12, y = 62, cw = 128, ch = 128 } },
         -- 16x16 and present, and EllesmereUIMinimap's own friends button draws
         -- this one too.
         { atlas = "housefinder_neighborhood-friends-icon" },

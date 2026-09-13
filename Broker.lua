@@ -82,6 +82,35 @@ end
 -- are |A:name:h:w|a for an atlas, |Tpath:h|t for a texture file. In "Text
 -- Only" mode there's nothing but a "/" separator to tell the numbers apart.
 -- `color` is only applied when the module's own "Colored text" setting is on.
+-- Height every inline icon is drawn at, so a change is one edit.
+local ICON_H = 14
+
+-- An inline texture escape, cropped to the ARTWORK rather than the canvas.
+--
+-- A texture file is a canvas, and the glyph inside it need not fill it or be
+-- centred in it. EllesmereUI's micromenu set is the clear case: menu-guild is
+-- a 105x67 band sitting in the BOTTOM half of a 128x128 file, with nothing
+-- above it. Drawing the whole canvas into a square box therefore renders that
+-- glyph at roughly half height, pushed low -- faithful to the file, and wrong
+-- on a text line. menu-character in the same folder is 82x118, the opposite
+-- shape, so there is no single box that suits the set.
+--
+-- `art` is the measured opaque bounds: { w, h, x, y, cw, ch } -- the glyph's
+-- size and position, and the canvas it lives on. Given those, the escape can
+-- ask for exactly that region and size it to the glyph's own aspect, so every
+-- icon ends up the same HEIGHT as the text rather than the same box.
+--
+-- |Tpath:height:width:offsetX:offsetY:texW:texH:left:right:top:bottom|t
+function Broker.TextureEscape(path, art)
+    if not art then return ("|T%s:%d|t"):format(path, ICON_H) end
+    -- Width follows the glyph's aspect: a wide banner stays wide instead of
+    -- being squeezed into a square, and a tall glyph stays narrow.
+    local w = math.floor(ICON_H * (art.w / art.h) + 0.5)
+    return ("|T%s:%d:%d:0:0:%d:%d:%d:%d:%d:%d|t"):format(
+        path, ICON_H, w, art.cw, art.ch,
+        art.x, art.x + art.w, art.y, art.y + art.h)
+end
+
 function Broker.BuildText(getDB, parts)
     local db = getDB()
     local showIcon = Broker.GetDisplayMode(getDB) == "icon"
@@ -102,7 +131,7 @@ function Broker.BuildText(getDB, parts)
         if showIcon and part.atlas then
             icon = ("|A:%s:14:14|a"):format(part.atlas)
         elseif showIcon and part.texture then
-            icon = ("|T%s:14|t"):format(part.texture)
+            icon = Broker.TextureEscape(part.texture, part.art)
         end
 
         -- The gap is exactly the difference the paragraph above describes. A
