@@ -19,7 +19,9 @@ Widgets.lua
 UI.lua
 Modules\General.lua
 Modules\Bar.lua
+Modules\AchievementShot.lua
 Modules\ChatContextSwitch.lua
+Modules\DamageMeter.lua
 Modules\EllesmereUIMisc.lua
 Modules\GroupRoles.lua
 Modules\IconProbe.lua
