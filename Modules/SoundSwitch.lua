@@ -161,10 +161,6 @@ local function UpdateBroker()
         part.canvas  = icon.canvas
     end
 
-    -- One icon, so this widget can use LDB's own icon contract: a display that
-    -- draws it gets a real Texture, with the hover tint an inline escape can
-    -- never have. BuildText drops its inline copy when that is happening.
-    Broker.ApplyObjectIcon(ldbObject, icon)
     Broker.SetText(ldbObject, Broker.BuildText(ModuleDB, { part }))
 end
 
