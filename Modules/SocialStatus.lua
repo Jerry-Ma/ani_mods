@@ -550,12 +550,15 @@ local ICON_CANDIDATES = {
         -- (communities-icon-addgroupplus is a green plus meaning "add a group")
         -- or frame furniture rather than an icon
         -- (communities-guildbanner-background/-border, 74x69).
-        -- `art` is the MEASURED opaque bounds of the glyph inside the file,
-        -- not the file's size. menu-guild is a 105x67 band in the bottom half
-        -- of a 128x128 canvas, so drawing the canvas square rendered it at
-        -- half height and low on the line. See Broker.TextureEscape.
+        -- `coords` is a SQUARE region of the file containing the glyph, from
+        -- measuring the opaque pixels: menu-guild's art is 105x67 sitting at
+        -- (11,58) on a 128x128 canvas, i.e. a wide band in the bottom half
+        -- with nothing above it. Drawing the whole canvas rendered it at half
+        -- height; cropping it tightly then got stretched back, because every
+        -- display draws the icon in a SQUARE box. A square crop is the only
+        -- shape that survives that. See the Icons section in Broker.lua.
         { texture = EUI_MEDIA .. "micromenu\\menu-guild.png", addon = "EllesmereUI",
-          art = { w = 105, h = 67, x = 11, y = 58, cw = 128, ch = 128 } },
+          coords = { 0.0859, 0.9063, 0.1797, 1.0000 }, canvas = 128 },
         -- 16x20 and present: the real guild micro-button icon. Last on purpose
         -- -- a Blizzard atlas is the one thing guaranteed to be there, so every
         -- list ends in one and no category can go iconless.
@@ -563,7 +566,7 @@ local ICON_CANDIDATES = {
     },
     FRIENDS = {
         { texture = EUI_MEDIA .. "micromenu\\menu-friends.png", addon = "EllesmereUI",
-          art = { w = 105, h = 60, x = 12, y = 62, cw = 128, ch = 128 } },
+          coords = { 0.0938, 0.9141, 0.1797, 1.0000 }, canvas = 128 },
         -- 16x16 and present, and EllesmereUIMinimap's own friends button draws
         -- this one too.
         { atlas = "housefinder_neighborhood-friends-icon" },
@@ -613,8 +616,10 @@ local function BrokerPart(category, count)
     local part = { count = count, color = CATEGORY_COLOR[category] }
     local icon = CategoryIcon(category)
     if icon then
-        part.atlas = icon.atlas
+        part.atlas   = icon.atlas
         part.texture = icon.texture
+        part.coords  = icon.coords
+        part.canvas  = icon.canvas
     end
     return part
 end

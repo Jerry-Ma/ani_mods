@@ -85,30 +85,75 @@ end
 -- Height every inline icon is drawn at, so a change is one edit.
 local ICON_H = 14
 
--- An inline texture escape, cropped to the ARTWORK rather than the canvas.
+-- ── Icons ───────────────────────────────────────────────────────────────────
 --
--- A texture file is a canvas, and the glyph inside it need not fill it or be
--- centred in it. EllesmereUI's micromenu set is the clear case: menu-guild is
--- a 105x67 band sitting in the BOTTOM half of a 128x128 file, with nothing
--- above it. Drawing the whole canvas into a square box therefore renders that
--- glyph at roughly half height, pushed low -- faithful to the file, and wrong
--- on a text line. menu-character in the same folder is 82x118, the opposite
--- shape, so there is no single box that suits the set.
+-- Two ways to put an icon on a broker, and which one is available depends on
+-- the DISPLAY, not on us.
 --
--- `art` is the measured opaque bounds: { w, h, x, y, cw, ch } -- the glyph's
--- size and position, and the canvas it lives on. Given those, the escape can
--- ask for exactly that region and size it to the glyph's own aspect, so every
--- icon ends up the same HEIGHT as the text rather than the same box.
+-- The good one is LibDataBroker's own contract: set `icon` and `iconCoords` on
+-- the data object and let the display draw a real Texture. EllesmereUI's data
+-- bar does exactly that (EllesmereUIDataBars_Blocks.lua, the broker plugin),
+-- which is why its built-in blocks tint on hover and ours could not: a texture
+-- has vertex colour and mouse state, and an inline escape is glyph data in a
+-- string with nowhere to put either. EUI's own source says as much -- "inline
+-- textures cannot be vertex-tinted".
 --
--- |Tpath:height:width:offsetX:offsetY:texW:texH:left:right:top:bottom|t
-function Broker.TextureEscape(path, art)
-    if not art then return ("|T%s:%d|t"):format(path, ICON_H) end
-    -- Width follows the glyph's aspect: a wide banner stays wide instead of
-    -- being squeezed into a square, and a tall glyph stays narrow.
-    local w = math.floor(ICON_H * (art.w / art.h) + 0.5)
+-- The fallback is the inline escape, for displays that render only `text`.
+--
+-- CROPS ARE SQUARE, deliberately. EUI sizes the icon `iconSz x iconSz` and
+-- then applies iconCoords, so a tight crop around a wide glyph gets stretched
+-- back into a square -- which is the vertical squashing that kept coming back.
+-- A square region CONTAINING the glyph is the only shape that survives a
+-- square box. Candidates therefore declare `coords` as measured normalised
+-- texels, not an aspect.
+
+-- True when a display that draws LDB icons is present. EUI's data bar is the
+-- one that matters here; a display without icon support simply ignores the
+-- attribute, so setting it is never harmful -- what varies is whether the
+-- inline copy would then be a SECOND icon.
+function Broker.DisplayDrawsIcons()
+    return AniMods.IsAddOnLoaded("EllesmereUIDataBars")
+end
+
+--- Puts an icon on the data object itself, the way LDB intends.
+--- `icon` is a resolved entry from W.ResolveIcon.
+function Broker.ApplyObjectIcon(obj, icon)
+    if not obj then return end
+    if not icon then
+        obj.icon, obj.iconCoords = nil, nil
+        return
+    end
+
+    if icon.texture then
+        obj.icon = icon.texture
+        obj.iconCoords = icon.coords
+        return
+    end
+
+    -- An atlas is a named region of a sheet, and `icon` wants a file. The
+    -- atlas info carries both, so the same one-icon contract covers atlases
+    -- without the display needing to know what an atlas is.
+    local info = icon.atlas and C_Texture and C_Texture.GetAtlasInfo
+        and C_Texture.GetAtlasInfo(icon.atlas)
+    if info and info.file then
+        obj.icon = info.file
+        obj.iconCoords = {
+            info.leftTexCoord or 0, info.rightTexCoord or 1,
+            info.topTexCoord or 0, info.bottomTexCoord or 1,
+        }
+    else
+        obj.icon, obj.iconCoords = nil, nil
+    end
+end
+
+-- The inline fallback. |Tpath:h:w:offX:offY:texW:texH:left:right:top:bottom|t
+-- Square in and square out, for the reason above.
+function Broker.TextureEscape(path, coords, canvas)
+    if not (coords and canvas) then return ("|T%s:%d|t"):format(path, ICON_H) end
     return ("|T%s:%d:%d:0:0:%d:%d:%d:%d:%d:%d|t"):format(
-        path, ICON_H, w, art.cw, art.ch,
-        art.x, art.x + art.w, art.y, art.y + art.h)
+        path, ICON_H, ICON_H, canvas, canvas,
+        coords[1] * canvas, coords[2] * canvas,
+        coords[3] * canvas, coords[4] * canvas)
 end
 
 function Broker.BuildText(getDB, parts)
@@ -127,11 +172,15 @@ function Broker.BuildText(getDB, parts)
         -- fact (the loot spec) sitting beside the first (the spec being
         -- played), so it trails, and "name then icon" reads as "playing this,
         -- looting that". Borrowed from NDui's own spec infobar.
+        -- Suppressed entirely when the display draws the object's own icon:
+        -- emitting both would put two of the same icon on the widget.
         local icon
-        if showIcon and part.atlas then
-            icon = ("|A:%s:14:14|a"):format(part.atlas)
-        elseif showIcon and part.texture then
-            icon = Broker.TextureEscape(part.texture, part.art)
+        if showIcon and not Broker.DisplayDrawsIcons() then
+            if part.atlas then
+                icon = ("|A:%s:14:14|a"):format(part.atlas)
+            elseif part.texture then
+                icon = Broker.TextureEscape(part.texture, part.coords, part.canvas)
+            end
         end
 
         -- The gap is exactly the difference the paragraph above describes. A
