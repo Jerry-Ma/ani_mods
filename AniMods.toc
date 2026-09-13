@@ -20,6 +20,7 @@ UI.lua
 Modules\General.lua
 Modules\Bar.lua
 Modules\AchievementShot.lua
+Modules\BarToggle.lua
 Modules\ChatContextSwitch.lua
 Modules\DamageMeter.lua
 Modules\EllesmereUIMisc.lua
