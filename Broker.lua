@@ -116,6 +116,32 @@ function Broker.TextureEscape(path, coords, canvas)
         coords[3] * canvas, coords[4] * canvas)
 end
 
+-- Atlases are drawn at their OWN aspect, not forced into a square.
+--
+-- The candidates come from unrelated Blizzard art sets and their natural sizes
+-- vary wildly -- 16x16 for the friends icon, 16x20 for the guild micro button,
+-- 70x70 for a role icon. Asking for 14x14 regardless stretches every one that
+-- is not square, which is half of why they looked inconsistent beside each
+-- other. Fixing the HEIGHT and letting width follow keeps them all the same
+-- size as the text, which is the dimension a reader compares.
+--
+-- Cached: GetAtlasInfo allocates a table per call, and this runs on every
+-- broker text rebuild.
+local atlasAspect = {}
+
+function Broker.AtlasEscape(atlas)
+    local aspect = atlasAspect[atlas]
+    if aspect == nil then
+        local info = C_Texture and C_Texture.GetAtlasInfo and C_Texture.GetAtlasInfo(atlas)
+        local w, h = info and info.width, info and info.height
+        aspect = (w and h and h > 0) and (w / h) or false
+        atlasAspect[atlas] = aspect
+    end
+    local w = aspect and math.floor(ICON_H * aspect + 0.5) or ICON_H
+    if w < 1 then w = 1 end
+    return ("|A:%s:%d:%d|a"):format(atlas, ICON_H, w)
+end
+
 function Broker.BuildText(getDB, parts)
     local db = getDB()
     local showIcon = Broker.GetDisplayMode(getDB) == "icon"
@@ -134,24 +160,29 @@ function Broker.BuildText(getDB, parts)
         -- looting that". Borrowed from NDui's own spec infobar.
         local icon
         if showIcon and part.atlas then
-            icon = ("|A:%s:14:14|a"):format(part.atlas)
+            icon = Broker.AtlasEscape(part.atlas)
         elseif showIcon and part.texture then
             icon = Broker.TextureEscape(part.texture, part.coords, part.canvas)
         end
 
-        -- The gap is exactly the difference the paragraph above describes. A
-        -- LEADING icon and its number are one fact, so closing the gap binds
-        -- them; a TRAILING icon is a SECOND fact, and butting it against the
-        -- last letter of the first one reads as a single glued token -- the
-        -- spec name wearing the loot icon as a suffix. One space is enough to
-        -- separate them while still grouping tighter than the two spaces
-        -- between parts, so the hierarchy stays readable.
+        -- One space on whichever side the icon sits, always.
+        --
+        -- A leading icon used to be glued to its number with nothing between
+        -- them, on the theory that the icon labels the number and closing the
+        -- gap binds them. In practice the gap was never zero and never equal:
+        -- what showed was each icon's own transparent margin, so a tight atlas
+        -- sat hard against its digit and a padded one floated. An explicit
+        -- space is the only part of that distance we control, and making it
+        -- the same on both sides is what makes the row look deliberate.
+        --
+        -- Still one space, not two: parts are separated by two, so the icon
+        -- stays grouped with its own number and the hierarchy survives.
         if not icon then
             rendered[i] = numText
         elseif part.iconAfter then
             rendered[i] = numText .. " " .. icon
         else
-            rendered[i] = icon .. numText
+            rendered[i] = icon .. " " .. numText
         end
     end
 
