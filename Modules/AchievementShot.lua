@@ -43,14 +43,44 @@ local function GetDelay()
     return SHOT_DELAY
 end
 
+-- A burst of achievements produces ONE screenshot, not one each.
+--
+-- This is the part of NDui's behaviour that the OnUpdate was quietly providing.
+-- Its handler set `delay = 1` on a single shared frame, so a second achievement
+-- arriving mid-countdown restarted the clock rather than queuing a second shot.
+-- Swapping to one C_Timer.After per event lost that: finishing a quest chain or
+-- zoning into a new area can award several at once, and each would have taken
+-- its own screenshot of the same screen.
+--
+-- Restored deliberately rather than accidentally: `fireAt` is pushed forward on
+-- every achievement, and the timer re-arms itself for whatever is left instead
+-- of firing early.
+local pending = false
+local fireAt = 0
+
+local function Fire()
+    local remaining = fireAt - _G.GetTime()
+    if remaining > 0 then
+        _G.C_Timer.After(remaining, Fire)
+        return
+    end
+    pending = false
+    if not moduleEnabled then return end
+    taken = taken + 1
+    _G.Screenshot()
+end
+
+local function Schedule()
+    fireAt = _G.GetTime() + GetDelay()
+    if pending then return end
+    pending = true
+    _G.C_Timer.After(GetDelay(), Fire)
+end
+
 local function OnAchievement(_, _, alreadyEarnedOnAccount)
     if not moduleEnabled then return end
     if alreadyEarnedOnAccount and ModuleDB().skipAccountEarned ~= false then return end
-    _G.C_Timer.After(GetDelay(), function()
-        if not moduleEnabled then return end
-        taken = taken + 1
-        _G.Screenshot()
-    end)
+    Schedule()
 end
 
 local frame
@@ -85,6 +115,15 @@ function AchievementShot:GetInfoRows()
     rows[#rows + 1] = {
         label = "Taken this session",
         value = tostring(taken),
+    }
+    rows[#rows + 1] = {
+        kind = "button", label = "Test", button = "Take one now",
+        help = "Runs the same path an achievement does, delay included, so it "
+            .. "proves the whole thing rather than just that Screenshot() "
+            .. "exists. The file lands in the Screenshots folder next to your "
+            .. "WTF folder, named by date and time; the count above ticks up "
+            .. "once the delay elapses.",
+        onClick = Schedule,
     }
 
     return rows

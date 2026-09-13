@@ -39,7 +39,7 @@ local W = AniMods.W
 -- slot assignment and not a taxonomy: a collection grown organically has builds
 -- parented across cases (a Raid variant sitting in an M+ slot) purely because
 -- no slot existed for its own base. The name is the source of truth here, and
--- the dump normalises to it.
+-- the dump carries it through unchanged.
 
 -- Matched longest-first so a short token can never shadow a longer one that
 -- starts with it. Plain string compares, never patterns -- "M+" contains a
@@ -85,22 +85,23 @@ local function BaseName(prefix, case)
     return prefix and (prefix .. "-" .. case) or case
 end
 
---- The convention's canonical spelling: base, then a single dash, then the
---- variant. Organic names use no separator ("SA-M+1") or one already ("PVP-1");
---- both normalise to the same shape so the grouping is legible in the name.
-local function CanonicalName(prefix, case, variant)
-    local base = BaseName(prefix, case)
-    variant = (variant or ""):gsub("^%-+", "")
-    if variant == "" then return base end
-    return base .. "-" .. variant
-end
+-- There is deliberately no canonical spelling to rewrite names into.
+--
+-- The dump used to insert a dash between base and variant, turning "SA-M+1"
+-- into "SA-M+-1". That was wrong: the separator belongs to the VARIANT, which
+-- is free text, so both "HA-Raid1" and "PVP-1" are correct as written and
+-- "HA-Raid1" is the better-looking of the two. Normalising imposed a spelling
+-- the convention never asked for and made the shorter form unreachable.
+--
+-- Names are therefore dumped exactly as TLM holds them. The parse still runs,
+-- but only to find the base a name groups under -- reading, not rewriting.
 
---- Canonical name for a raw loadout name, plus the base it belongs to.
---- Unparseable names keep their original spelling and land in the bag.
-local function Classify(name)
-    local prefix, case, variant = ParseName(name)
-    if not case then return name, UNCATEGORISED end
-    return CanonicalName(prefix, case, variant), BaseName(prefix, case)
+--- The base a name groups under. Names with no recognised case token land in
+--- the bag; nothing is ever renamed.
+local function BaseOf(name)
+    local prefix, case = ParseName(name)
+    if not case then return UNCATEGORISED end
+    return BaseName(prefix, case)
 end
 
 -- ---------------------------------------------------------------------------
@@ -134,7 +135,7 @@ end
 -- Dump / restore
 -- ---------------------------------------------------------------------------
 
---- One loadout per line: export string, then the canonical name.
+--- One loadout per line: export string, then the name exactly as TLM holds it.
 ---
 --- The export string comes first on purpose. Blizzard's codes are base64 and
 --- never contain "|", while names freely can, so splitting on the FIRST "|"
@@ -149,7 +150,7 @@ local function BuildDump()
     for _, info in ipairs(loadouts) do
         local ok, str = pcall(api.GetExportString, api, info.id)
         if ok and type(str) == "string" and str ~= "" then
-            lines[#lines + 1] = str .. "|" .. Classify(info.name)
+            lines[#lines + 1] = str .. "|" .. info.name
         else
             skipped = skipped + 1
         end
@@ -197,14 +198,12 @@ end
 local function BuildGroupReport()
     local groups, order = {}, {}
     for _, info in ipairs(CustomLoadouts()) do
-        local canonical, base = Classify(info.name)
+        local base = BaseOf(info.name)
         if not groups[base] then
             groups[base] = {}
             order[#order + 1] = base
         end
-        local entry = canonical
-        if canonical ~= info.name then entry = canonical .. "   (was " .. info.name .. ")" end
-        table.insert(groups[base], entry)
+        table.insert(groups[base], info.name)
     end
 
     if #order == 0 then return "No custom loadouts found." end
@@ -246,12 +245,11 @@ function TalentLoadouts:GetInfoRows()
     local rows = {}
 
     local loadouts = CustomLoadouts()
-    local bases, baseCount, bagged, renamed = {}, 0, 0, 0
+    local bases, baseCount, bagged = {}, 0, 0
     for _, info in ipairs(loadouts) do
-        local canonical, base = Classify(info.name)
+        local base = BaseOf(info.name)
         if not bases[base] then bases[base] = true; baseCount = baseCount + 1 end
         if base == UNCATEGORISED then bagged = bagged + 1 end
-        if canonical ~= info.name then renamed = renamed + 1 end
     end
 
     rows[#rows + 1] = { section = "Collection" }
@@ -261,12 +259,6 @@ function TalentLoadouts:GetInfoRows()
         value = tostring(baseCount),
         help  = "Distinct {Prefix}-{Case} bases. Every name sharing a base is a "
              .. "variant of it.",
-    }
-    rows[#rows + 1] = {
-        label = "Renamed by the dump",
-        value = tostring(renamed),
-        help  = "Names that are not in canonical form. The dump writes them as "
-             .. "{Base}-{Variant}; TLM itself is left untouched.",
     }
     rows[#rows + 1] = {
         label = UNCATEGORISED,
