@@ -528,10 +528,109 @@ local GroupButtonEntry = {
 }
 
 -- ---------------------------------------------------------------------------
+-- Extra action button: stop its artwork eating clicks
+-- ---------------------------------------------------------------------------
+-- The zone/extra ability button draws a decorative surround that is much
+-- larger than the button, and that surround takes the mouse. Clicks landing on
+-- the art near the button hit nothing, and anything underneath it -- an action
+-- bar, a unit frame -- is unreachable while the button is up.
+--
+-- Ported from EUI_Kogotool (Core/Gameplay/BlizzUIEnhance.lua), which switches
+-- the mouse off on three frames: the bar frame, the container, and the zone
+-- ability's Style. The BUTTON itself is untouched and stays clickable -- only
+-- the decoration stops intercepting.
+--
+-- Two things NOT copied from the source. Its apply function ignores its own
+-- setting, so switching the option off still disabled the mouse; here Revert
+-- actually puts it back. And it guards combat on one of the three frames only,
+-- while all three are protected -- EnableMouse on a protected frame in combat
+-- is blocked, so every one is guarded and the work is deferred.
+
+local EXTRA_FRAMES = {
+    { name = "ExtraActionBarFrame" },
+    { name = "ExtraAbilityContainer" },
+    -- The zone ability's surround is a child, not the frame itself.
+    { name = "ZoneAbilityFrame", child = "Style" },
+}
+
+local extraWanted = false
+local extraWatcher
+
+local function ForEachExtraFrame(fn)
+    for _, spec in ipairs(EXTRA_FRAMES) do
+        local frame = _G[spec.name]
+        if spec.child then frame = frame and frame[spec.child] end
+        if frame and frame.EnableMouse then fn(frame) end
+    end
+end
+
+local ApplyExtraMouse
+
+-- The frames are created on demand and Blizzard re-shows them per zone or
+-- encounter, so this has to re-assert rather than run once at login.
+local function EnsureExtraWatcher()
+    if extraWatcher then return end
+    extraWatcher = CreateFrame("Frame")
+    extraWatcher:RegisterEvent("UPDATE_EXTRA_ACTIONBAR")
+    extraWatcher:RegisterEvent("ZONE_CHANGED_NEW_AREA")
+    extraWatcher:RegisterEvent("PLAYER_REGEN_ENABLED")
+    extraWatcher:SetScript("OnEvent", function() ApplyExtraMouse() end)
+end
+
+ApplyExtraMouse = function()
+    -- Deferred rather than skipped: PLAYER_REGEN_ENABLED is in the watcher's
+    -- event list, so leaving combat runs this again.
+    if InCombatLockdown() then return end
+    ForEachExtraFrame(function(frame) frame:EnableMouse(not extraWanted) end)
+end
+
+local ExtraButtonClickEntry = {
+    key = "extraButtonClicks",
+    name = "Extra Button Click-Through",
+    Available = function()
+        -- Nothing to check for: the frames appear only when the game hands you
+        -- a zone or extra ability, and the entry simply has no effect until
+        -- then. Reporting unavailable would be reporting on the zone.
+        return true
+    end,
+    Apply = function()
+        extraWanted = true
+        EnsureExtraWatcher()
+        ApplyExtraMouse()
+        return true
+    end,
+    Revert = function()
+        extraWanted = false
+        ApplyExtraMouse()
+    end,
+    GetInfoRows = function()
+        local found, silenced = 0, 0
+        ForEachExtraFrame(function(frame)
+            found = found + 1
+            if not frame:IsMouseEnabled() then silenced = silenced + 1 end
+        end)
+        return {
+            {
+                label = "Decoration frames present",
+                value = tostring(found),
+                help  = "The surround is built on demand, so this reads zero "
+                     .. "until the game gives you a zone or extra ability.",
+            },
+            {
+                label = "Click-through now",
+                value = ("%d of %d"):format(silenced, found),
+                help  = "The button itself is never touched -- only the art "
+                     .. "around it stops taking the mouse.",
+            },
+        }
+    end,
+}
+
+-- ---------------------------------------------------------------------------
 -- Entry framework
 -- ---------------------------------------------------------------------------
 
-local ENTRIES = { TTSEntry, GroupButtonEntry }
+local ENTRIES = { TTSEntry, GroupButtonEntry, ExtraButtonClickEntry }
 local entryApplied = {} -- key -> true once Apply() has actually succeeded
 
 local function PollEntry(entry)
