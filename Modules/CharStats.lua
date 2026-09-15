@@ -69,10 +69,11 @@ end
 -- English word in the middle of it would be the odd one out. The panel is a
 -- different audience and stays English with the rest of AniMods.
 --
--- Nearly all of it comes from the client rather than from a table here:
--- ITEM_LEVEL_ABBR is Blizzard's own abbreviation for item level ("ilvl", and
--- the two-character form on the CJK clients), and SPELL_STAT<N>_NAME is the
--- stat name the character sheet shows.
+-- The client is asked first, and answers for most of it: SPELL_STAT<N>_NAME is
+-- the stat name the character sheet shows, in the player's language. What the
+-- client does NOT give is short forms -- SPELL_STAT4_NAME is "Intellect", and
+-- ITEM_LEVEL_ABBR is "ilvl" on every locale including zhCN. So there are two
+-- small tables below for exactly those gaps, and nothing else.
 local function ClientString(global, fallback)
     local v = _G[global]
     return (type(v) == "string" and v ~= "" and v) or fallback
@@ -104,7 +105,23 @@ local function StatLabel(index)
     return ClientString(STAT_GLOBAL[index], STAT_FALLBACK[index] or "?")
 end
 
+-- ITEM_LEVEL_ABBR turned out NOT to be localised: it is "ilvl" on a zhCN
+-- client too, which is what "ilvl is still showing in english" was. Blizzard
+-- translates the long STAT_AVERAGE_ITEM_LEVEL and leaves the abbreviation
+-- alone, so there is no client string for what this needs and the Chinese
+-- addons all carry their own -- NDui has 装等 and 裝等 in its own locale files
+-- rather than reading a global, for exactly this reason.
+--
+-- Only the two that can be verified from a source in this folder are listed.
+-- Everything else falls back to the client global, which is right for English
+-- and is at least the accepted loanword elsewhere.
+local ILVL_SHORT = {
+    zhCN = "装等",
+    zhTW = "裝等",
+}
+
 local function ItemLevelLabel()
+    if ILVL_SHORT[LOCALE] then return ILVL_SHORT[LOCALE] end
     -- STAT_AVERAGE_ITEM_LEVEL is the long form and the last resort: a block of
     -- abbreviations with "Item Level" in it reads as a different list.
     return ClientString("ITEM_LEVEL_ABBR",
@@ -128,8 +145,10 @@ local ROW_LABEL = {
 }
 local ROW_HELP = {
     ilvl    = "The equipped average, which is the number that matters for "
-           .. "content requirements. Labelled in your client's language, with "
-           .. "Blizzard's own abbreviation for it.",
+           .. "content requirements. Labelled short and in your client's "
+           .. "language where that is known -- Blizzard's own ITEM_LEVEL_ABBR "
+           .. "is \"ilvl\" on every locale, so the Chinese clients carry their "
+           .. "own here the way the Chinese addons do.",
     primary = "Strength, Agility or Intellect, whichever your current "
            .. "specialization actually scales with. It follows a spec change "
            .. "on its own, and is abbreviated on English clients only -- the "
