@@ -64,37 +64,80 @@ end
 -- Rows
 -- ---------------------------------------------------------------------------
 
+-- Labels are LOCALISED, unlike the settings panel. This text is drawn in the
+-- world beside EllesmereUI's block, which reads the player's language, so an
+-- English word in the middle of it would be the odd one out. The panel is a
+-- different audience and stays English with the rest of AniMods.
+--
+-- Nearly all of it comes from the client rather than from a table here:
+-- ITEM_LEVEL_ABBR is Blizzard's own abbreviation for item level ("ilvl", and
+-- the two-character form on the CJK clients), and SPELL_STAT<N>_NAME is the
+-- stat name the character sheet shows.
+local function ClientString(global, fallback)
+    local v = _G[global]
+    return (type(v) == "string" and v ~= "" and v) or fallback
+end
+
 -- LE_UNIT_STAT_*, which is what GetSpecializationInfo's sixth return uses.
-local STAT_NAME = { [1] = "Strength", [2] = "Agility", [3] = "Stamina", [4] = "Intellect" }
-local STAMINA_INDEX = 3
+local STAT_GLOBAL = {
+    [1] = "SPELL_STAT1_NAME", -- Strength
+    [2] = "SPELL_STAT2_NAME", -- Agility
+    [4] = "SPELL_STAT4_NAME", -- Intellect
+}
+local STAT_FALLBACK = { [1] = "Strength", [2] = "Agility", [4] = "Intellect" }
+
+-- The one thing the client has no string for. English only, and deliberately:
+-- the CJK names are already two characters and cannot be shortened, and
+-- inventing an abbreviation for "Beweglichkeit" would be guessing at someone
+-- else's language. Every locale not listed gets the client's full name, which
+-- is long but correct.
+local STAT_SHORT = {
+    enUS = { [1] = "Str", [2] = "Agi", [4] = "Int" },
+}
+STAT_SHORT.enGB = STAT_SHORT.enUS
+
+local LOCALE = _G.GetLocale()
+
+local function StatLabel(index)
+    local short = STAT_SHORT[LOCALE]
+    if short and short[index] then return short[index] end
+    return ClientString(STAT_GLOBAL[index], STAT_FALLBACK[index] or "?")
+end
+
+local function ItemLevelLabel()
+    -- STAT_AVERAGE_ITEM_LEVEL is the long form and the last resort: a block of
+    -- abbreviations with "Item Level" in it reads as a different list.
+    return ClientString("ITEM_LEVEL_ABBR",
+        ClientString("STAT_AVERAGE_ITEM_LEVEL", "ilvl"))
+end
 
 -- Item level first: it is the headline, and the block sits above EUI's, so the
 -- eye reaches it before the secondaries either way.
-local ROW_ORDER = { "ilvl", "ilvlOverall", "primary", "stamina" }
+--
+-- Two rows, both on by default. An overall-item-level row and a Stamina row
+-- were here and are gone: both defaulted to hidden, and a default-hidden row
+-- could not be turned on -- the toggle wrote nil for "shown", which RowShown
+-- read back as "no preference, use the default", which was hidden. They did
+-- nothing, and neither was worth keeping for its own sake: overall item level
+-- counts what is in your bags, and Stamina is the one primary every spec
+-- shares. Removing them removes the concept of a default-hidden row with them.
+local ROW_ORDER = { "ilvl", "primary" }
 local ROW_LABEL = {
-    ilvl        = "Item Level",
-    ilvlOverall = "Item Level (overall)",
-    primary     = "Primary stat",
-    stamina     = "Stamina",
+    ilvl    = "Item level",
+    primary = "Primary stat",
 }
 local ROW_HELP = {
-    ilvl        = "The equipped average, which is the number that matters for "
-               .. "content requirements.",
-    ilvlOverall = "Blizzard's overall average, which counts what is in your "
-               .. "bags. Usually the higher of the two, and usually not the "
-               .. "one you want.",
-    primary     = "Strength, Agility or Intellect, whichever your current "
-               .. "specialization actually scales with. It follows a spec "
-               .. "change on its own.",
-    stamina     = "Off by default: it is the one primary that every spec "
-               .. "shares, so it says less than the others.",
+    ilvl    = "The equipped average, which is the number that matters for "
+           .. "content requirements. Labelled in your client's language, with "
+           .. "Blizzard's own abbreviation for it.",
+    primary = "Strength, Agility or Intellect, whichever your current "
+           .. "specialization actually scales with. It follows a spec change "
+           .. "on its own, and is abbreviated on English clients only -- the "
+           .. "CJK names are already two characters.",
 }
-local ROW_DEFAULT_HIDDEN = { ilvlOverall = true, stamina = true }
 
 local function RowShown(key)
-    local v = ModuleDB().hidden[key]
-    if v == nil then return not ROW_DEFAULT_HIDDEN[key] end
-    return not v
+    return not ModuleDB().hidden[key]
 end
 
 -- Which stat this spec scales with. Returns the LE_UNIT_STAT index, or nil
@@ -103,7 +146,7 @@ local function PrimaryStatIndex()
     local specIndex = _G.C_SpecializationInfo.GetSpecialization()
     if not specIndex then return nil end
     local _, _, _, _, _, primaryStat = _G.C_SpecializationInfo.GetSpecializationInfo(specIndex)
-    return STAT_NAME[primaryStat] and primaryStat or nil
+    return STAT_GLOBAL[primaryStat] and primaryStat or nil
 end
 
 -- ---------------------------------------------------------------------------
@@ -234,30 +277,21 @@ Update = function()
         rows[#rows + 1] = ("|cff%s%s:|r%s%s"):format(hex, label, LABEL_GAP, body)
     end
 
-    -- Both averages come from one call, so it is made once whether one row or
-    -- two is showing.
-    local overall, equipped
-    if RowShown("ilvl") or RowShown("ilvlOverall") then
-        overall, equipped = _G.GetAverageItemLevel()
-    end
-
     for _, key in ipairs(ROW_ORDER) do
         if RowShown(key) then
             if key == "ilvl" then
-                Row(ROW_LABEL.ilvl, "%.1f", equipped)
-            elseif key == "ilvlOverall" then
-                Row(ROW_LABEL.ilvlOverall, "%.1f", overall)
+                -- Second return, not the first: the first is the overall
+                -- average, which counts what is sitting in your bags.
+                local _, equipped = _G.GetAverageItemLevel()
+                Row(ItemLevelLabel(), "%.1f", equipped)
             elseif key == "primary" then
                 local index = PrimaryStatIndex()
                 if index then
                     -- The second return is the effective value, which is what
                     -- the character sheet shows.
                     local _, value = _G.UnitStat("player", index)
-                    Row(STAT_NAME[index], "%d", value)
+                    Row(StatLabel(index), "%d", value)
                 end
-            elseif key == "stamina" then
-                local _, value = _G.UnitStat("player", STAMINA_INDEX)
-                Row(ROW_LABEL.stamina, "%d", value)
             end
         end
     end
@@ -369,9 +403,21 @@ function CharStats:GetInfoRows()
     local index = PrimaryStatIndex()
     rows[#rows + 1] = {
         label = "Primary stat",
-        value = index and STAT_NAME[index] or "unknown",
+        -- The client's full name rather than the drawn abbreviation: this row
+        -- answers "which stat did it pick?", and "Int" is a worse answer to
+        -- that question than "Intellect" even though it is the better label.
+        value = index and ClientString(STAT_GLOBAL[index], STAT_FALLBACK[index])
+             or "unknown",
         help  = "Read from your current specialization, so it follows a spec "
              .. "change without being told.",
+    }
+    rows[#rows + 1] = {
+        label = "Labels drawn as",
+        value = ("%s / %s"):format(ItemLevelLabel(),
+            index and StatLabel(index) or StatLabel(1)),
+        help  = "What the block itself says, in your client's language. The "
+             .. "settings panel stays English; the block does not, because it "
+             .. "sits in EllesmereUI's list and has to read like part of it.",
     }
 
     return rows
