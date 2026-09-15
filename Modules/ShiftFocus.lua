@@ -28,6 +28,7 @@ local AniMods = _G.AniMods
 local ShiftFocus = {
     title = "Shift Focus",
     description = "Modifier-click anything to set it as your focus.",
+    dbKey = "shiftFocus",
     conditions = {
         { text = "NDui not loaded",
           help = "NDui ships its own focus button (NDui_Plus extends it as "

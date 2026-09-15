@@ -9,6 +9,7 @@
 local General = {
     title = "General",
     description = "Settings for AniMods itself.",
+    dbKey = "general",
     order = 0,
     -- No master switch. This tab holds the settings that control AniMods
     -- itself, so switching it off would hide the controls for the addon --
@@ -309,6 +310,35 @@ local function SetAccent(key)
 end
 
 -- ---------------------------------------------------------------------------
+-- Saved settings
+-- ---------------------------------------------------------------------------
+
+-- Grouped by what each leftover is rather than run together as one list: a
+-- stale settings sub-table and a stale enabled flag are removed by the same
+-- button, but they say different things about what used to be here.
+local UNUSED_SECTIONS = {
+    { key = "settings", title = "Settings left behind" },
+    { key = "enabled",  title = "Enabled flags for modules that are gone" },
+    { key = "forced",   title = "Forced flags for modules that are gone" },
+}
+
+local function UnusedReport(unused)
+    local out = {}
+    for _, section in ipairs(UNUSED_SECTIONS) do
+        local list = unused[section.key]
+        if #list > 0 then
+            if #out > 0 then out[#out + 1] = "" end
+            out[#out + 1] = section.title
+            for _, name in ipairs(list) do
+                out[#out + 1] = "  " .. name
+            end
+        end
+    end
+    if #out == 0 then return "Nothing unused. The saved settings are all owned." end
+    return table.concat(out, "\n")
+end
+
+-- ---------------------------------------------------------------------------
 -- Status panel
 -- ---------------------------------------------------------------------------
 
@@ -359,6 +389,41 @@ function General:GetInfoRows()
     end
     rows[#rows + 1] = { label = "Active", value = ("%d of %d"):format(active, total) }
     rows[#rows + 1] = { label = "Version", value = AniMods.GetAddOnVersion("AniMods") or "?" }
+
+    rows[#rows + 1] = { section = "Saved settings" }
+    local unused = AniMods.FindUnusedDB()
+    local leftovers = #unused.settings + #unused.enabled + #unused.forced
+    rows[#rows + 1] = {
+        label = "Unused entries",
+        value = tostring(leftovers),
+        help  = "Settings left behind by a module that was renamed, removed or "
+             .. "split. They cost nothing but noise, and nothing will read "
+             .. "them again.",
+    }
+    if leftovers > 0 then
+        rows[#rows + 1] = {
+            kind = "button", label = "What would go", button = "Show",
+            help = "The full list, before anything is removed.",
+            onClick = function()
+                AniMods.W.TextBox({
+                    title = "Unused saved settings",
+                    text  = UnusedReport(unused),
+                })
+            end,
+        }
+        rows[#rows + 1] = {
+            kind = "button", label = "Clean up", button = "Remove",
+            -- Said plainly rather than softened: this is the one button here
+            -- that destroys something, and a module put back later starts from
+            -- defaults rather than from what it had.
+            help = "Deletes them for good. If a module comes back after this, "
+                .. "it starts from its defaults.",
+            onClick = function()
+                AniMods.PruneDB()
+                if AniMods.RefreshUI then AniMods.RefreshUI() end
+            end,
+        }
+    end
 
     return rows
 end

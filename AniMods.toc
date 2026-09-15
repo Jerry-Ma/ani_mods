@@ -23,7 +23,7 @@ Modules\AchievementShot.lua
 Modules\BarToggle.lua
 Modules\ChatContextSwitch.lua
 Modules\DamageMeter.lua
-Modules\EllesmereUIMisc.lua
+Modules\ExtraButtonClicks.lua
 Modules\GroupRoles.lua
 Modules\IconProbe.lua
 Modules\NSRTMisc.lua

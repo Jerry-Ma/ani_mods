@@ -366,7 +366,9 @@ end
 local MODULE_RENAMES = {
     -- oldModuleName -> { newModuleName, oldDBKey, newDBKey }
     RaidComposition = { "GroupRoles", "raidComposition", "groupRoles" },
-    Skin            = { "EllesmereUIMisc", "skin", "euiMisc" },
+    -- Skin -> EllesmereUIMisc used to be here. Both ends are gone now, so
+    -- migrating would only move settings into a key nothing reads; what is
+    -- left of either is unowned, which is exactly what PruneDB clears.
 }
 
 local function MigrateRenames()
@@ -387,6 +389,59 @@ local function MigrateRenames()
             db[oldKey] = nil
         end
     end
+end
+
+-- ── Saved-variable hygiene ───────────────────────────────────────────────────
+
+-- Settings outlive the code that read them. A module that is renamed, removed,
+-- or split leaves its sub-table behind, and its entry in db.modules with it --
+-- so the saved table slowly fills with keys nothing will ever look at again.
+--
+-- AniMods owns two top-level keys itself; every other one belongs to a module,
+-- which says so by declaring `dbKey`. DECLARED, not derived: the obvious
+-- derivation (lowercase the module name's first letter) gives `nSRTMisc` for
+-- NSRTMisc and never had a hope with the old `euiMisc`, and a wrong guess here
+-- does not misreport anything -- it deletes live settings.
+local CORE_DB_KEYS = { modules = true, forced = true }
+
+-- What the saved table holds that nothing owns any more. Split three ways
+-- because they are three different leavings: a settings sub-table, an
+-- enabled flag, and a forced flag.
+function AniMods.FindUnusedDB()
+    local owned = {}
+    for key in pairs(CORE_DB_KEYS) do owned[key] = true end
+    for _, module in pairs(modules) do
+        if module.dbKey then owned[module.dbKey] = true end
+    end
+
+    local out = { settings = {}, enabled = {}, forced = {} }
+    for key in pairs(db) do
+        if not owned[key] then out.settings[#out.settings + 1] = key end
+    end
+    for name in pairs(db.modules or {}) do
+        if not modules[name] then out.enabled[#out.enabled + 1] = name end
+    end
+    for name in pairs(db.forced or {}) do
+        if not modules[name] then out.forced[#out.forced + 1] = name end
+    end
+
+    table.sort(out.settings)
+    table.sort(out.enabled)
+    table.sort(out.forced)
+    return out
+end
+
+-- Never automatic. A module commented out of the .toc for an afternoon looks
+-- exactly like one deleted for good, and pruning at login would throw its
+-- settings away the first time that happened -- silently, and on the login
+-- where the player least expects to lose anything. The panel lists what would
+-- go and the player presses the button.
+function AniMods.PruneDB()
+    local unused = AniMods.FindUnusedDB()
+    for _, key in ipairs(unused.settings) do db[key] = nil end
+    for _, name in ipairs(unused.enabled) do db.modules[name] = nil end
+    for _, name in ipairs(unused.forced) do db.forced[name] = nil end
+    return unused
 end
 
 -- Runs a module despite unmet SOFT conditions. Saved but not applied until

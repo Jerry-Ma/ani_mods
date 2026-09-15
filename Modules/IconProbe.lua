@@ -17,6 +17,7 @@
 local IconProbe = {
     title = "Icon Probe (debug)",
     description = "Diagnostic: renders icon escapes side by side. Delete when done.",
+    dbKey = "iconProbe",
 }
 
 local Broker = AniMods.Broker

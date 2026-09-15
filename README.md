@@ -65,14 +65,12 @@ every site, and a checker that cries wolf on the core idiom is one nobody reads.
 there are deliberately loose (`any`): these are foreign, undocumented, version-dependent
 objects, and pretending to know their shape would invent a contract nothing enforces.
 Warnings are suppressed **inline at the exact line**, never by loosening a check
-globally, and there are two: `EllesmereUIMisc.lua`'s `FindFlyoutToggle`, where probing
-EUI's private `_norm`/`_pushed`/`_hl` fields *is* the identification; and
-`SpecSwitch.lua`'s `C_SpecializationInfo.SetSpecialization`, which neither the LuaLS
-annotations nor the generated globals list knows about even though it is the current
-call and four addons in this folder use it. The second needs a directive for *each*
-checker (`-- luacheck: push ignore 143` and `---@diagnostic disable-next-line`), since
-silencing one says nothing to the other — worth knowing before assuming a suppression
-took.
+globally. The one worth knowing about is `SpecSwitch.lua`'s
+`C_SpecializationInfo.SetSpecialization`, which neither the LuaLS annotations nor the
+generated globals list knows about even though it is the current call and four addons in
+this folder use it. It needs a directive for *each* checker (`-- luacheck: push ignore
+143` and `---@diagnostic disable-next-line`), since silencing one says nothing to the
+other — worth knowing before assuming a suppression took.
 
 `.luacheckrc` is a **generated artifact and is gitignored** — it is the ~44,000-entry
 Blizzard globals list from [Jayrgo/wow-luacheckrc](https://github.com/Jayrgo/wow-luacheckrc)
@@ -310,7 +308,7 @@ it when a module needs something `GetInfoRows()` can't express, which is how `st
 Some patches only make sense in the *absence* of another addon that already does the
 same thing (ChatContextSwitch below stands down while NDui's chat module — which ships
 this exact behaviour — is handling it). Others only make sense *with* a specific addon
-present: EllesmereUI Misc adjusts EllesmereUI's own elements, so without it there is
+present: NSRT Misc adjusts Northern Sky Raid Tools' own settings, so without it there is
 nothing to adjust. `conditions` makes that explicit and inspectable instead of silently
 double-hooking or crashing on a missing global, and the panel can then answer "why is
 this off" with a checklist rather than silence.
@@ -523,7 +521,7 @@ on it.
 `W.OnReady(fn)` runs `fn` when the facade arrives, or immediately if it already has.
 EllesmereUI dispatches at `PLAYER_LOGIN` *after its own boot*, so that callback is the
 first moment both the skin engine and EllesmereUI's frames are guaranteed to exist —
-which is why `EllesmereUIMisc:Enable()` now hangs its first pass off `OnReady` instead of firing
+which is why `GroupRoles:Enable()` hangs its first pass off `OnReady` instead of firing
 during `PLAYER_LOGIN` and relying on a retry ladder to catch up. The ladder that remains
 covers only what EllesmereUI genuinely creates later.
 
@@ -566,6 +564,21 @@ both toggleable in **General**.
   nearly the same colour. Showing the colours removes both the naming and the question of
   whether the name is accurate. They grey out under EllesmereUI, which supplies the accent
   itself — see the provider note in the UI section.
+
+  **Saved settings** reports what is in `AniModsDB` that nothing owns any more — the
+  leavings of a module renamed, removed or split — and offers to remove it. AniMods owns
+  two top-level keys itself (`modules`, `forced`); every other one belongs to a module,
+  which says so by declaring `dbKey`. That is *declared*, not derived: the obvious
+  derivation (lowercase the module name's first letter) gives `nSRTMisc` for NSRTMisc and
+  never had a hope with the old `euiMisc`, and a wrong guess here doesn't misreport
+  anything — it deletes live settings.
+
+  The cleanup is **never automatic**. A module commented out of the `.toc` for an
+  afternoon looks exactly like one deleted for good, and pruning at login would throw its
+  settings away the first time that happened, silently, on the login where nobody expects
+  to lose anything. A **Show** button lists what would go and a **Remove** button does it.
+  Renames are separate and still automatic (`MODULE_RENAMES` in `Core.lua`), because a
+  rename knows where the settings should land; this only handles what has nowhere to go.
 - **Data Bar** — a minimal LibDataBroker display bar, so AniMods' own broker widgets (and
   any other addon's) have somewhere to live on a stock Blizzard UI. Off by default: if a
   real data bar is installed, that one should be used. Its "no other data bar" condition
@@ -730,74 +743,43 @@ both toggleable in **General**.
     **NDui_Plus: ToxiUI White**, **NDui_Plus: ToxiUI New**.
 
   Selecting a style applies live, no reload needed.
-- **EllesmereUI Misc** — the bag for small EllesmereUI-only tweaks: one-off "it should
-  look like it belongs" fixes too slight to be modules of their own, each its own entry
-  that can be independently enabled/disabled from the panel (unlike the rest of
-  AniMods' modules, which are all-or-nothing) — its detail pane has one section per
-  entry, each with its own "Enabled" checkbox, "Available" statement (whether that
-  entry's own prerequisites are currently met, independent of the toggle), and
-  "In effect" statement.
+- **Extra Button Click-Through** — the zone/extra ability button draws a decorative
+  surround much larger than the button itself, and that surround takes the mouse: clicks
+  landing on the art near the button hit nothing, and anything underneath it — an action
+  bar, a unit frame — is unreachable while the button is up. This switches the mouse off
+  on the decoration (`ExtraActionBarFrame`, `ExtraAbilityContainer`, `ZoneAbilityFrame`
+  and its `Style` child) and leaves the button itself alone, so it stays clickable.
 
-  It was called **Skin**, which named the technique rather than the subject and would
-  have been wrong the moment something in the bag didn't restyle anything. What every
-  entry actually has in common is that it needs EllesmereUI.
+  Ported from EUI_Kogotool's `BlizzUIEnhance.lua`, with three deliberate differences.
+  Its apply function ignores its own setting, so switching the option off still disabled
+  the mouse; here the revert actually puts it back. It guards combat on one of the three
+  frames only, while all of them are protected — `EnableMouse` on a protected frame in
+  combat is blocked, so every one is guarded and the work is deferred to
+  `PLAYER_REGEN_ENABLED`. And its list is incomplete: it silences
+  `ZoneAbilityFrame.Style` but not `ZoneAbilityFrame`, which is mouse-enabled in its own
+  right and sits *above* `Style` in the stack — `/framestack` over the surround names
+  `ZoneAbilityFrame` as the frame taking the click, so silencing only the child changes
+  nothing there.
 
-  The bar for adding an entry: it touches EllesmereUI specifically, it's small enough
-  that a whole module would be ceremony, and it's **reversible**. That last one isn't
-  decoration — these apply and revert live, which is what exempts this module from the
-  framework's usual "no `Disable()` contract, toggle takes effect next reload"
-  convention (see above), and one irreversible entry would quietly take that property
-  away from every other entry in the bag:
+  Disabling the parent doesn't reach the spell button: `EnableMouse` is per frame, and
+  the button is a child of `ZoneAbilityFrame.SpellButtonContainer` with its own mouse
+  still on. Edit Mode keeps working too — dragging that system goes through
+  `ExtraAbilityContainer.Selection`, an overlay with its own mouse.
 
-  - **Chat Read Aloud** — EllesmereUIChat hides several Blizzard chat chrome buttons it
-    replaces with its own sidebar icons (`QuickJoinToastButton`, `ChatFrameMenuButton`,
-    `ChatFrameChannelButton`, the voice mute/deafen buttons), but not
-    `TextToSpeechButton` (Blizzard's built-in "read chat aloud" toggle), so it's
-    normally left floating in its default position, disconnected from EUI's
-    redesigned chat frame. This suppresses it the same way EUI suppresses the others
-    (`SetAlpha(0)` + `EnableMouse(false)`, not `:Hide()` — Blizzard's own layout code
-    can silently re-show a hidden frame, so alpha+mouse is the taint-free way to make
-    a Blizzard-owned frame invisible and inert) and adds an equivalent button into
-    EUI's sidebar icon chain, stacked directly above its always-present
-    scroll-to-bottom icon (matching `EllesmereUIChat.lua`'s own `MakeSidebarIcon`
-    constants — 22px, 10px spacing, desaturated with a 0.4→0.9 hover fade — since
-    that function itself is private to EllesmereUIChat.lua, not something AniMods can
-    call, only match). The button is a thin proxy rather than a reimplementation:
-    clicking it calls the real `TextToSpeechButton:Click()`, and its icon is copied
-    live from the real button's own texture/atlas (checked via
-    `GetNormalTexture`/`GetCheckedTexture`/`GetPushedTexture`, falling back to
-    scanning the button's regions for a plain child `Texture` if none of those are
-    set — not every Blizzard icon button draws its icon the same way), so it shows
-    whatever Blizzard is actually displaying (including any on/off state change)
-    without AniMods needing to know what drives that state — nothing in this AddOns
-    folder references the underlying CVar/API, so guessing at it would risk a button
-    that silently does nothing. If no icon can be found at all, a plain "T" text
-    label takes its place instead, so a mismatch in Blizzard's internal button
-    structure degrades to a working-but-plain button rather than a silent,
-    unexplained empty click zone. Reads EllesmereUIChat's exposed
-    `EllesmereUI._chatCFD` (its internal per-chat-frame state accessor) to find the
-    sidebar and scroll button, polling the same way GroupRoles waits for EUI's
-    Raid Tools icon. Available only when EllesmereUIChat is loaded and its own chat
-    module is enabled (`EllesmereUI._ModuleNS["EllesmereUIChat"].ECHAT.DB().enabled`)
-    — installed but toggled off means none of this (the sidebar, TextToSpeechButton's
-    default position) is EUI's to redesign in the first place.
-  - **Minimap Group Button** — EllesmereUIMinimap's own "group button": the toggle in
-    its extra-button row just outside the minimap that collapses addon minimap icons
-    into a flyout (`CreateFlyoutToggle`; its config key is literally
-    `hideExtraBtns.groupButton`). It draws with the `Map-Filter-Button` atlas — a map
-    *filter* funnel, which reads as borrowed rather than designed for this — tinted in
-    the accent. This offers a different icon (Gear/Group/Bag) and a light tint instead.
+  The frames are built on demand, so the setting is re-asserted rather than applied once:
+  `UPDATE_EXTRA_ACTIONBAR`, `ZONE_CHANGED_NEW_AREA`, `PLAYER_ENTERING_WORLD` and
+  `PLAYER_REGEN_ENABLED`, plus `OnShow` and `UpdateDisplayedZoneAbilities` hooked on the
+  frame itself once it exists. The events alone say "something changed", not "the frame
+  is there now" — the zone ability is built the first time the game has one to show,
+  which can land after all of them. EllesmereUI's own skin hooks the same pair.
 
-    The button is unnamed (`CreateFrame("Button", nil, Minimap)`) and its reference is
-    a file-local, so it's found by *structure*: the only child of `Minimap` carrying
-    all three of `_norm`/`_pushed`/`_hl` (the indicator buttons in the same row use
-    `_icon`/`_upAtlas`/`_indicatorKey`). That probe is the one inline diagnostic
-    suppression in the addon, noted under Checks above.
-
-    Not to be confused with Blizzard's `AddonCompartmentFrame`, the addon *collector*
-    in `MinimapCluster` — an earlier version of this entry skinned that one by mistake,
-    and this documented the mistake for a while after the code stopped making it.
-    Available only when EllesmereUIMinimap is loaded.
+  This lived in a bag called **EllesmereUI Misc** (originally **Skin**) alongside two
+  entries that are now gone: a re-home of Blizzard's `TextToSpeechButton` into
+  EllesmereUIChat's sidebar, and a re-skin of EllesmereUIMinimap's addon-icon flyout
+  toggle. That bag gated everything in it on EllesmereUI being loaded, which was wrong
+  on its own terms for this one: the frames are Blizzard's, the problem is Blizzard's,
+  and a stock UI has it just as much. With the other two removed there was no bag left,
+  so this became a module and the gate went with it.
 - **NSRT Misc** — the bag for small Northern Sky Raid Tools tweaks: things its own UI
   can't do, either because they're batch edits it only offers one row at a time, or
   because it offers no setting at all.

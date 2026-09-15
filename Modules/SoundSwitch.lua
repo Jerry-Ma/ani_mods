@@ -24,6 +24,7 @@
 local SoundSwitch = {
     title = "Sound Switch",
     description = "Switch your sound output device.",
+    dbKey = "soundSwitch",
     -- No conditions: Blizzard's own sound output API, nothing else.
 }
 

@@ -24,6 +24,7 @@ local AniMods = _G.AniMods
 local AchievementShot = {
     title = "Achievement Screenshot",
     description = "Takes a screenshot when you earn an achievement.",
+    dbKey = "achievementShot",
 }
 
 local function ModuleDB()

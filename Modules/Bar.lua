@@ -37,6 +37,7 @@
 local Bar = {
     title = "Data Bar",
     description = "A simple bar for LibDataBroker widgets.",
+    dbKey = "bar",
     -- Its "you already have a data bar" requirement is advisory, so the panel
     -- offers a Run anyway switch when that is the only thing holding it back.
     forceable = true,
