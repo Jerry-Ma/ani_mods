@@ -281,6 +281,9 @@ local function InitModules()
             -- addon's own settings sit above the patches rather than
             -- alphabetically among them.
             order           = module.order or 100,
+            -- Which sidebar group it sits under. Nil means ungrouped, which
+            -- puts it above every heading -- General's place, and nowhere else.
+            category        = module.category,
             essential       = module.essential == true,
             description     = module.description,
             conditions      = module.conditions, -- { text, met, soft, help } entries
@@ -366,9 +369,11 @@ end
 local MODULE_RENAMES = {
     -- oldModuleName -> { newModuleName, oldDBKey, newDBKey }
     RaidComposition = { "GroupRoles", "raidComposition", "groupRoles" },
-    -- Skin -> EllesmereUIMisc used to be here. Both ends are gone now, so
-    -- migrating would only move settings into a key nothing reads; what is
-    -- left of either is unowned, which is exactly what PruneDB clears.
+    -- CharStats was a module of its own before it turned out to be what it
+    -- always was: the two rows EllesmereUI's stats block is missing. It moved
+    -- into EllesmereUI Misc as an entry, which is a rename of both its module
+    -- name and its settings key.
+    CharStats       = { "EllesmereUIMisc", "charStats", "euiMisc" },
 }
 
 local function MigrateRenames()

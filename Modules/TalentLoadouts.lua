@@ -233,6 +233,7 @@ end
 local TalentLoadouts = {
     title = "Talent Loadouts",
     description = "Dump, restore and organise Talent Loadout Manager's builds.",
+    category = "Addon Extras",
     conditions = {
         { text = "TalentLoadoutManager loaded",
           help = "Everything here reads and writes TLM's loadouts through its "

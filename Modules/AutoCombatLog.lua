@@ -48,6 +48,7 @@ local AutoCombatLog = {
     title = "Auto Combat Log",
     description = "Keeps combat logging on for the content worth logging.",
     dbKey = "autoCombatLog",
+    category = "Automation",
     -- No conditions. The point is to work under whichever logger is present,
     -- including none; the backend is resolved at runtime instead.
 }

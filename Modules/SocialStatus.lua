@@ -34,6 +34,7 @@ local SocialStatus = {
     title = "Social Status",
     description = "Online guild and friend counts.",
     dbKey = "socialStatus",
+    category = "At a Glance",
     -- One condition, and it is about a DUPLICATE rather than a prerequisite:
     -- NDui's infobar ships both of these counts already
     -- (Modules/Infobar/Friends.lua and Guild.lua), so with NDui installed this

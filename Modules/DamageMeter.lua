@@ -18,8 +18,11 @@
 local AniMods = _G.AniMods
 
 local DamageMeter = {
-    title = "Blizzard Damage Meter",
+    -- "Blizzard Damage Meter" read as though this module WERE a meter.
+    -- "Built-in" names the interesting part: it is the one already in the game.
+    title = "Built-in Damage Meter",
     description = "Switches on the game's built-in combat record when no meter addon is present.",
+    category = "Automation",
     conditions = {
         { text = "EllesmereUI not loaded",
           help = "EllesmereUIDamageMeters draws its own window from the same "

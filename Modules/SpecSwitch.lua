@@ -32,6 +32,7 @@ local SpecSwitch = {
     title = "Spec Switch",
     description = "Switch your specialization and loot spec.",
     dbKey = "specSwitch",
+    category = "At a Click",
     conditions = {
         { text = "EllesmereUI not loaded",
           help = "EllesmereUIDataBars ships a spec block that already does this, "

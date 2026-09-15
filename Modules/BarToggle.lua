@@ -33,6 +33,7 @@ local BarToggle = {
     title = "Action Bar 7 Toggle",
     description = "Broker widget that shows and hides Action Bar 7.",
     dbKey = "barToggle",
+    category = "At a Click",
     -- No conditions: the point is to work under whichever bar addon is present,
     -- including none. The backend is resolved at click time instead.
 }

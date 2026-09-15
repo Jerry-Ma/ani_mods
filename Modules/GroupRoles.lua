@@ -38,6 +38,7 @@ local GroupRoles = {
     title = "Group Roles",
     description = "Tank/Healer/DPS counts for your group.",
     dbKey = "groupRoles",
+    category = "At a Glance",
     -- No `condition`: the counts come from UnitGroupRolesAssigned, a plain
     -- Blizzard call, and the broker is a LibDataBroker object any data bar
     -- can show. Only the DOCKED BADGE needs EllesmereUIQoL, and that is

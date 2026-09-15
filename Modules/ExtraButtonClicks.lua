@@ -36,6 +36,7 @@ local AniMods = _G.AniMods
 local ExtraButtonClicks = {
     title = "Extra Button Click-Through",
     description = "Stops the zone/extra ability artwork from eating clicks.",
+    category = "Additions",
 }
 
 local EXTRA_FRAMES = {

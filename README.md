@@ -412,6 +412,29 @@ each tab, so the whole set is switchable without opening any of them. Switching 
 that cannot apply the change live raises a reload prompt and a "Reload needed" badge on
 its tab; one that implements `SetEnabled(on)` just applies.
 
+Rows are grouped under **categories**, declared per module as `category` and ordered by
+`CATEGORY_ORDER` in `UI.lua`. Each heading answers one question, which is what keeps a
+module from having two plausible homes:
+
+| Category | What earns a place in it |
+| --- | --- |
+| **At a Click** | Something you change often, without opening anything. |
+| **At a Glance** | Something you read, without opening anything. |
+| **Automation** | Something that runs itself, at the moment it matters. |
+| **Additions** | Behaviour the base game doesn't give you — either something new, or something it should do and doesn't. |
+| **Addon Extras** | What another addon doesn't offer itself. |
+
+The order is by how much you interact with a group, not alphabetical: the ones always
+doing something sit high, and **Addon Extras** sits last because it is the group most
+likely to be greyed out, depending on what else is installed. A module with no `category`
+sorts above every heading — that is General's place and nothing else's, since the addon's
+own settings are not one of the patches.
+
+The last two are the real axis: **Additions** is the base-game shelf and **Addon Extras**
+is the other-addons shelf. Everything else is a question of how you interact with it.
+An earlier cut split Additions into new-capability and fixed-misbehaviour halves, which
+was a finer line than the shelf needs and cost two categories of one member each.
+
 Each tab shows: the module's title, a `?` for its description, a state badge, and — for
 a `forceable` module held back only by soft conditions — a "Run anyway" switch. Below
 that, its **Conditions** card (one row per entry, each with a Yes / No badge and its
@@ -778,8 +801,56 @@ both toggleable in **General**.
   EllesmereUIChat's sidebar, and a re-skin of EllesmereUIMinimap's addon-icon flyout
   toggle. That bag gated everything in it on EllesmereUI being loaded, which was wrong
   on its own terms for this one: the frames are Blizzard's, the problem is Blizzard's,
-  and a stock UI has it just as much. With the other two removed there was no bag left,
-  so this became a module and the gate went with it.
+  and a stock UI has it just as much. So it is a module with no gate. The bag itself
+  came back later for **Missing Stats**, which genuinely is EllesmereUI-only.
+- **EllesmereUI Misc** — the bag for small EllesmereUI-only tweaks, each an
+  independently switchable **entry** rather than one bundled setting: its detail pane has
+  a section per entry, each with its own "Enabled" checkbox, "Available" statement
+  (whether that entry's prerequisites are met, independent of the toggle) and "In effect"
+  statement.
+
+  The bar for an entry: it touches EllesmereUI specifically, it's small enough that a
+  whole module would be ceremony, and it's **reversible**. That last one isn't
+  decoration — these apply and revert live, which is what exempts this module from the
+  framework's usual "toggle takes effect next reload" convention, and one irreversible
+  entry would quietly take that property away from every other entry in the bag.
+
+  - **Missing Stats** — EllesmereUIQoL draws a stats block (`EUI_SecondaryStats`) with
+    crit, haste, mastery, versatility, the three tertiaries and an optional FPS/latency
+    pair. It has no item level and no primary stat, and it *cannot be given any*: the row
+    builder is a closure, the dispatch is a hard-coded `if`/`elseif` over a fixed key
+    set, and the FontString is repainted with `SetFormattedText` on every stat event, so
+    an appended line is gone on the next tick. Adding a key to the order EUI publishes as
+    `EllesmereUI._secondaryStatsOrder` renders nothing, because nothing in that chain
+    matches it.
+
+    So this is a second block that reads as part of the first: anchored `BOTTOMLEFT` to
+    EUI's `TOPLEFT` so it grows upward and never shoves that block down, copying font,
+    size, spacing and label colour straight off EUI's own FontString rather than
+    resolving its font API again. EUI sizes and positions that frame, so these rows
+    follow it around for free.
+
+    There is deliberately **no standalone mode**. An earlier version stood alone and
+    movable when EUI's block was absent, built on a misreading of what this is: it isn't
+    a stats display, it's the two rows EllesmereUI's display is missing. Without that
+    block there is nothing to be missing from.
+
+    Labels are **localised**, unlike the settings panel — this text is drawn inside
+    EllesmereUI's block, which reads the player's language. The client answers for most
+    of it (`SPELL_STAT<N>_NAME`); what it doesn't give is short forms, since
+    `SPELL_STAT4_NAME` is "Intellect" and `ITEM_LEVEL_ABBR` is "ilvl" on *every* locale
+    including zhCN. So there are two small tables for exactly those gaps: English stat
+    abbreviations (the CJK names are already two characters and can't be shortened, and
+    inventing one for "Beweglichkeit" would be guessing at someone else's language), and
+    装等 / 裝等 for item level, which is what NDui carries in its own locale files for
+    the same reason.
+
+    Secret values are handled the way EUI handles its own — figures are never read in
+    Lua, they travel as arguments to `SetFormattedText` and the engine fills the
+    template. The one cost is measuring: `GetStringWidth` on a FontString fed a secret
+    hands back a secret, so the last known size is kept until the figures are readable,
+    and the test is on what the arithmetic is about to touch rather than on what was fed
+    in — the metrics belong to the last *laid out* string.
 - **NSRT Misc** — the bag for small Northern Sky Raid Tools tweaks: things its own UI
   can't do, either because they're batch edits it only offers one row at a time, or
   because it offers no setting at all.

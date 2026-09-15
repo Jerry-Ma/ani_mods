@@ -29,6 +29,7 @@ local ChatContextSwitch = {
     title = "Chat Context Switch",
     description = "Tab/Shift+Tab cycles the chat channel.",
     dbKey = "chatContextSwitch",
+    category = "At a Click",
 }
 
 -- ---------------------------------------------------------------------------

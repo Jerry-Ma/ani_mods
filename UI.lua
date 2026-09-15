@@ -57,6 +57,9 @@ end
 local frame
 local tabStrip
 local tabButtons = {}
+-- Pooled separately from the rows: how many headings the list needs depends on
+-- how many categories have a module in them, which is not the row count.
+local tabHeadings = {}
 local scrollArea
 local content
 local currentTabName
@@ -126,6 +129,44 @@ end
 -- module event while the panel is open. Small at eight modules, but it was
 -- allocating a table and running a comparison sort to arrive at the same answer
 -- every time.
+--
+-- Modules are grouped under headings, and the heading answers one question
+-- each, which is what keeps a module from having two plausible homes:
+--
+--   At a Click    something you change often, without opening anything
+--   At a Glance   something you read, without opening anything
+--   Automation    something that runs itself at the moment it matters
+--   Additions     behaviour the base game does not give you -- either
+--                 something new, or something it should do and does not
+--   Addon Extras  what another addon does not offer itself
+--
+-- The order is by how much you interact with the group, not alphabetical: the
+-- ones always doing something sit high, and Addon Extras sits last because it
+-- is the group most likely to be greyed out, depending on what else is
+-- installed.
+local CATEGORY_ORDER = {
+    "At a Click",
+    "At a Glance",
+    "Automation",
+    "Additions",
+    "Addon Extras",
+}
+
+local categoryRank = {}
+for i, name in ipairs(CATEGORY_ORDER) do categoryRank[name] = i end
+
+-- An ungrouped module sorts above every heading. That is General's place and
+-- nothing else's -- the addon's own settings are not one of the patches.
+local UNGROUPED_RANK = 0
+-- A category nobody declared in CATEGORY_ORDER still has to land somewhere
+-- deterministic, so it goes after the known ones rather than in hash order.
+local UNKNOWN_RANK = #CATEGORY_ORDER + 1
+
+local function CategoryRank(entry)
+    if not entry.category then return UNGROUPED_RANK end
+    return categoryRank[entry.category] or UNKNOWN_RANK
+end
+
 local sortedNames
 
 local function SortedModuleNames()
@@ -135,6 +176,8 @@ local function SortedModuleNames()
     for name in pairs(AniMods.status) do tinsert(names, name) end
     table.sort(names, function(a, b)
         local ea, eb = AniMods.status[a], AniMods.status[b]
+        local ca, cb = CategoryRank(ea), CategoryRank(eb)
+        if ca ~= cb then return ca < cb end
         local oa, ob = ea.order or 100, eb.order or 100
         if oa ~= ob then return oa < ob end
         return (ea.title or a) < (eb.title or b)
@@ -1235,6 +1278,31 @@ end
 -- there is no wrapping and no scrolling to fall back on. A vertical list
 -- grows down a column that already scrolls, and is what EllesmereUI's own
 -- options window uses, so the panel reads as part of the same suite.
+-- A category heading. Deliberately NOT a Button: there is nothing to click, and
+-- a disabled button still takes the mouse and shows a hover state, which reads
+-- as something that should respond and does not.
+local SIDEBAR_HEAD_H = 26
+
+local function CreateSidebarHeading(parent)
+    local f = CreateFrame("Frame", nil, parent)
+    f:SetHeight(SIDEBAR_HEAD_H)
+
+    local fs = W.Font(f, 10, nil, 0.45)
+    fs:SetPoint("LEFT", f, "LEFT", 10, -2)
+    fs:SetPoint("RIGHT", f, "RIGHT", -8, -2)
+    fs:SetJustifyH("LEFT")
+    fs:SetWordWrap(false)
+
+    local o = { frame = f, fs = fs }
+    function o:SetText(text)
+        -- Upper case and letter-spaced by hand: it has to read as a label for
+        -- the rows below rather than as another row among them, and it is
+        -- dimmer and smaller than a title for the same reason.
+        fs:SetText(text and text:upper() or "")
+    end
+    return o
+end
+
 local function CreateSidebarRow(parent)
     local f = CreateFrame("Button", nil, parent)
     f:SetHeight(SIDEBAR_ROW_H)
@@ -1321,7 +1389,33 @@ local function RefreshTabs()
     local names = SortedModuleNames()
 
     local y = 0
+    local shownHeadings = 0
+    local lastCategory = nil
+
     for i, name in ipairs(names) do
+        local entry = AniMods.status[name]
+
+        -- A heading whenever the category changes. The list is already sorted
+        -- by category, so one comparison against the previous row is the whole
+        -- grouping -- no second pass and no per-category bookkeeping.
+        -- Ungrouped modules come first and carry no category, so nothing is
+        -- emitted above General.
+        if entry.category and entry.category ~= lastCategory then
+            shownHeadings = shownHeadings + 1
+            local heading = tabHeadings[shownHeadings]
+            if not heading then
+                heading = CreateSidebarHeading(tabStrip)
+                tabHeadings[shownHeadings] = heading
+            end
+            heading:SetText(entry.category)
+            heading.frame:ClearAllPoints()
+            heading.frame:SetPoint("TOPLEFT", tabStrip, "TOPLEFT", 0, -y)
+            heading.frame:SetPoint("TOPRIGHT", tabStrip, "TOPRIGHT", 0, -y)
+            heading.frame:Show()
+            y = y + SIDEBAR_HEAD_H
+        end
+        lastCategory = entry.category
+
         local tab = tabButtons[i]
         if not tab then
             tab = CreateSidebarRow(tabStrip)
@@ -1329,10 +1423,10 @@ local function RefreshTabs()
         end
         tab.moduleName = name
 
-        local _, r, g, b = GetStateInfo(AniMods.status[name])
-        tab:SetText(("|cff%s%s|r %s"):format(ColorHex(r, g, b), DOT, AniMods.status[name].title))
+        local _, r, g, b = GetStateInfo(entry)
+        tab:SetText(("|cff%s%s|r %s"):format(ColorHex(r, g, b), DOT, entry.title))
         tab:SetSelected(name == currentTabName)
-        tab:SetPower(AniMods.status[name])
+        tab:SetPower(entry)
 
         tab.frame:ClearAllPoints()
         tab.frame:SetPoint("TOPLEFT", tabStrip, "TOPLEFT", 0, -y)
@@ -1343,6 +1437,9 @@ local function RefreshTabs()
 
     for i = #names + 1, #tabButtons do
         tabButtons[i].frame:Hide()
+    end
+    for i = shownHeadings + 1, #tabHeadings do
+        tabHeadings[i].frame:Hide()
     end
 
     return names

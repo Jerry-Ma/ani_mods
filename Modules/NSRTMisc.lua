@@ -57,6 +57,7 @@ local NSRTMisc = {
     title = "NSRT Misc",
     description = "Batch tweaks for Northern Sky Raid Tools.",
     dbKey = "nsrtMisc",
+    category = "Addon Extras",
     conditions = {
         { text = "NorthernSkyRaidTools loaded",
           help = "Everything here edits NSRT's own saved settings, so it needs "

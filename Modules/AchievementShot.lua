@@ -15,9 +15,11 @@
 -- while levelling an alt past things you did years ago. NDui skips those and so
 -- does this: a screenshot folder full of re-earned achievements is noise.
 --
--- No conditions. NDui has this feature, but NDui also has to be running for its
--- copy to work -- and this costs one event registration, so duplicating it when
--- both are installed is cheaper than the check would be to explain.
+-- Stands down under NDui. This used to argue the opposite -- that the check
+-- cost more to explain than the duplicate registration cost to run -- which
+-- weighed the wrong thing entirely: the cost is not an event handler, it is that
+-- both copies fire and you get TWO screenshots for every achievement, in a
+-- folder nothing prunes. A duplicate here is a visible bug, not an overhead.
 
 local AniMods = _G.AniMods
 
@@ -25,6 +27,14 @@ local AchievementShot = {
     title = "Achievement Screenshot",
     description = "Takes a screenshot when you earn an achievement.",
     dbKey = "achievementShot",
+    category = "Automation",
+    conditions = {
+        { text = "NDui not loaded",
+          help = "NDui already takes a screenshot when you earn an achievement "
+              .. "(Modules/Misc/Misc.lua), and two copies watching the same "
+              .. "event means two files for every achievement.",
+          met = function() return not AniMods.IsAddOnLoaded("NDui") end },
+    },
 }
 
 local function ModuleDB()

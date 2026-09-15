@@ -22,9 +22,9 @@ Modules\Bar.lua
 Modules\AchievementShot.lua
 Modules\AutoCombatLog.lua
 Modules\BarToggle.lua
-Modules\CharStats.lua
 Modules\ChatContextSwitch.lua
 Modules\DamageMeter.lua
+Modules\EllesmereUIMisc.lua
 Modules\ExtraButtonClicks.lua
 Modules\GroupRoles.lua
 Modules\NSRTMisc.lua
