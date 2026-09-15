@@ -48,10 +48,20 @@ local MOUSE_LABEL = {
 }
 local MOUSE_ORDER = { "BUTTON1", "BUTTON2", "BUTTON3", "BUTTON4", "BUTTON5" }
 
+-- The eight raid target icons, as pictures. Blizzard ships them as individual
+-- files, which is what a swatch wants -- the combined sheet would need
+-- texcoords per marker for no gain.
+local MARKER_ORDER, MARKER_TEXTURE = {}, {}
+for i = 1, 8 do
+    MARKER_ORDER[i] = i
+    MARKER_TEXTURE[i] = "Interface\\TargetingFrame\\UI-RaidTargetingIcon_" .. i
+end
+
 local button
 local moduleEnabled = true
 local deferred = false
 local combatWatcher
+local announceWatcher
 
 local function ModuleDB()
     AniModsDB.shiftFocus = AniModsDB.shiftFocus or {}
@@ -69,27 +79,70 @@ local function GetMouseButton()
 end
 
 local function GetMark()
-    local v = ModuleDB().markNumber
+    local db = ModuleDB()
+    if not db.mark then return nil end
+    local v = db.markNumber
     if type(v) == "number" and v >= 1 and v <= 8 then return v end
-    return nil
+    return 1
+end
+
+-- NDui_Plus's defaults, kept: marking is opt-in, and once on, the three
+-- qualifiers are all on. They are the behaviours you would want if you thought
+-- about each one, which is why that addon ships them true.
+local function Opt(key)
+    local v = ModuleDB()[key]
+    if v == nil then return true end
+    return v and true or false
 end
 
 -- ---------------------------------------------------------------------------
 -- The macro
 -- ---------------------------------------------------------------------------
 
--- Optionally marks the new focus, the way both source implementations do. The
--- 0 first is not redundant: re-marking a unit that already carries the icon
--- would otherwise toggle it off, so clearing and setting makes the result the
--- same whatever it started as.
+-- Follows NDui_Plus (FocusMarker:GetMacroText) rather than inventing one.
+-- Every clause earns its place:
+--
+--   /stopmacro [group:raid]   In a raid, markers are the leader's to manage
+--                             and one person re-marking is actively unhelpful.
+--                             Stopping here still leaves the focus SET -- only
+--                             the marking is skipped.
+--   [@focus,exists,harm,nodead]   Marks only a living hostile. Marking a
+--                             friendly or a corpse is never what was meant.
+--   ~N                        The tilde tells /tm to leave an existing marker
+--                             alone rather than replace it, so a mark someone
+--                             else placed survives.
 local function MacroText()
     local lines = { "/focus mouseover" }
     local mark = GetMark()
     if mark then
-        lines[#lines + 1] = "/tm [@focus,exists] 0"
-        lines[#lines + 1] = "/tm [@focus,exists] " .. mark
+        if Opt("disableInRaid") then
+            lines[#lines + 1] = "/stopmacro [group:raid]"
+        end
+        local index = Opt("keepExisting") and ("~" .. mark) or tostring(mark)
+        lines[#lines + 1] = "/tm [@focus,exists,harm,nodead] " .. index
     end
     return table.concat(lines, "\n")
+end
+
+-- ---------------------------------------------------------------------------
+-- Ready-check announcement
+-- ---------------------------------------------------------------------------
+
+-- NDui_Plus announces the focus marker on a ready check, which is the moment
+-- everyone is looking at chat anyway. {rtN} is the client's own markup and
+-- expands to the icon in the message.
+--
+-- Guarded on IsInGroup as well as NDui_Plus's not-IsInRaid: it sends to PARTY,
+-- and SendChatMessage to a channel you are not in throws a UI error. Solo is
+-- the common case for a stray ready check while testing.
+local function AnnounceMarker()
+    if not moduleEnabled then return end
+    if not Opt("announce") then return end
+    local mark = GetMark()
+    if not mark then return end
+    if _G.IsInRaid() or not _G.IsInGroup() then return end
+    if not (_G.C_ChatInfo and _G.C_ChatInfo.SendChatMessage) then return end
+    _G.C_ChatInfo.SendChatMessage(("My focus marker is {rt%d}"):format(mark), "PARTY")
 end
 
 -- ---------------------------------------------------------------------------
@@ -177,23 +230,46 @@ function ShiftFocus:GetInfoRows()
     rows[#rows + 1] = { section = "Raid marker" }
     rows[#rows + 1] = {
         label = "Mark the focus",
-        get   = function() return GetMark() ~= nil end,
-        set   = function(v)
-            ModuleDB().markNumber = v and (ModuleDB().markNumber or 8) or nil
-            Apply()
-        end,
-        help  = "Puts a raid target icon on whatever you just focused. Both "
-             .. "NDui_Plus and WindTools do this; it needs assist or lead in a "
-             .. "group, and does nothing without.",
+        get   = function() return ModuleDB().mark and true or false end,
+        set   = function(v) ModuleDB().mark = v and true or false; Apply() end,
+        help  = "Puts a raid target icon on whatever you just focused. Needs "
+             .. "assist or lead in a group, and does nothing without.",
     }
-    if GetMark() then
+    if ModuleDB().mark then
+        -- The markers themselves, not their numbers. A row of eight digits
+        -- asks you to remember that 8 is the skull; a row of eight icons does
+        -- not ask anything.
         rows[#rows + 1] = {
-            label = "Marker",
-            min   = 1,
-            max   = 8,
-            step  = 1,
-            get   = function() return GetMark() or 8 end,
-            set   = function(v) ModuleDB().markNumber = v; Apply() end,
+            kind     = "swatches",
+            label    = "Marker",
+            order    = MARKER_ORDER,
+            textures = MARKER_TEXTURE,
+            get      = function() return GetMark() or 1 end,
+            set      = function(v) ModuleDB().markNumber = v; Apply() end,
+        }
+        rows[#rows + 1] = {
+            label = "Keep a marker already there",
+            get   = function() return Opt("keepExisting") end,
+            set   = function(v) ModuleDB().keepExisting = v; Apply() end,
+            help  = "Adds the tilde to the macro, which tells the game to "
+                 .. "leave an existing icon alone rather than replace it -- so "
+                 .. "a mark someone else placed survives.",
+        }
+        rows[#rows + 1] = {
+            label = "Do not mark in a raid",
+            get   = function() return Opt("disableInRaid") end,
+            set   = function(v) ModuleDB().disableInRaid = v; Apply() end,
+            help  = "Markers are the leader's to manage in a raid, and one "
+                 .. "person re-marking is actively unhelpful. The focus is "
+                 .. "still set -- only the marking is skipped.",
+        }
+        rows[#rows + 1] = {
+            label = "Announce on ready check",
+            get   = function() return Opt("announce") end,
+            set   = function(v) ModuleDB().announce = v end,
+            help  = "Says which marker is your focus in party chat when a "
+                 .. "ready check starts, as NDui_Plus does. Party only, and "
+                 .. "only while actually in one.",
         }
     end
 
@@ -216,6 +292,14 @@ function ShiftFocus:Enable()
     moduleEnabled = true
     Build()
     AniMods.W.OnReady(Apply)
+
+    -- Its own frame, not the combat watcher: that one unregisters everything
+    -- when it fires, which would take the ready-check hook with it.
+    if not announceWatcher then
+        announceWatcher = _G.CreateFrame("Frame")
+        announceWatcher:RegisterEvent("READY_CHECK")
+        announceWatcher:SetScript("OnEvent", AnnounceMarker)
+    end
 end
 
 -- Toggles live: the binding is cleared outright rather than left pointing at a

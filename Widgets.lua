@@ -800,9 +800,14 @@ function W.Swatches(parent, size)
     -- is fixed and set once.
     -- `hollow` is a set of keys to draw as rings rather than solid squares;
     -- `disabled` a set to render inert.
-    function o:SetList(order, colors, hollow, disabled)
+    -- `textures` maps key -> texture path, for a picker whose choices are
+    -- pictures rather than colours -- raid target markers, say. A swatch
+    -- showing the actual marker is the only version of that control anyone can
+    -- use without counting; "8" is not a picture of a skull.
+    function o:SetList(order, colors, hollow, disabled, textures)
         o.order, o.colors, o.hollow = order or {}, colors or {}, hollow
         o.disabled = disabled
+        o.textures = textures
 
         local x = 0
         for _, key in ipairs(o.order) do
@@ -871,7 +876,12 @@ function W.Swatches(parent, size)
             -- Hollow: hide the fill and show the four edges in its place, so
             -- whatever is behind shows through the middle.
             local isRing = o.hollow and o.hollow[key]
-            if c then
+            local tex = o.textures and o.textures[key]
+            if tex then
+                -- A picture choice: the art IS the swatch, so no tint.
+                btn.swatch:SetTexture(tex)
+                btn.swatch:SetVertexColor(1, 1, 1, 1)
+            elseif c then
                 btn.swatch:SetColorTexture(c[1], c[2], c[3], 1)
                 for e = 1, 4 do btn.edges[e]:SetColorTexture(c[1], c[2], c[3], 1) end
             end

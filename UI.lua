@@ -565,7 +565,8 @@ local function BuildRow(parent, descriptor, sectionIndex, stripeIndex)
 
         local sw = W.Swatches(row, 14)
         sw.frame:SetPoint("LEFT", row, "LEFT", CONTROL_X, 0)
-        sw:SetList(descriptor.order, descriptor.swatches, descriptor.hollow, descriptor.disabled)
+        sw:SetList(descriptor.order, descriptor.swatches, descriptor.hollow,
+            descriptor.disabled, descriptor.textures)
         sw:SetValue(descriptor.get())
         sw:SetOnChange(function(value)
             descriptor.set(value)
