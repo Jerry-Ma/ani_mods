@@ -23,8 +23,17 @@ local W = AniMods.W
 local DOT = "\226\151\143" -- U+25CF, tab status glyph and dependency bullets
 
 local PAD = 12            -- content inset
-local SIDEBAR_W = 156     -- module list column
+-- 170 rather than 156: the rows are indented under their category heading, and
+-- that comes straight off the width a module title has before it ellipsises --
+-- three of them already truncate. The column pays for its own indent.
+local SIDEBAR_W = 170     -- module list column
 local SIDEBAR_ROW_H = 24
+-- Headings sit proud of the rows they label. Position carries the hierarchy;
+-- the accent colour only confirms it, so the grouping still reads at a glance
+-- for someone who cannot pick the accent out from the title text.
+local HEADING_X = 10
+local ROW_X = 20
+local HEADING_A = 0.9
 local ROW_GAP = 2
 local BLOCK_GAP = 6
 local CONTROL_WIDTH = 220 -- dropdowns/sliders: fixed, never full-width
@@ -1292,17 +1301,23 @@ local function CreateSidebarHeading(parent)
     local f = CreateFrame("Frame", nil, parent)
     f:SetHeight(SIDEBAR_HEAD_H)
 
-    local fs = W.Font(f, 10, nil, 0.45)
-    fs:SetPoint("LEFT", f, "LEFT", 10, -2)
+    -- Accent, the same as W.Heading uses for a section label in the content
+    -- pane. These do the same job on the other side of the rule, so they should
+    -- say so in the same voice -- and registering the colour means both follow
+    -- a theme change together rather than one going stale.
+    local fs = W.Font(f, 10, nil, 1)
+    fs:SetPoint("LEFT", f, "LEFT", HEADING_X, -2)
     fs:SetPoint("RIGHT", f, "RIGHT", -8, -2)
     fs:SetJustifyH("LEFT")
     fs:SetWordWrap(false)
+    local r, g, b = W.Accent()
+    fs:SetTextColor(r, g, b, HEADING_A)
+    W.RegisterAccent(fs, "text", HEADING_A)
 
     local o = { frame = f, fs = fs }
     function o:SetText(text)
-        -- Upper case and letter-spaced by hand: it has to read as a label for
-        -- the rows below rather than as another row among them, and it is
-        -- dimmer and smaller than a title for the same reason.
+        -- Upper case and smaller than a title: it has to read as a label FOR
+        -- the rows below rather than as another row among them.
         fs:SetText(text and text:upper() or "")
     end
     return o
@@ -1334,7 +1349,10 @@ local function CreateSidebarRow(parent)
     power.frame:SetPoint("RIGHT", f, "RIGHT", -8, 0)
 
     local fs = W.Font(f, 12, nil, W.TEXT_DIM_A)
-    fs:SetPoint("LEFT", f, "LEFT", 10, 0)
+    -- Indented under the category heading above it. The row FRAME still spans
+    -- the full width, so the selection wash and the accent marker stay flush
+    -- with the column edge -- it is the label that is indented, not the row.
+    fs:SetPoint("LEFT", f, "LEFT", ROW_X, 0)
     fs:SetPoint("RIGHT", power.frame, "LEFT", -6, 0)
     fs:SetJustifyH("LEFT")
     -- Long module titles get an ellipsis rather than widening the sidebar or
