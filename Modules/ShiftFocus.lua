@@ -240,12 +240,13 @@ function ShiftFocus:GetInfoRows()
         -- asks you to remember that 8 is the skull; a row of eight icons does
         -- not ask anything.
         rows[#rows + 1] = {
-            kind     = "swatches",
-            label    = "Marker",
-            order    = MARKER_ORDER,
-            textures = MARKER_TEXTURE,
-            get      = function() return GetMark() or 1 end,
-            set      = function(v) ModuleDB().markNumber = v; Apply() end,
+            kind       = "swatches",
+            label      = "Marker",
+            order      = MARKER_ORDER,
+            textures   = MARKER_TEXTURE,
+            swatchSize = 20,
+            get        = function() return GetMark() or 1 end,
+            set        = function(v) ModuleDB().markNumber = v; Apply() end,
         }
         rows[#rows + 1] = {
             label = "Keep a marker already there",

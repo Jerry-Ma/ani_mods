@@ -275,7 +275,13 @@ end
 --   { label = "Widgets", picker = { {key=,text=}, {header=true,text=} },
 --     isChecked = fn, onToggle = fn, summary = "2 of 7" }                 -- multi-select dropdown
 
+-- `kind` names the row outright and wins over everything below. The inference
+-- that follows reads a kind off which fields are present, which covers most
+-- rows but cannot cover a row whose fields do not imply it: a swatch strip of
+-- pictures carries `textures` and no `swatches` colour table, so it would fall
+-- all the way through to `get` and come out a checkbox.
 local function RowKind(descriptor)
+    if descriptor.kind then return descriptor.kind end
     if descriptor.section then return "section" end
     if descriptor.strip then return "strip" end
     if descriptor.picker then return "picker" end
@@ -555,15 +561,20 @@ local function BuildRow(parent, descriptor, sectionIndex, stripeIndex)
         return { kind = kind, widget = dd, icons = icons }, row, ROW_GAP
 
     elseif kind == "swatches" then
+        -- A colour needs no resolution to read, but a picture does: eight raid
+        -- markers at swatch size are eight coloured blobs, and telling the moon
+        -- from the skull is the whole point of showing them. `swatchSize` lets
+        -- a picture row ask for the pixels it needs.
+        local swSize = descriptor.swatchSize or 14
         local row = CreateFrame("Frame", nil, parent)
-        row:SetHeight(26)
+        row:SetHeight(math.max(26, swSize + 10))
 
         local label = W.Font(row, 12, nil, W.TEXT_DIM_A)
         label:SetPoint("LEFT", row, "LEFT", LABEL_X, 0)
         label:SetText(descriptor.label or "")
         ClampLabel(label, descriptor.help)
 
-        local sw = W.Swatches(row, 14)
+        local sw = W.Swatches(row, swSize)
         sw.frame:SetPoint("LEFT", row, "LEFT", CONTROL_X, 0)
         sw:SetList(descriptor.order, descriptor.swatches, descriptor.hollow,
             descriptor.disabled, descriptor.textures)
@@ -769,7 +780,11 @@ local function RefreshRowsInPlace(rows, cache)
             -- Re-push the colours as well as the selection: the "follow the
             -- theme" swatch renders whatever that currently resolves to, so
             -- it has to move when the theme does.
-            c.widget:SetList(descriptor.order, descriptor.swatches, descriptor.hollow, descriptor.disabled)
+            -- `textures` too, or a picture row loses its art on the first
+            -- refresh: SetList stores what it is handed, and a nil here means
+            -- the strip repaints as blank swatches.
+            c.widget:SetList(descriptor.order, descriptor.swatches, descriptor.hollow,
+                descriptor.disabled, descriptor.textures)
             c.widget:SetValue(descriptor.get())
         elseif c and c.kind == "options" then
             -- The selection itself (in case something changed it from
