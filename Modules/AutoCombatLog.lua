@@ -26,8 +26,15 @@
 -- are addons the player configured themselves. What was switched off is
 -- remembered and put back when this module is disabled: turning off someone
 -- else's setting is only defensible if it is undone the moment we stop being
--- responsible for the decision. Their own trigger settings are never touched,
--- only the master switch.
+-- responsible for the decision.
+--
+-- WHAT to log is AniMods' setting, written through to whichever backend is
+-- running. Before that it was the port's alone and the panel hid the switches
+-- under anyone else -- which meant the answer to "what do I log?" came from
+-- whichever addon happened to be installed, and changing it meant finding that
+-- addon's panel. Being consistent about it is most of the point of a module
+-- that otherwise just flips someone else's switch. Only the seven content
+-- switches propagate; every other setting those addons have is left alone.
 --
 -- The port follows EllesmereUIQoL's version, which is itself the shape MRT
 -- established. Its thresholds are the load-bearing part and are NOT guesses:
@@ -107,14 +114,17 @@ local RAID_DIFF_KEYS = {
     [14]  = "logNormal",
 }
 
--- Everything but scenarios, matching EllesmereUIQoL's defaults.
+-- The content a log is actually read back for. EllesmereUIQoL and MRT both
+-- default to nearly everything, which fills the Logs folder with LFR and
+-- random arenas -- files nobody uploads, in a folder that is never pruned and
+-- that the game appends to for as long as logging is on.
 local TRIGGER_DEFAULTS = {
     logMythic   = true,
     logHeroic   = true,
-    logNormal   = true,
-    logLFR      = true,
+    logNormal   = false,
+    logLFR      = false,
     log5pp      = true,
-    logArena    = true,
+    logArena    = false,
     logScenario = false,
     delayStop   = true,
 }
@@ -128,6 +138,12 @@ local TRIGGER_ROWS = {
     { key = "logArena",    label = "Arenas" },
     { key = "logScenario", label = "Group scenarios" },
 }
+
+-- Only the seven content switches propagate. `delayStop` is deliberately not in
+-- this list: EllesmereUI spells it `delaystop` and MRT has no equivalent at
+-- all, so it is pushed separately where it exists.
+local TRIGGER_KEYS = {}
+for i, row in ipairs(TRIGGER_ROWS) do TRIGGER_KEYS[i] = row.key end
 
 local function Trigger(key)
     local v = ModuleDB()[key]
@@ -268,12 +284,63 @@ local function MRTParts()
     return mod, vmrt.Logging
 end
 
+-- Which field each backend spells a content switch as.
+--
+-- EllesmereUIQoL uses the same names this module does, because this module's
+-- port came from it. MRT states four of them BACKWARDS -- `disableMythic` is
+-- absent when Mythic raids ARE logged -- so those carry `invert`, and writing
+-- one means writing nil rather than false: MRT tests presence, and `false` is
+-- present.
+local EUI_FIELDS = {
+    logMythic   = { field = "logMythic" },
+    logHeroic   = { field = "logHeroic" },
+    logNormal   = { field = "logNormal" },
+    logLFR      = { field = "logLFR" },
+    log5pp      = { field = "log5pp" },
+    logArena    = { field = "logArena" },
+    logScenario = { field = "logScenario" },
+}
+
+local MRT_FIELDS = {
+    logMythic   = { field = "disableMythic", invert = true },
+    logHeroic   = { field = "disableHeroic", invert = true },
+    logNormal   = { field = "disableNormal", invert = true },
+    logLFR      = { field = "enableLFR" },
+    log5pp      = { field = "enable5ppLegion" },
+    logArena    = { field = "enableArena" },
+    logScenario = { field = "enable3ppBFA" },
+}
+
+-- `nil` rather than `false` for the off state throughout. EllesmereUIQoL reads
+-- its switches with an explicit `== nil` default test so either works there,
+-- but MRT tests truthiness on presence, and its options pane writes nil -- so
+-- nil is the spelling both understand.
+local function PushFields(config, fields)
+    for _, key in ipairs(TRIGGER_KEYS) do
+        local map = fields[key]
+        if map then
+            local want = Trigger(key)
+            if map.invert then want = not want end
+            config[map.field] = want or nil
+        end
+    end
+end
+
 local BACKENDS = {
     {
         name = "EllesmereUI",
         detail = "EllesmereUIQoL's own auto-logging, switched on and re-synced "
               .. "through the check function it publishes for its options pane.",
         Available = function() return EUIConfig() ~= nil end,
+        PushTriggers = function()
+            local c = EUIConfig()
+            if not c then return end
+            PushFields(c, EUI_FIELDS)
+            -- EllesmereUI's own spelling, lowercase s, and the only backend
+            -- with the idea at all.
+            c.delaystop = Trigger("delayStop") or nil
+            if c.enabled then _G._EUI_AutoLogging_Check() end
+        end,
         IsOn = function()
             local c = EUIConfig()
             return c and c.enabled and true or false
@@ -294,6 +361,18 @@ local BACKENDS = {
         detail = "MRT's Logging module, switched on through VMRT.Logging and "
               .. "started through the module object MRT publishes as GMRT.",
         Available = function() return (MRTParts()) ~= nil end,
+        PushTriggers = function()
+            local mod, cfg = MRTParts()
+            if not (mod and cfg) then return end
+            PushFields(cfg, MRT_FIELDS)
+            -- No delay-stop here to push: MRT stops the moment the zone says
+            -- no. Nothing is invented for it -- a setting this panel shows but
+            -- that does nothing under the running backend would be a lie.
+            --
+            -- Re-evaluated rather than left for the next zone change, so a
+            -- switch flipped inside a raid takes effect there.
+            if cfg.enabled then mod:Enable() end
+        end,
         IsOn = function()
             local _, cfg = MRTParts()
             return cfg and cfg.enabled and true or false
@@ -322,6 +401,8 @@ local BACKENDS = {
         Available = function() return true end,
         IsOn = function() return portArmed end,
         SetOn = function(on) ArmPort(on) return true end,
+        -- Nothing to push: the port reads the same settings the panel writes.
+        PushTriggers = ApplyPortState,
     },
 }
 
@@ -399,7 +480,19 @@ local function Apply()
 
     EnsureAdvancedLogging()
     backend.SetOn(true)
+    -- After SetOn, not before: MRT's own Enable() re-evaluates the current zone
+    -- as it registers, so pushing first and switching on second would have it
+    -- decide on the settings we were about to replace.
+    backend.PushTriggers()
     applied = backend
+end
+
+-- One switch changed. Nothing about which backend is chosen can have moved, so
+-- this is the push without the stand-down work around it.
+local function PushTriggers()
+    if not moduleEnabled then return end
+    local backend = ActiveBackend()
+    if backend then backend.PushTriggers() end
 end
 
 -- ---------------------------------------------------------------------------
@@ -438,26 +531,45 @@ function AutoCombatLog:GetInfoRows()
              .. "whenever this module runs.",
     }
 
-    -- Only the port's own triggers, and only when the port is what is running:
-    -- these settings do nothing while EllesmereUI or MRT owns the decision, and
-    -- a row that does nothing is worse than no row.
-    if backend and backend.name == "AniMods" then
-        rows[#rows + 1] = { section = "What to log" }
-        for _, row in ipairs(TRIGGER_ROWS) do
-            rows[#rows + 1] = {
-                label = row.label,
-                get   = function() return Trigger(row.key) end,
-                set   = function(v) ModuleDB()[row.key] = v and true or false; ApplyPortState() end,
-            }
-        end
+    -- Shown whichever backend is running, because these are now AniMods'
+    -- settings and they are written through to it. An earlier version showed
+    -- them only while the port was active, on the reasoning that a row doing
+    -- nothing is worse than no row -- true, but the fix was to make the rows do
+    -- something rather than to hide them. Answering "what do I log?" differently
+    -- depending on which addon happens to be installed is the thing this module
+    -- exists to stop.
+    rows[#rows + 1] = { section = "What to log" }
+    rows[#rows + 1] = {
+        label = "Decided by",
+        value = "AniMods",
+        help  = backend
+            and ("These switches are written through to " .. backend.name
+                .. " whenever they change, so its own panel shows the same "
+                .. "answers. Its other settings are left alone.")
+            or  "No logger is available to write them to yet.",
+    }
+    for _, row in ipairs(TRIGGER_ROWS) do
         rows[#rows + 1] = {
-            label = "Keep logging for 30s after leaving",
-            get   = function() return Trigger("delayStop") end,
-            set   = function(v) ModuleDB().delayStop = v and true or false end,
-            help  = "Leaving the instance ends the pull for you, not for the "
-                 .. "encounter. The delay keeps the tail of the fight in the log.",
+            label = row.label,
+            get   = function() return Trigger(row.key) end,
+            set   = function(v)
+                ModuleDB()[row.key] = v and true or false
+                PushTriggers()
+            end,
         }
     end
+    rows[#rows + 1] = {
+        label = "Keep logging for 30s after leaving",
+        get   = function() return Trigger("delayStop") end,
+        set   = function(v)
+            ModuleDB().delayStop = v and true or false
+            PushTriggers()
+        end,
+        help  = "Leaving the instance ends the pull for you, not for the "
+             .. "encounter. The delay keeps the tail of the fight in the log. "
+             .. "EllesmereUI has this setting and the port honours it; MRT has "
+             .. "no equivalent and stops the moment the zone says no.",
+    }
 
     -- What each logger IS DOING, not merely whether it exists. The first
     -- version reported availability here, which read as three reassuring
