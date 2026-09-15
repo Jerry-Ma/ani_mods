@@ -60,6 +60,7 @@ local tabButtons = {}
 -- Pooled separately from the rows: how many headings the list needs depends on
 -- how many categories have a module in them, which is not the row count.
 local tabHeadings = {}
+local sidebarScroll
 local scrollArea
 local content
 local currentTabName
@@ -1281,7 +1282,11 @@ end
 -- A category heading. Deliberately NOT a Button: there is nothing to click, and
 -- a disabled button still takes the mouse and shows a hover state, which reads
 -- as something that should respond and does not.
-local SIDEBAR_HEAD_H = 26
+--
+-- Shorter than a row, and deliberately so: five of these is five rows' worth of
+-- list that shows no module. At 20 the current set still fits the window
+-- without scrolling, which is the point at which the grouping costs nothing.
+local SIDEBAR_HEAD_H = 20
 
 local function CreateSidebarHeading(parent)
     local f = CreateFrame("Frame", nil, parent)
@@ -1432,6 +1437,9 @@ local function RefreshTabs()
         tab.frame:SetPoint("TOPLEFT", tabStrip, "TOPLEFT", 0, -y)
         tab.frame:SetPoint("TOPRIGHT", tabStrip, "TOPRIGHT", 0, -y)
         tab.frame:Show()
+        -- Remembered so a selected row can be scrolled into view without
+        -- re-deriving where the layout put it.
+        tab.stripY = y
         y = y + SIDEBAR_ROW_H
     end
 
@@ -1442,7 +1450,32 @@ local function RefreshTabs()
         tabHeadings[i].frame:Hide()
     end
 
+    -- The scroll child is sized by us, not by its contents: the rows are
+    -- anchored, not stacked, so the frame has no natural height to measure.
+    tabStrip:SetHeight(y)
+    if sidebarScroll then sidebarScroll:Update() end
+
     return names
+end
+
+-- Only moves when the row is actually outside the view, and only far enough to
+-- bring it in. This is for reopening the panel on a tab that scrolled off, not
+-- for clicking -- a row you clicked was visible by definition.
+local function ScrollSelectedIntoView()
+    if not (sidebarScroll and currentTabName) then return end
+    for i = 1, #tabButtons do
+        local tab = tabButtons[i]
+        if tab.moduleName == currentTabName and tab.frame:IsShown() and tab.stripY then
+            local view = sidebarScroll.scroll:GetHeight() or 0
+            local at = sidebarScroll:GetScroll()
+            if tab.stripY < at then
+                sidebarScroll:SetScroll(tab.stripY)
+            elseif tab.stripY + SIDEBAR_ROW_H > at + view then
+                sidebarScroll:SetScroll(tab.stripY + SIDEBAR_ROW_H - view)
+            end
+            return
+        end
+    end
 end
 
 -- Called whenever module state changes -- a toggle, or a module's own event
@@ -1461,7 +1494,11 @@ end
 local function BuildUI()
     if frame then return end
 
-    frame = W.Window("AniModsPanel", "AniMods", 700, 500, {
+    -- 560 rather than 500: the sidebar is the tallest thing in here now, and
+    -- this is the height at which the current module list fits without
+    -- scrolling. The scroll area is what handles the list outgrowing it again,
+    -- so this is a comfort figure rather than a limit.
+    frame = W.Window("AniModsPanel", "AniMods", 700, 560, {
         icon = "Interface\\AddOns\\AniMods\\Media\\icon.png",
         footer = true,
     })
@@ -1475,15 +1512,23 @@ local function BuildUI()
     local host = frame.content
 
     -- Sidebar down the left, content to its right, a hairline between them.
-    tabStrip = CreateFrame("Frame", nil, host)
-    tabStrip:SetWidth(SIDEBAR_W)
-    tabStrip:SetPoint("TOPLEFT", host, "TOPLEFT", PAD, -PAD)
-    tabStrip:SetPoint("BOTTOMLEFT", host, "BOTTOMLEFT", PAD, PAD)
+    --
+    -- The sidebar SCROLLS, like the content pane beside it. Categories cost
+    -- five headings of vertical space on top of the rows, which pushed a
+    -- sixteen-module list past the bottom of the window -- and the list only
+    -- grows. Sizing the window to today's list would just move the cliff. The
+    -- scroll area hides its own bar whenever there is nothing to scroll, so
+    -- this costs nothing visible until the list genuinely outgrows the window.
+    sidebarScroll = W.ScrollArea(host)
+    sidebarScroll.frame:SetWidth(SIDEBAR_W)
+    sidebarScroll.frame:SetPoint("TOPLEFT", host, "TOPLEFT", PAD, -PAD)
+    sidebarScroll.frame:SetPoint("BOTTOMLEFT", host, "BOTTOMLEFT", PAD, PAD)
+    tabStrip = sidebarScroll.content
 
     local rule = W.Tex(host, "ARTWORK", 1, 1, 1, 0.15)
     rule:SetWidth(1)
-    rule:SetPoint("TOPLEFT", tabStrip, "TOPRIGHT", PAD, 0)
-    rule:SetPoint("BOTTOMLEFT", tabStrip, "BOTTOMRIGHT", PAD, 0)
+    rule:SetPoint("TOPLEFT", sidebarScroll.frame, "TOPRIGHT", PAD, 0)
+    rule:SetPoint("BOTTOMLEFT", sidebarScroll.frame, "BOTTOMRIGHT", PAD, 0)
 
     scrollArea = W.ScrollArea(host)
     scrollArea.frame:SetPoint("TOPLEFT", rule, "TOPRIGHT", PAD, 0)
@@ -1503,6 +1548,7 @@ local function BuildUI()
         -- while another DIALOG-strata window is up would appear behind it.
         frame:Raise()
         RefreshTabs()
+        ScrollSelectedIntoView()
         RefreshCurrentTab()
         RelayoutContent(tabCache[currentTabName])
     end)
