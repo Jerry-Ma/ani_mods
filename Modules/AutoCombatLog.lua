@@ -14,10 +14,20 @@
 --                 of the addon's table is private).
 --   AniMods       The port below, used only when neither is there.
 --
--- Exactly one of them may run. Two owners both calling LoggingCombat() on a
--- zone change is not twice as reliable -- one of them decides not to log, and
--- whichever answers last wins, which is a coin toss rather than a setting. So
--- the port registers no events at all unless it is the chosen backend.
+-- Exactly one of them may run, and that is ENFORCED rather than assumed. Two
+-- owners both answering a zone change is not twice as reliable: MRT stops a log
+-- whenever its own last decision was "log" and the new zone's is "don't", and
+-- it neither knows nor cares who started the log it is stopping. Whichever
+-- fires last wins, which is a coin toss rather than a setting.
+--
+-- So the port registers no events at all unless it is the chosen backend, AND
+-- every other logger that is switched on gets switched off -- including one
+-- this module never switched on, which is the case that matters, since these
+-- are addons the player configured themselves. What was switched off is
+-- remembered and put back when this module is disabled: turning off someone
+-- else's setting is only defensible if it is undone the moment we stop being
+-- responsible for the decision. Their own trigger settings are never touched,
+-- only the master switch.
 --
 -- The port follows EllesmereUIQoL's version, which is itself the shape MRT
 -- established. Its thresholds are the load-bearing part and are NOT guesses:
@@ -325,10 +335,39 @@ local function ActiveBackend()
     return nil
 end
 
-local applied -- the backend currently switched on by this module
+local applied   -- the backend this module switched on
+-- Backends this module switched OFF, by name. Recorded rather than forgotten
+-- so switching this module off puts them back: turning off someone else's
+-- setting is only defensible if it is undone when we stop being responsible
+-- for the decision.
+local standDown = {}
+
+local function BackendByName(name)
+    for _, b in ipairs(BACKENDS) do
+        if b.name == name then return b end
+    end
+    return nil
+end
+
+local function RestoreStoodDown()
+    for name in pairs(standDown) do
+        local b = BackendByName(name)
+        if b and b.Available() then b.SetOn(true) end
+        standDown[name] = nil
+    end
+end
 
 local function Apply()
     local backend = ActiveBackend()
+
+    if not moduleEnabled then
+        if applied then
+            applied.SetOn(false)
+            applied = nil
+        end
+        RestoreStoodDown()
+        return
+    end
 
     -- A backend that used to be the active one must be stood down before the
     -- new one starts, or both are armed at once.
@@ -339,14 +378,28 @@ local function Apply()
 
     if not backend then return end
 
-    if moduleEnabled then
-        EnsureAdvancedLogging()
-        backend.SetOn(true)
-        applied = backend
-    elseif applied then
-        applied.SetOn(false)
-        applied = nil
+    -- Every OTHER logger is switched off, including one this module never
+    -- turned on. That is the part the first version left out, and it made the
+    -- module's own promise false: with MRT's auto-logging on beside
+    -- EllesmereUI's, both answer ZONE_CHANGED_NEW_AREA, and MRT stops a log
+    -- whenever its own last decision was "log" and the new zone's is "don't" --
+    -- it does not know or care who started the one it is stopping. Two owners
+    -- is not redundancy, it is whichever fires last, which is a coin toss
+    -- rather than a setting. Being switched on is what has to be exclusive,
+    -- not just being chosen.
+    for _, b in ipairs(BACKENDS) do
+        if b ~= backend and b.Available() and b.IsOn() then
+            b.SetOn(false)
+            standDown[b.name] = true
+        end
     end
+    -- The chosen one is not a stand-down candidate any more, whatever it was
+    -- before -- otherwise disabling this module would switch it back on twice.
+    standDown[backend.name] = nil
+
+    EnsureAdvancedLogging()
+    backend.SetOn(true)
+    applied = backend
 end
 
 -- ---------------------------------------------------------------------------
@@ -406,13 +459,31 @@ function AutoCombatLog:GetInfoRows()
         }
     end
 
-    rows[#rows + 1] = { section = "Available loggers" }
+    -- What each logger IS DOING, not merely whether it exists. The first
+    -- version reported availability here, which read as three reassuring
+    -- "Yes" rows while a second logger was quietly armed beside the chosen
+    -- one -- the exact state this section should have made obvious.
+    rows[#rows + 1] = { section = "Loggers" }
     for _, b in ipairs(BACKENDS) do
-        rows[#rows + 1] = {
-            label = b.name,
-            state = b.Available(),
-            help  = b.detail,
-        }
+        local value, help
+        if not b.Available() then
+            value = "not installed"
+            help  = b.detail
+        elseif b == backend then
+            value = b.IsOn() and "in use" or "chosen, not yet on"
+            help  = b.detail
+        elseif standDown[b.name] then
+            value = "switched off"
+            help  = "Its auto-logging was on, and two loggers both answering a "
+                 .. "zone change is whichever fires last rather than a setting "
+                 .. "-- one of them will stop a log the other started. This "
+                 .. "module switched it off and switches it back on if you "
+                 .. "disable this module. Its own settings are untouched."
+        else
+            value = "off"
+            help  = b.detail
+        end
+        rows[#rows + 1] = { label = b.name, value = value, help = help }
     end
 
     return rows
