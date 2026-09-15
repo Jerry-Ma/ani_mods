@@ -1,7 +1,9 @@
 -- NSRT Misc
--- The bag for small Northern Sky Raid Tools tweaks -- batch edits its own UI
--- can only make one row at a time. One entry so far, plus the button that
--- undoes it.
+-- The bag for small Northern Sky Raid Tools tweaks -- things its own UI cannot
+-- do, either because they are batch edits it only offers one row at a time, or
+-- because it offers no setting at all. Three so far: silencing boss-alert
+-- countdowns (plus the button that undoes it), borrowing another addon's
+-- countdown voice, and boxing the live line in the reminder note.
 --
 -- ── Silencing boss-alert countdowns ──────────────────────────────────────────
 --
@@ -300,6 +302,179 @@ local function OverrideInstalled()
 end
 
 -- ---------------------------------------------------------------------------
+-- Current-line box
+-- ---------------------------------------------------------------------------
+-- MRT boxes the reminder line that is about to fire. NSRT draws its note as one
+-- FontString and boxes nothing, so the line you need is the one you have to
+-- find by reading -- which is the wrong job to give someone mid-pull.
+--
+-- NSRT's own countdown pass is what makes this cheap. NSI:CountdownNoteFrame
+-- rebuilds the displayed text every tick during an encounter: it drops lines
+-- whose timer has reached zero and rewrites the remaining times. So the first
+-- line still on screen that carries a countdown IS the next thing that happens,
+-- and there is nothing to track -- reading the text NSRT just drew answers it.
+--
+-- Hooked rather than reimplemented, and hooked on the function that does the
+-- drawing, so the box cannot disagree with the text it is behind.
+-- NorthernSkyRaidTools_UI hooks NSI methods the same way, so this is the
+-- addon's own idiom rather than a liberty taken with it.
+
+local NOTE_FRAMES = { "ReminderFrame", "PersonalReminderFrame", "ExtraReminderFrame" }
+local BOX_ALPHA = 0.22
+local BOX_PAD = 2
+
+local lineBoxHooked = false
+local scratchText
+
+local function NS()
+    local ns = _G.NorthernSkyRaidTools
+    return type(ns) == "table" and ns or nil
+end
+
+local function LineBoxOn()
+    local v = ModuleDB().lineBox
+    if v == nil then return true end
+    return v and true or false
+end
+
+-- Shown and transparent rather than hidden: a FontString on a hidden frame is
+-- not guaranteed to have been laid out, and an unlaid-out string measures zero.
+-- Parked far off-screen so being shown costs nothing visible.
+local function Scratch()
+    if not scratchText then
+        local holder = _G.CreateFrame("Frame", nil, _G.UIParent)
+        holder:SetSize(1, 1)
+        holder:SetPoint("TOPLEFT", _G.UIParent, "TOPLEFT", -5000, 5000)
+        holder:SetAlpha(0)
+        scratchText = holder:CreateFontString(nil, "ARTWORK")
+        scratchText:SetJustifyH("LEFT")
+        scratchText:SetJustifyV("TOP")
+    end
+    return scratchText
+end
+
+-- Measured against a copy of the note's own font and width, never computed from
+-- the font size and a line count. The note wraps -- NSRT builds it with
+-- SetWordWrap(true) and a fixed width -- so a long assignment is two rows tall,
+-- and arithmetic would put the box in the wrong place for exactly the lines
+-- long enough to be worth boxing.
+local function MeasuredHeight(noteText, text)
+    if not text or text == "" then return 0 end
+    local file, size, flags = noteText:GetFont()
+    if not file then return 0 end
+    local fs = Scratch()
+    fs:SetFont(file, size, flags)
+    fs:SetSpacing(noteText:GetSpacing() or 0)
+    fs:SetWidth(noteText:GetWidth())
+    fs:SetWordWrap(true)
+    fs:SetNonSpaceWrap(true)
+    fs:SetText(text)
+    return fs:GetStringHeight() or 0
+end
+
+local function SplitLines(text)
+    local out = {}
+    -- CountdownNoteFrame always appends a trailing newline; stripping it here
+    -- keeps that from counting as an empty row at the bottom.
+    for line in (text:gsub("\n+$", "") .. "\n"):gmatch("([^\n]*)\n") do
+        out[#out + 1] = line
+    end
+    return out
+end
+
+-- Same pattern NSRT parses its own note with, so a line this boxes is a line
+-- NSRT considers timed.
+local function CurrentLineIndex(lines)
+    for i = 1, #lines do
+        if lines[i]:match("%d+:%d%d") then return i end
+    end
+    return nil
+end
+
+local function HideBox(frame)
+    if frame and frame.AniModsLineBox then frame.AniModsLineBox:Hide() end
+end
+
+local function UpdateBox(frame)
+    if not (frame and frame.Text) then return end
+    if not (LineBoxOn() and moduleEnabled and frame:IsShown()) then
+        HideBox(frame)
+        return
+    end
+
+    local text = frame.Text:GetText()
+    if not text or text == "" then HideBox(frame) return end
+
+    local lines = SplitLines(text)
+    local index = CurrentLineIndex(lines)
+    if not index then HideBox(frame) return end
+
+    local spacing = frame.Text:GetSpacing() or 0
+    local top = 0
+    if index > 1 then
+        -- The gap BELOW the preceding block is part of the offset: a string of
+        -- n lines measures n rows plus n-1 gaps, and the next row starts one
+        -- more gap down.
+        top = MeasuredHeight(frame.Text, table.concat(lines, "\n", 1, index - 1)) + spacing
+    end
+    local height = MeasuredHeight(frame.Text, lines[index])
+    if height <= 0 then HideBox(frame) return end
+
+    local box = frame.AniModsLineBox
+    if not box then
+        -- ARTWORK, while NSRT draws the note on OVERLAY sublevel 7 -- so the
+        -- box is behind its own text without touching NSRT's draw order.
+        -- Parented to the note frame, which sets SetClipsChildren(true), so a
+        -- box near the bottom edge is clipped with the text rather than
+        -- hanging out of the panel.
+        box = frame:CreateTexture(nil, "ARTWORK")
+        frame.AniModsLineBox = box
+    end
+
+    local r, g, b = AniMods.W.Accent()
+    box:SetColorTexture(r, g, b, BOX_ALPHA)
+    box:ClearAllPoints()
+    box:SetPoint("TOPLEFT", frame.Text, "TOPLEFT", -BOX_PAD, -top + BOX_PAD)
+    box:SetPoint("TOPRIGHT", frame.Text, "TOPRIGHT", BOX_PAD, -top + BOX_PAD)
+    box:SetHeight(height + BOX_PAD * 2)
+    box:Show()
+end
+
+local function HideAllBoxes()
+    local ns = NS()
+    if not ns then return end
+    for _, name in ipairs(NOTE_FRAMES) do HideBox(ns[name]) end
+end
+
+-- Installed lazily and once, for the same reason the countdown override is:
+-- hooksecurefunc cannot be undone, so it is only taken out when the setting
+-- actually asks for it. After that the flag inside UpdateBox does the work.
+local function InstallLineBox()
+    if lineBoxHooked then return true end
+    local ns = NS()
+    if not ns or type(ns.CountdownNoteFrame) ~= "function" then return false end
+    if type(ns.UpdateNoteFrame) ~= "function" then return false end
+
+    lineBoxHooked = true
+    _G.hooksecurefunc(ns, "CountdownNoteFrame", function(_, frame) UpdateBox(frame) end)
+    -- The note text is also replaced wholesale outside the countdown path (a
+    -- new note arrives, a setting changes). Where the box goes is the
+    -- countdown's answer, so there is nothing valid to draw until it next runs.
+    _G.hooksecurefunc(ns, "UpdateNoteFrame", function(_, name)
+        HideBox(name and ns[name])
+    end)
+    return true
+end
+
+local function ApplyLineBox()
+    if moduleEnabled and LineBoxOn() then
+        InstallLineBox()
+    else
+        HideAllBoxes()
+    end
+end
+
+-- ---------------------------------------------------------------------------
 -- Status panel
 -- ---------------------------------------------------------------------------
 
@@ -395,6 +570,45 @@ function NSRTMisc:GetInfoRows()
         end,
     }
 
+    rows[#rows + 1] = { section = "Reminder note" }
+    rows[#rows + 1] = {
+        label = "Box the current line",
+        get   = LineBoxOn,
+        set   = function(v) ModuleDB().lineBox = v and true or false; ApplyLineBox() end,
+        help  = "Draws a box behind the note line that is about to fire, the "
+             .. "way MRT does. NSRT draws its note as one block and boxes "
+             .. "nothing, so mid-pull the line you need is the one you have to "
+             .. "find by reading.",
+    }
+    if LineBoxOn() then
+        local boxed, ns = nil, NS()
+        if ns then
+            for _, name in ipairs(NOTE_FRAMES) do
+                local f = ns[name]
+                if f and f.AniModsLineBox and f.AniModsLineBox:IsShown() then
+                    boxed = name
+                    break
+                end
+            end
+        end
+        rows[#rows + 1] = {
+            label = "Hooked into NSRT",
+            state = lineBoxHooked,
+            help  = "The box is positioned from the text NSRT has just drawn, "
+                 .. "by hooking the function that draws it -- so it cannot "
+                 .. "disagree with the line it sits behind. Installed the first "
+                 .. "time this is switched on, and never uninstalled: "
+                 .. "hooksecurefunc cannot be undone, so the setting gates the "
+                 .. "work rather than the hook.",
+        }
+        rows[#rows + 1] = {
+            label = "Boxing now",
+            value = boxed or "nothing",
+            help  = "A line only carries a box while its countdown is running, "
+                 .. "so \"nothing\" outside an encounter is the right answer.",
+        }
+    end
+
     return rows
 end
 
@@ -412,8 +626,15 @@ end
 -- while its files load -- so it is already there by PLAYER_LOGIN, which is when
 -- Enable runs. There is no window left to retry into, and a ladder guarding a
 -- case that cannot happen is the kind of code nothing ever proves dead.
+--
+-- The current-line box is the one thing here that DOES wait on frames: NSRT
+-- builds its note frames lazily, in UpdateReminderFrame, which can be long
+-- after login. It needs no ladder either though -- the hook goes on the NSI
+-- method, which exists from the moment NSRT's files load, and the frames are
+-- only ever touched from inside that hook, by which time they exist.
 function NSRTMisc:Enable()
     moduleEnabled = true
+    AniMods.W.OnReady(ApplyLineBox)
     if CurrentSource() == SOURCE_NSRT then return end
     AniMods.W.OnReady(InstallOverride)
 end
@@ -427,6 +648,10 @@ end
 -- override is either already in place or not wanted.
 function NSRTMisc:SetEnabled(on)
     moduleEnabled = on and true or false
+    -- The box is the exception: it draws something, so switching off has to
+    -- take it off the screen rather than wait for a tick that is not coming
+    -- outside an encounter.
+    ApplyLineBox()
     return true
 end
 

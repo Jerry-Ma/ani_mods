@@ -98,6 +98,15 @@ BigWigsAPI = nil
 ---@type any
 ExBoss = nil
 
+---Northern Sky Raid Tools' internal namespace, published by its own core as
+---`_G.NorthernSkyRaidTools = NSI`. Distinct from both NSRT (its saved variable)
+---and NSAPI (its public API). NSRTMisc hooks NSI:CountdownNoteFrame and
+---NSI:UpdateNoteFrame to box the live reminder line, and reads the note frames
+---it hangs off itself -- NorthernSkyRaidTools_UI hooks the same table the same
+---way, so this is the addon's own idiom.
+---@type any
+NorthernSkyRaidTools = nil
+
 ---Northern Sky Raid Tools' public API table, distinct from its NSRT saved
 ---variable. NSRTMisc replaces NSAPI.TTSCountdown -- but only once a non-NSRT
 ---countdown voice has been chosen.
