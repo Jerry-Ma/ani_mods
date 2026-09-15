@@ -540,16 +540,29 @@ local GroupButtonEntry = {
 -- ability's Style. The BUTTON itself is untouched and stays clickable -- only
 -- the decoration stops intercepting.
 --
--- Two things NOT copied from the source. Its apply function ignores its own
+-- Three things NOT copied from the source. Its apply function ignores its own
 -- setting, so switching the option off still disabled the mouse; here Revert
--- actually puts it back. And it guards combat on one of the three frames only,
--- while all three are protected -- EnableMouse on a protected frame in combat
+-- actually puts it back. It guards combat on one of the three frames only,
+-- while all of them are protected -- EnableMouse on a protected frame in combat
 -- is blocked, so every one is guarded and the work is deferred.
+--
+-- And the source's list is incomplete: it silences ZoneAbilityFrame.Style but
+-- not ZoneAbilityFrame, which is mouse-enabled in its own right and sits ABOVE
+-- Style in the stack. /framestack over the green surround reports
+-- ZoneAbilityFrame as the frame taking the click, so silencing only its child
+-- changes nothing there. Disabling the parent does not reach the spell button:
+-- EnableMouse is per frame, and the button is a child of
+-- ZoneAbilityFrame.SpellButtonContainer with its own mouse still on. Edit Mode
+-- keeps working too -- dragging that system is done through
+-- ExtraAbilityContainer.Selection, an overlay with its own mouse, not through
+-- ZoneAbilityFrame's.
 
 local EXTRA_FRAMES = {
     { name = "ExtraActionBarFrame" },
     { name = "ExtraAbilityContainer" },
-    -- The zone ability's surround is a child, not the frame itself.
+    { name = "ZoneAbilityFrame" },
+    -- Still needed alongside it: EnableMouse is per frame, so silencing the
+    -- parent leaves this child taking clicks on its own.
     { name = "ZoneAbilityFrame", child = "Style" },
 }
 
@@ -573,11 +586,37 @@ local function EnsureExtraWatcher()
     extraWatcher = CreateFrame("Frame")
     extraWatcher:RegisterEvent("UPDATE_EXTRA_ACTIONBAR")
     extraWatcher:RegisterEvent("ZONE_CHANGED_NEW_AREA")
+    extraWatcher:RegisterEvent("PLAYER_ENTERING_WORLD")
     extraWatcher:RegisterEvent("PLAYER_REGEN_ENABLED")
     extraWatcher:SetScript("OnEvent", function() ApplyExtraMouse() end)
 end
 
+-- The events above say "something changed", not "the frame exists now" -- the
+-- zone ability is built the first time the game has one to show, which can land
+-- after all of them. Blizzard re-shows and rebuilds it through these two, so
+-- hooking them is what actually keeps the setting asserted; EllesmereUI's own
+-- skin hooks the same pair for the same reason. Installed once each, the first
+-- time the frame is there to hook.
+local extraHooked = {}
+
+local function HookExtraFrames()
+    local zone = _G.ZoneAbilityFrame
+    if zone and not extraHooked.zone then
+        extraHooked.zone = true
+        zone:HookScript("OnShow", function() ApplyExtraMouse() end)
+        if zone.UpdateDisplayedZoneAbilities then
+            hooksecurefunc(zone, "UpdateDisplayedZoneAbilities", function() ApplyExtraMouse() end)
+        end
+    end
+    local extra = _G.ExtraActionBarFrame
+    if extra and not extraHooked.extra then
+        extraHooked.extra = true
+        extra:HookScript("OnShow", function() ApplyExtraMouse() end)
+    end
+end
+
 ApplyExtraMouse = function()
+    HookExtraFrames()
     -- Deferred rather than skipped: PLAYER_REGEN_ENABLED is in the watcher's
     -- event list, so leaving combat runs this again.
     if InCombatLockdown() then return end
