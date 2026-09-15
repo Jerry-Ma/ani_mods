@@ -27,7 +27,6 @@ Modules\ChatContextSwitch.lua
 Modules\DamageMeter.lua
 Modules\ExtraButtonClicks.lua
 Modules\GroupRoles.lua
-Modules\IconProbe.lua
 Modules\NSRTMisc.lua
 Modules\ShiftFocus.lua
 Modules\SocialStatus.lua

@@ -528,7 +528,8 @@ local CATEGORY_COLOR = { GUILD = "ffd700", FRIENDS = "59c0ff" }
 -- appearing there never meant the atlas exists in this client.
 -- Atlas first, because the art matters more than the match. The PNGs were
 -- preferred once on the theory that EllesmereUIChat's flat line-art reads as
--- a matched pair -- but the IconProbe widget put them side by side with the
+-- a matched pair -- but a throwaway probe widget (IconProbe, since deleted)
+-- put them side by side with the
 -- atlases in the data bar, and at 14px the line work loses badly: thin white
 -- strokes look like a scratch where an atlas is solid filled colour, which is
 -- what every other icon on the bar is. Nothing was wrong with how they

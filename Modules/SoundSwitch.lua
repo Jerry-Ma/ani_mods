@@ -122,7 +122,8 @@ end
 --
 -- Atlas first, and EllesmereUIChat's sidebar PNG dropped entirely. That file
 -- was preferred once on the theory that it "matches the flat line-art the rest
--- of the panel uses" -- but the IconProbe widget put the two side by side in
+-- of the panel uses" -- but a throwaway probe widget (IconProbe, since
+-- deleted) put the two side by side in
 -- the data bar and the line-art loses badly at 14px: thin white strokes read
 -- as a scratch, where the atlas is solid filled colour like every other icon
 -- on the bar. Nothing was wrong with how it rendered; it was the wrong art.
