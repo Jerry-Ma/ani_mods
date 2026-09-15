@@ -8,7 +8,7 @@
 ## AddonCompartmentFuncOnEnter: AniMods_OnAddonCompartmentEnter
 ## AddonCompartmentFuncOnLeave: AniMods_OnAddonCompartmentLeave
 ## SavedVariables: AniModsDB
-## OptionalDeps: EllesmereUI, EllesmereUIBlizzardSkin, EllesmereUIQoL, EllesmereUIChat, EllesmereUIMinimap, NDui, NorthernSkyRaidTools
+## OptionalDeps: EllesmereUI, EllesmereUIBlizzardSkin, EllesmereUIQoL, EllesmereUIChat, EllesmereUIMinimap, NDui, NorthernSkyRaidTools, MRT
 
 Libs\LibStub\LibStub.lua
 
@@ -20,6 +20,7 @@ UI.lua
 Modules\General.lua
 Modules\Bar.lua
 Modules\AchievementShot.lua
+Modules\AutoCombatLog.lua
 Modules\BarToggle.lua
 Modules\ChatContextSwitch.lua
 Modules\DamageMeter.lua

@@ -34,6 +34,31 @@ EllesmereUIRaidToolsIcon = nil
 ---@type any
 _EUI_RaidTools_DB = nil
 
+---EllesmereUI's SAVED VARIABLE table, not its namespace (that is
+---`EllesmereUI`). AutoCombatLog reads and writes EllesmereUIDB.autoLogging to
+---switch EllesmereUIQoL's own auto-logging on.
+---@type any
+EllesmereUIDB = nil
+
+---Re-sync hook EllesmereUIQoL_AutoLogging.lua publishes for its own options
+---pane: it re-registers the zone events and applies the logging state
+---immediately. AutoCombatLog calls it after flipping the setting, which is what
+---makes switching on mid-instance start the log rather than wait for a zone.
+---@type any
+_EUI_AutoLogging_Check = nil
+
+---MRT's addon namespace, published by its core.lua as both GMRT and GExRT (the
+---table itself is otherwise private). AutoCombatLog reaches GMRT.A.AutoLogging
+---to start MRT's logging module, since MRT reads its own enable flag only once
+---at ADDON_LOADED.
+---@type any
+GMRT = nil
+
+---MRT's SAVED VARIABLE table, distinct from the GMRT namespace. AutoCombatLog
+---sets VMRT.Logging.enabled so the choice survives a reload.
+---@type any
+VMRT = nil
+
 ---NDui's addon namespace. Several modules check it to stay out of NDui's way
 ---when it already provides the same behaviour.
 ---@type any
