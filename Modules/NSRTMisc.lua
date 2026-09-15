@@ -395,6 +395,61 @@ local function HideBox(frame)
     if frame and frame.AniModsLineBox then frame.AniModsLineBox:Hide() end
 end
 
+-- ── Keeping the line that just fired ────────────────────────────────────────
+--
+-- NSRT removes a line the instant its countdown reaches zero, which is the
+-- moment you are most likely to look at it -- the thing that just happened
+-- disappears as it happens, and the box lands hard against the top edge with no
+-- context above it. One line of history fixes both.
+--
+-- Which line that is comes from WATCHING rather than from re-deriving NSRT's
+-- visibility rule. Duplicating that rule would mean two copies drifting apart
+-- on NSRT's next release; instead each pass remembers what NSRT drew, and the
+-- line that vanishes off the top between one pass and the next is by definition
+-- the one that just fired.
+--
+-- The comparison has to ignore the time, because NSRT rewrites every countdown
+-- on every tick -- so the text of a line changes constantly while the line
+-- itself has not moved. Stripping the times leaves an identity that only
+-- changes when the line really does.
+local function LineIdentity(line)
+    return (line:gsub("%d+:%d%d", ""))
+end
+
+local function KeepPrevOn()
+    local v = ModuleDB().keepPrevLine
+    if v == nil then return true end
+    return v and true or false
+end
+
+-- NSRT's own text, not ours. Reading frame.Text back would feed our prepended
+-- line into the next comparison and keep it forever.
+local function TrackExpiredLine(frame)
+    local current = frame.CountdownDisplayedText
+    if not current then return end
+    local previous = frame.AniModsPrevNSRT
+    if current == previous then return end
+
+    if previous then
+        local prevFirst = SplitLines(previous)[1]
+        local curFirst = SplitLines(current)[1]
+        if prevFirst and curFirst and LineIdentity(prevFirst) ~= LineIdentity(curFirst) then
+            -- Shown at 0:00 rather than frozen at whatever it last rendered.
+            -- The last value drawn was always above zero -- a line is dropped
+            -- only once its time has passed -- so leaving it would show a
+            -- countdown still running for something already done.
+            frame.AniModsKeptLine = (prevFirst:gsub("%d+:%d%d", "0:00"))
+        end
+    end
+    frame.AniModsPrevNSRT = current
+end
+
+local function ClearKeptLine(frame)
+    if not frame then return end
+    frame.AniModsKeptLine = nil
+    frame.AniModsPrevNSRT = nil
+end
+
 local function UpdateBox(frame)
     if not (frame and frame.Text) then return end
     if not (LineBoxOn() and moduleEnabled and frame:IsShown()) then
@@ -402,12 +457,32 @@ local function UpdateBox(frame)
         return
     end
 
-    local text = frame.Text:GetText()
-    if not text or text == "" then HideBox(frame) return end
+    local nsrtText = frame.CountdownDisplayedText
+    if not nsrtText or nsrtText == "" then HideBox(frame) return end
+
+    -- Index is taken on NSRT's text and shifted, not searched for in the final
+    -- string: the kept line still carries a time, so a search would find IT and
+    -- box the thing that is already over.
+    local index = CurrentLineIndex(SplitLines(nsrtText))
+    if not index then HideBox(frame) return end
+
+    local text = nsrtText
+    if KeepPrevOn() then
+        TrackExpiredLine(frame)
+        local kept = frame.AniModsKeptLine
+        if kept then
+            text = kept .. "\n" .. nsrtText
+            index = index + 1
+        end
+    end
+
+    -- NSRT only calls SetText when ITS text changes, so once ours is in place it
+    -- stays until NSRT genuinely redraws. Guarded anyway: SetText every tick on
+    -- an unchanged string is layout work for nothing.
+    if frame.Text:GetText() ~= text then frame.Text:SetText(text) end
 
     local lines = SplitLines(text)
-    local index = CurrentLineIndex(lines)
-    if not index then HideBox(frame) return end
+    if not lines[index] then HideBox(frame) return end
 
     local spacing = frame.Text:GetSpacing() or 0
     local top = 0
@@ -443,7 +518,10 @@ end
 local function HideAllBoxes()
     local ns = NS()
     if not ns then return end
-    for _, name in ipairs(NOTE_FRAMES) do HideBox(ns[name]) end
+    for _, name in ipairs(NOTE_FRAMES) do
+        HideBox(ns[name])
+        ClearKeptLine(ns[name])
+    end
 end
 
 -- Installed lazily and once, for the same reason the countdown override is:
@@ -458,10 +536,15 @@ local function InstallLineBox()
     lineBoxHooked = true
     _G.hooksecurefunc(ns, "CountdownNoteFrame", function(_, frame) UpdateBox(frame) end)
     -- The note text is also replaced wholesale outside the countdown path (a
-    -- new note arrives, a setting changes). Where the box goes is the
-    -- countdown's answer, so there is nothing valid to draw until it next runs.
+    -- new note arrives, a setting changes, an encounter ends). Where the box
+    -- goes is the countdown's answer, so there is nothing valid to draw until it
+    -- next runs -- and the remembered line belongs to the note that just went
+    -- away, so it goes with it. Without this, the first countdown of the next
+    -- pull would open with a line left over from the last one.
     _G.hooksecurefunc(ns, "UpdateNoteFrame", function(_, name)
-        HideBox(name and ns[name])
+        local frame = name and ns[name]
+        HideBox(frame)
+        ClearKeptLine(frame)
     end)
     return true
 end
@@ -581,6 +664,19 @@ function NSRTMisc:GetInfoRows()
              .. "find by reading.",
     }
     if LineBoxOn() then
+        rows[#rows + 1] = {
+            label = "Keep the line that just fired",
+            get   = KeepPrevOn,
+            set   = function(v)
+                ModuleDB().keepPrevLine = v and true or false
+                HideAllBoxes()
+            end,
+            help  = "NSRT removes a line the instant its countdown reaches "
+                 .. "zero -- the thing that just happened disappears as it "
+                 .. "happens, and the box sits against the top edge with no "
+                 .. "context above it. This holds that one line, shown at "
+                 .. "0:00, until the next one fires.",
+        }
         local boxed, ns = nil, NS()
         if ns then
             for _, name in ipairs(NOTE_FRAMES) do
