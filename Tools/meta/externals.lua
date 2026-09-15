@@ -47,6 +47,14 @@ EllesmereUIDB = nil
 ---@type any
 _EUI_AutoLogging_Check = nil
 
+---ElvUI's LibStub-style handle, which EllesmereUI and its plugins share:
+---ElvUI[1] is the `E` namespace. ShiftFocus reads
+---E.private.WT.unitFrames.quickFocus.enable to stand down when
+---EllesmereUI_WindTools' Quick Focus is on -- the setting rather than the
+---addon's presence, so WindTools installed with that feature off is fine.
+---@type any
+ElvUI = nil
+
 ---MRT's addon namespace, published by its core.lua as both GMRT and GExRT (the
 ---table itself is otherwise private). AutoCombatLog reaches GMRT.A.AutoLogging
 ---to start MRT's logging module, since MRT reads its own enable flag only once

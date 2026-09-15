@@ -1,17 +1,43 @@
 -- ShiftFocus
 -- Modifier + click on anything under the cursor sets it as your focus.
 --
--- Ported from the same idea in NDui_Plus (Modules/Combat/FocusMarker.lua) and
--- EllesmereUI_WindTools (Modules/UnitFrames/QuickFocus.lua). Both come down to
--- one secure button carrying a macro, bound over the mouse:
+-- Ported from NDui_Plus (Modules/Combat/FocusMarker.lua) and
+-- EllesmereUI_WindTools (Modules/UnitFrames/QuickFocus.lua). It takes TWO
+-- mechanisms, and that is the whole shape of this module:
 --
---   button:SetAttribute("type*", "macro")
---   button:SetAttribute("macrotext", "/focus mouseover")
---   SetOverrideBindingClick(button, true, "SHIFT-BUTTON1", buttonName)
+--   1. A hidden secure button carrying the macro, bound over the mouse:
 --
--- It works on ANYTHING the game gives a mouseover unit for -- unit frames,
--- nameplates, the 3D world -- because /focus mouseover asks the game rather
--- than any particular frame. That is why it needs no per-frame hooks.
+--        button:SetAttribute("type*", "macro")
+--        button:SetAttribute("macrotext", "/focus mouseover")
+--        SetOverrideBindingClick(button, true, "SHIFT-BUTTON1", buttonName)
+--
+--      This covers the 3D world and nameplates.
+--
+--   2. The same macro as a secure attribute on each UNIT FRAME:
+--
+--        frame:SetAttribute("shift-type1", "macro")
+--        frame:SetAttribute("shift-macrotext1", <the same text>)
+--
+-- Mechanism 2 is not redundant, and leaving it out is why the first version of
+-- this module did nothing on unit frames. A mouse-button BINDING only fires
+-- when nothing under the cursor takes the click. A unit frame is mouse-enabled
+-- and handles its own clicks, so it swallows the button and the binding never
+-- runs. The only thing that answers a click on a unit frame is an attribute on
+-- that frame.
+--
+-- Finding the frames: oUF-based unit frames (EllesmereUI's included),
+-- DandersFrames, and any Clique-compatible addon all announce themselves
+-- through the global ClickCastFrames registry, so watching it reaches them as
+-- they spawn without walking the UI. If something already owns that table's
+-- metatable -- DandersFrames does exactly this in its ClickCasting engine --
+-- the registry is NOT taken over: its entries are walked instead, and re-walked
+-- on the events that spawn frames.
+--
+-- WindTools sets the attribute to "focus", which sets the focus and nothing
+-- else -- so its markers work from the binding and not from a unit frame.
+-- "macro" with the same text is used here instead, so a click on a raid frame
+-- does what a click in the world does, marker included. It costs no more
+-- invasiveness: either way the modifier-click on that frame is claimed.
 --
 -- Three details are load-bearing, and each is a bug if missed:
 --
@@ -20,8 +46,8 @@
 --     saying this cost it an off/on toggle to notice.
 --   * RegisterForClicks has to match the ActionButtonUseKeyDown CVar, or the
 --     binding fires on the opposite edge from every other click in the game.
---   * SetOverrideBindingClick is protected. Rebinding during combat is
---     blocked, so a settings change mid-fight is deferred to the end of it.
+--   * SetOverrideBindingClick and SetAttribute are both protected. Neither can
+--     run in combat, so every path here is guarded and deferred.
 
 local AniMods = _G.AniMods
 
@@ -35,6 +61,19 @@ local ShiftFocus = {
               .. "FocusMarker), so this would be a second binding competing "
               .. "for the same click.",
           met = function() return not AniMods.IsAddOnLoaded("NDui") end },
+        { text = "WindTools' Quick Focus is off",
+          help = "EllesmereUI_WindTools ships this same feature, and two "
+              .. "owners of the same modifier-click on the same unit frame "
+              .. "means whichever wrote the attribute last wins. Its own "
+              .. "setting is read rather than its presence, so having "
+              .. "WindTools installed with Quick Focus off is fine.",
+          met = function()
+              local elv = _G.ElvUI
+              local E = elv and elv[1]
+              local wt = E and E.private and E.private.WT
+              local qf = wt and wt.unitFrames and wt.unitFrames.quickFocus
+              return not (qf and qf.enable)
+          end },
     },
 }
 
@@ -61,8 +100,15 @@ end
 local button
 local moduleEnabled = true
 local deferred = false
-local combatWatcher
-local announceWatcher
+local watcher
+local registryHooked = false
+
+-- Frames seen during combat lockdown wait here; weak keys let a frame
+-- destroyed mid-combat drop out instead of leaking.
+local pending = setmetatable({}, { __mode = "k" })
+-- Every frame carrying our attribute, and what we wrote, so cleanup and
+-- rebinding touch our own frames instead of walking the UI.
+local tracked = setmetatable({}, { __mode = "k" })
 
 local function ModuleDB()
     AniModsDB.shiftFocus = AniModsDB.shiftFocus or {}
@@ -147,44 +193,190 @@ local function AnnounceMarker()
 end
 
 -- ---------------------------------------------------------------------------
+-- Unit frames
+-- ---------------------------------------------------------------------------
+
+-- Secure attribute prefixes are lowercase, and the click suffix is the digit
+-- off the end of BUTTON1..BUTTON5 -- so SHIFT + BUTTON1 becomes "shift-type1".
+local function AttrNames(modifier, mouseButton)
+    local prefix = modifier:lower() .. "-"
+    local suffix = mouseButton:sub(7, 7)
+    return prefix .. "type" .. suffix, prefix .. "macrotext" .. suffix
+end
+
+local function ClearFrameAttributes(frame, binding)
+    local typeAttr, textAttr = AttrNames(binding.modifier, binding.button)
+    frame:SetAttribute(typeAttr, nil)
+    frame:SetAttribute(textAttr, nil)
+end
+
+local function SetupFrame(frame)
+    if not moduleEnabled then return end
+    if type(frame) ~= "table" then return end
+    if not (frame.GetAttribute and frame.SetAttribute and frame.GetName) then return end
+
+    -- Nameplates are already covered by the binding, and they are recycled
+    -- across units -- an attribute on one is the wrong tool. WindTools skips
+    -- the same oUF nameplate prefix.
+    local name = frame:GetName()
+    if type(name) == "string" and name:match("oUF_NPs") then return end
+
+    -- No unit, nothing to focus. Some registry entries are containers.
+    if not frame.unit and not frame:GetAttribute("unit") then return end
+
+    local modifier, mouseButton = GetModifier(), GetMouseButton()
+    local text = MacroText()
+    local binding = tracked[frame]
+    if binding and binding.modifier == modifier and binding.button == mouseButton
+        and binding.text == text then
+        return
+    end
+
+    if _G.InCombatLockdown() then
+        pending[frame] = true
+        return
+    end
+
+    -- The modifier or button changed since this frame was set up: drop the
+    -- stale attribute before writing the new one, or the old combination keeps
+    -- working forever.
+    if binding and (binding.modifier ~= modifier or binding.button ~= mouseButton) then
+        ClearFrameAttributes(frame, binding)
+    end
+
+    local typeAttr, textAttr = AttrNames(modifier, mouseButton)
+    frame:SetAttribute(typeAttr, "macro")
+    frame:SetAttribute(textAttr, text)
+    tracked[frame] = { modifier = modifier, button = mouseButton, text = text }
+    pending[frame] = nil
+end
+
+local function TeardownFrame(frame)
+    local binding = tracked[frame]
+    if not binding or not frame.SetAttribute then return end
+    pending[frame] = nil
+    -- In combat the owner is almost certainly discarding the frame anyway, and
+    -- the attribute goes with it.
+    if _G.InCombatLockdown() then return end
+    ClearFrameAttributes(frame, binding)
+    tracked[frame] = nil
+end
+
+local function ClearAllFrames()
+    if _G.InCombatLockdown() then return end
+    for frame, binding in pairs(tracked) do
+        if frame.SetAttribute then ClearFrameAttributes(frame, binding) end
+        tracked[frame] = nil
+    end
+end
+
+local function RefreshFrames()
+    for frame in pairs(tracked) do SetupFrame(frame) end
+    local registry = _G.ClickCastFrames
+    if type(registry) == "table" then
+        for frame, value in pairs(registry) do
+            if value ~= nil and value ~= false then SetupFrame(frame) end
+        end
+    end
+end
+
+-- The registry is shared ground. Taking over a metatable someone else installed
+-- would cut their consumer out of their own registrations, so an existing owner
+-- is left alone and its entries are read instead -- which is the live case
+-- here, since DandersFrames installs one for its click-casting engine.
+local function InstallRegistryHook()
+    if registryHooked then return end
+    registryHooked = true
+
+    local registry = _G.ClickCastFrames
+
+    if type(registry) == "table" and getmetatable(registry) then
+        RefreshFrames()
+        return
+    end
+
+    -- The local has to exist before the closure is defined, or `proxy` inside
+    -- __newindex resolves to a nil global at runtime.
+    local proxy = {}
+    setmetatable(proxy, {
+        __newindex = function(_, frame, value)
+            -- Persisted, so a consumer that takes the table over later can
+            -- still discover what was registered while we held it.
+            rawset(proxy, frame, value)
+            -- This runs inside other addons' frame-spawn paths, so an error
+            -- here would surface as a bug in THEIR code. Never let one escape.
+            if value == nil or value == false then
+                xpcall(TeardownFrame, geterrorhandler(), frame)
+            else
+                xpcall(SetupFrame, geterrorhandler(), frame)
+            end
+        end,
+    })
+
+    _G.ClickCastFrames = proxy
+
+    if type(registry) == "table" then
+        for frame, value in pairs(registry) do proxy[frame] = value end
+    end
+end
+
+-- ---------------------------------------------------------------------------
 -- Binding
 -- ---------------------------------------------------------------------------
 
 local Apply
 
--- Registered once, only while something is waiting. Re-registering an event
--- with a second handler is how one of these quietly replaces the other.
-local function DeferToCombatEnd()
-    if deferred then return end
-    deferred = true
-    combatWatcher = combatWatcher or _G.CreateFrame("Frame")
-    combatWatcher:RegisterEvent("PLAYER_REGEN_ENABLED")
-    combatWatcher:SetScript("OnEvent", function(self)
-        self:UnregisterAllEvents()
-        deferred = false
-        Apply()
+-- One watcher for everything, deliberately. An earlier version gave the
+-- deferred rebind its own frame whose handler called UnregisterAllEvents, which
+-- is a trap waiting for the second thing to be registered on it.
+local function EnsureWatcher()
+    if watcher then return end
+    watcher = _G.CreateFrame("Frame")
+    watcher:RegisterEvent("PLAYER_REGEN_ENABLED")
+    watcher:RegisterEvent("READY_CHECK")
+    -- Frames spawn and re-spawn with the group. Cheap to re-walk: SetupFrame
+    -- returns immediately for a frame already carrying the right attribute.
+    watcher:RegisterEvent("GROUP_ROSTER_UPDATE")
+    watcher:RegisterEvent("PLAYER_ENTERING_WORLD")
+    watcher:SetScript("OnEvent", function(_, event)
+        if event == "READY_CHECK" then
+            AnnounceMarker()
+        elseif event == "PLAYER_REGEN_ENABLED" then
+            if deferred then
+                deferred = false
+                Apply()
+            end
+            for frame in pairs(pending) do SetupFrame(frame) end
+        else
+            RefreshFrames()
+        end
     end)
 end
 
 Apply = function()
     if not button then return end
     if _G.InCombatLockdown() then
-        DeferToCombatEnd()
+        deferred = true
         return
     end
 
     _G.ClearOverrideBindings(button)
-    if not moduleEnabled then return end
+    if not moduleEnabled then
+        ClearAllFrames()
+        return
+    end
 
     button:SetAttribute("macrotext", MacroText())
     -- Matching the CVar matters: with ActionButtonUseKeyDown on, every other
     -- click in the game acts on press, and a binding that acts on release
     -- feels broken rather than different.
-    local useKeyDown = _G.C_CVar and _G.C_CVar.GetCVarBool
-        and _G.C_CVar.GetCVarBool("ActionButtonUseKeyDown")
+    local useKeyDown = _G.C_CVar.GetCVarBool("ActionButtonUseKeyDown")
     button:RegisterForClicks(useKeyDown and "AnyDown" or "AnyUp")
     _G.SetOverrideBindingClick(button, true,
         GetModifier() .. "-" .. GetMouseButton(), BUTTON_NAME)
+
+    InstallRegistryHook()
+    RefreshFrames()
 end
 
 local function Build()
@@ -202,6 +394,12 @@ end
 -- ---------------------------------------------------------------------------
 -- Status panel
 -- ---------------------------------------------------------------------------
+
+local function CountTracked()
+    local n = 0
+    for _ in pairs(tracked) do n = n + 1 end
+    return n
+end
 
 function ShiftFocus:GetInfoRows()
     local rows = {}
@@ -226,6 +424,15 @@ function ShiftFocus:GetInfoRows()
     rows[#rows + 1] = {
         label = "Currently bound",
         value = GetModifier() .. "-" .. GetMouseButton(),
+    }
+    rows[#rows + 1] = {
+        label = "Unit frames wired",
+        value = tostring(CountTracked()),
+        help  = "A mouse-button binding only fires when nothing under the "
+             .. "cursor takes the click, and a unit frame takes its own -- so "
+             .. "each one needs the macro as an attribute of its own. This "
+             .. "counts the frames carrying it. Zero outside a group is "
+             .. "normal: raid frames do not exist until there is a raid.",
     }
 
     rows[#rows + 1] = { section = "Raid marker" }
@@ -279,8 +486,16 @@ function ShiftFocus:GetInfoRows()
     rows[#rows + 1] = {
         label = "Waiting for combat to end",
         state = deferred,
-        help  = "Changing an override binding is blocked in combat, so a change "
-             .. "made mid-fight is applied when it ends.",
+        help  = "Changing an override binding or a secure attribute is blocked "
+             .. "in combat, so a change made mid-fight is applied when it ends.",
+    }
+    rows[#rows + 1] = {
+        label = "Click-cast registry",
+        value = getmetatable(_G.ClickCastFrames or {}) and "shared" or "none",
+        help  = "Unit frames announce themselves through the global "
+             .. "ClickCastFrames table. Another addon owning its metatable is "
+             .. "the normal case and is never fought: its entries are read and "
+             .. "re-read when the group changes instead.",
     }
 
     return rows
@@ -293,20 +508,13 @@ end
 function ShiftFocus:Enable()
     moduleEnabled = true
     Build()
+    EnsureWatcher()
     AniMods.W.OnReady(Apply)
-
-    -- Its own frame, not the combat watcher: that one unregisters everything
-    -- when it fires, which would take the ready-check hook with it.
-    if not announceWatcher then
-        announceWatcher = _G.CreateFrame("Frame")
-        announceWatcher:RegisterEvent("READY_CHECK")
-        announceWatcher:SetScript("OnEvent", AnnounceMarker)
-    end
 end
 
--- Toggles live: the binding is cleared outright rather than left pointing at a
--- button that would do nothing, so the click goes back to whatever it does
--- normally the moment this is switched off.
+-- Toggles live: the binding is cleared outright and every frame attribute is
+-- removed, so the click goes back to whatever it does normally the moment this
+-- is switched off.
 function ShiftFocus:SetEnabled(on)
     moduleEnabled = on and true or false
     Apply()
