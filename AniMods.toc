@@ -22,6 +22,7 @@ Modules\Bar.lua
 Modules\AchievementShot.lua
 Modules\AutoCombatLog.lua
 Modules\BarToggle.lua
+Modules\CharStats.lua
 Modules\ChatContextSwitch.lua
 Modules\DamageMeter.lua
 Modules\ExtraButtonClicks.lua
