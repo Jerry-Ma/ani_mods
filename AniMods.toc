@@ -28,6 +28,7 @@ Modules\EllesmereUIMisc.lua
 Modules\ExtraButtonClicks.lua
 Modules\GroupRoles.lua
 Modules\NSRTMisc.lua
+Modules\PluginButtons.lua
 Modules\ShiftFocus.lua
 Modules\SocialStatus.lua
 Modules\SoundSwitch.lua
