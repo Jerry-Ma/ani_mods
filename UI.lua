@@ -759,7 +759,8 @@ local function BuildRow(parent, descriptor, sectionIndex, stripeIndex)
         local nameX = LABEL_X
         local labelX = nameX + WIDGET_NAME_W + 8
         local colorX = labelX + WIDGET_LABEL_W + 10
-        local removeX = colorX + 28
+        local resetX = colorX + 26
+        local removeX = resetX + 56
 
         local c = { kind = kind }
 
@@ -800,6 +801,23 @@ local function BuildRow(parent, descriptor, sectionIndex, stripeIndex)
             swatch:SetColor(descriptor.colorGet())
         end)
         c.swatch = swatch
+
+        if descriptor.colorReset then
+            -- Always present, never conditional on there being an override to
+            -- clear. A button that comes and goes as you pick colours makes the
+            -- row reflow under the cursor, and the panel reuses rows whose
+            -- SHAPE is unchanged -- so one appearing would not reliably be
+            -- built. Pressing it with nothing overridden simply re-resolves to
+            -- the same colour.
+            local reset = W.Button(row, 50, 20)
+            reset.frame:SetPoint("LEFT", row, "LEFT", resetX, 0)
+            reset:SetText("Reset")
+            reset:SetOnClick(function()
+                descriptor.colorReset()
+                swatch:SetColor(descriptor.colorGet())
+            end)
+            c.reset = reset
+        end
 
         if descriptor.onRemove then
             local remove = W.Button(row, 70, 20)
@@ -917,6 +935,14 @@ local function RefreshRowsInPlace(rows, cache)
             c.widget:SetText(descriptor.summary or "")
         elseif c and c.kind == "value" then
             c.widget:Set(descriptor.label, tostring(descriptor.value or ""))
+        elseif c and c.kind == "widget" then
+            -- Re-pushed rather than left alone: the label and the colour are
+            -- both derived (an abbreviation, a resolved accent), so anything
+            -- that changes what they resolve TO has to reach the row.
+            if c.nameInput then c.nameInput:SetValue(descriptor.nameGet()) end
+            c.widget:SetValue(descriptor.get())
+            c.swatch:SetColor(descriptor.colorGet())
+
         elseif c and c.kind == "swatches" then
             -- Re-push the colours as well as the selection: the "follow the
             -- theme" swatch renders whatever that currently resolves to, so

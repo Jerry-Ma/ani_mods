@@ -90,15 +90,22 @@ local BUILTIN_SOURCES = {
         label = "/eui",
         Available = function() return AniMods.IsAddOnLoaded("EllesmereUI") end,
         OnClick = function()
-            -- The function first: it is a direct call, where the slash command
-            -- goes back through the chat parser to reach the same place.
-            local eui = _G.EllesmereUI
-            if eui and type(eui.OpenConfig) == "function" then
-                eui.OpenConfig()
+            -- EllesmereUI's own /eui handler, called directly. An earlier
+            -- version preferred EllesmereUI.OpenConfig on the reasoning that a
+            -- function call beats going through the chat parser -- but calling
+            -- SlashCmdList.EUIOPTIONS is not going through the parser either,
+            -- it is the same direct call to the same function, and OpenConfig
+            -- is the wrong one: it only Shows, so it could not close the window
+            -- and did nothing at all once it was already open. The handler
+            -- Toggles, defers a frame to avoid tainting Blizzard's chat chain,
+            -- and says something useful when you are in combat.
+            local handler = _G.SlashCmdList and _G.SlashCmdList["EUIOPTIONS"]
+            if type(handler) == "function" then
+                handler("")
                 return
             end
-            local handler = _G.SlashCmdList and _G.SlashCmdList["EUIOPTIONS"]
-            if type(handler) == "function" then handler("") end
+            local eui = _G.EllesmereUI
+            if eui and type(eui.Toggle) == "function" then eui:Toggle() end
         end,
         tip = "Open EllesmereUI's settings.",
     },
