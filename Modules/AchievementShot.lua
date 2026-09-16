@@ -79,6 +79,11 @@ local function Fire()
     if not moduleEnabled then return end
     taken = taken + 1
     _G.Screenshot()
+    -- The count is the only evidence this module works, and a panel left open
+    -- across an achievement showed the figure it had when the tab was built.
+    -- Nothing else here changes state, so this is the one place that has to say
+    -- so.
+    if AniMods.RefreshUI then AniMods.RefreshUI() end
 end
 
 local function Schedule()
@@ -88,7 +93,17 @@ local function Schedule()
     _G.C_Timer.After(GetDelay(), Fire)
 end
 
-local function OnAchievement(_, _, alreadyEarnedOnAccount)
+-- An OnEvent script is called as (self, event, ...), so ACHIEVEMENT_EARNED's
+-- own two payload arguments -- achievementID, then alreadyEarned -- are the
+-- THIRD and FOURTH parameters here.
+--
+-- Getting that wrong is silent and total. An earlier version took three
+-- parameters and read achievementID as the already-earned flag; an ID is always
+-- a truthy number, so the skip below fired for every achievement and the module
+-- never took a single screenshot. Nothing errored, the panel still said
+-- "Active", and the only symptom was a count that stayed at zero. The names are
+-- spelled out rather than left as `_` for that reason.
+local function OnAchievement(_, _, achievementID, alreadyEarnedOnAccount)
     if not moduleEnabled then return end
     if alreadyEarnedOnAccount and ModuleDB().skipAccountEarned ~= false then return end
     Schedule()
