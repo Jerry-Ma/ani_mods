@@ -2,10 +2,13 @@
 -- The bag for small EllesmereUI-only tweaks -- one-off "it should look like it
 -- belongs" fixes too slight to be modules of their own, each an independently
 -- switchable ENTRY (see ENTRIES below) rather than one bundled all-or-nothing
--- setting. One so far:
+-- setting. Two so far:
 --
 --   Missing Stats -- item level and your primary stat, added to
 --   EllesmereUIQoL's stats block, which shows neither.
+--   Lettered Plugin Buttons -- addon minimap icons redrawn as their initial in
+--   one weight and size, so EllesmereUIMinimap's flyout grid stops being eight
+--   unrelated pieces of art.
 --
 -- The bar for adding an entry: it touches EllesmereUI specifically, it is small
 -- enough that a whole module would be ceremony, and it is REVERSIBLE. That last
@@ -444,10 +447,233 @@ local MissingStatsEntry = {
 }
 
 -- ---------------------------------------------------------------------------
+-- Entry: Lettered Plugin Buttons
+-- ---------------------------------------------------------------------------
+-- EllesmereUIMinimap gathers addon minimap buttons into a flyout grid, and a
+-- grid is exactly where their art stops working: every addon drew its icon for
+-- a 32px button sitting alone on the map ring, so eight of them side by side at
+-- 24px is eight different styles, crops and brightnesses in one panel. This
+-- replaces the art with the addon's initial, which unifies shape, size and
+-- weight and leaves colour to do the identifying.
+--
+-- THE ICON'S OWN HUE IS NOT AVAILABLE. WoW has no pixel-sampling API -- nothing
+-- can look at a texture's art and report what colour it is -- so the letter's
+-- colour has to be declared rather than measured. LibDataBroker objects may
+-- carry iconR/iconG/iconB, which is the colour the addon's own author chose for
+-- its icon, and that is what this uses. Most objects do not set it, so those
+-- fall back to a hue hashed from the addon's name: stable for the life of the
+-- install, distinct between neighbours, and never the same answer twice for one
+-- addon.
+--
+-- Buttons come from LibDBIcon's public API rather than from EllesmereUI. Its
+-- own collected list and flyout panel are file-locals with nothing exported, so
+-- there is no supported way to ask it what it grouped -- and no need, since
+-- LibDBIcon owns the buttons it groups. That does mean a button you have
+-- ungrouped onto the ring is lettered too. It looks deliberate either way, and
+-- guessing at grouping from a frame's current parent would flicker with the
+-- flyout's own lazy build.
+
+local MIN_LUMA = 0.45   -- see ReadableColor
+local LETTER_SCALE = 0.62
+
+local letterEnabled = false
+local letterHooked = {}
+local letterCallbackOwner = {}
+
+local function LDBIcon()
+    return _G.LibStub and _G.LibStub("LibDBIcon-1.0", true) or nil
+end
+
+-- A hand-picked spread rather than a generated one: evenly spaced hues at a
+-- fixed saturation produce muddy olives and near-blacks that read as "broken"
+-- next to the declared colours they sit beside.
+local PALETTE = {
+    { 0.90, 0.36, 0.33 }, { 0.95, 0.57, 0.20 }, { 0.94, 0.79, 0.27 },
+    { 0.55, 0.80, 0.33 }, { 0.30, 0.78, 0.35 }, { 0.20, 0.80, 0.62 },
+    { 0.20, 0.74, 0.89 }, { 0.32, 0.58, 0.92 }, { 0.51, 0.47, 0.92 },
+    { 0.68, 0.42, 0.88 }, { 0.89, 0.40, 0.68 }, { 0.80, 0.55, 0.42 },
+}
+
+-- Position-weighted so anagrams and shared prefixes land apart: plain byte sums
+-- put "Details" and "Deadly" on neighbouring entries, which is the one case
+-- where two buttons sitting next to each other must not match.
+local function PaletteColor(name)
+    local sum = 0
+    for i = 1, #name do sum = sum + name:byte(i) * i end
+    local c = PALETTE[(sum % #PALETTE) + 1]
+    return c[1], c[2], c[3]
+end
+
+-- A declared colour can be anything, including values chosen to sit on a bright
+-- icon rather than to be read as text on a dark panel. Hue and relative balance
+-- are kept; the whole colour is lifted until it clears a legibility floor. An
+-- unreadable letter is a bug, not fidelity.
+local function ReadableColor(r, g, b)
+    local luma = 0.299 * r + 0.587 * g + 0.114 * b
+    if luma >= MIN_LUMA or luma <= 0 then return r, g, b end
+    local lift = MIN_LUMA / luma
+    return math.min(1, r * lift), math.min(1, g * lift), math.min(1, b * lift)
+end
+
+local function LetterColor(button, name)
+    local obj = button.dataObject
+    if type(obj) == "table" and (obj.iconR or obj.iconG or obj.iconB) then
+        -- LibDBIcon's own defaulting: a partially declared colour fills the
+        -- missing channels with white, exactly as Icon_UpdateIcon does.
+        return ReadableColor(obj.iconR or 1, obj.iconG or 1, obj.iconB or 1)
+    end
+    return PaletteColor(name)
+end
+
+-- The first character that is actually a letter or digit. Names like
+-- "!KalielsTracker" and "_NPCScan" sort themselves to the top of addon lists on
+-- purpose, and their punctuation is not what anyone identifies them by.
+local function ButtonLetter(name)
+    local ch = name:match("[%a%d]")
+    return (ch or name:sub(1, 1) or "?"):upper()
+end
+
+local function ApplyLetter(button, name)
+    if not (button and button.icon) then return end
+
+    local fs = button.AniModsLetter
+    if not fs then
+        fs = button:CreateFontString(nil, "OVERLAY")
+        fs:SetPoint("CENTER", button, "CENTER", 0, 0)
+        button.AniModsLetter = fs
+    end
+
+    -- Sized off the button, not fixed: EllesmereUIMinimap has a button-size
+    -- setting, and a letter that ignored it would be the one thing in the grid
+    -- that did.
+    local size = math.max(8, math.floor((button:GetHeight() or 24) * LETTER_SCALE + 0.5))
+    AniMods.W.SetFont(fs, size, "OUTLINE")
+    fs:SetText(ButtonLetter(name))
+    fs:SetTextColor(LetterColor(button, name))
+    fs:Show()
+
+    button.icon:Hide()
+end
+
+local function RevertLetter(button)
+    if not button then return end
+    if button.AniModsLetter then button.AniModsLetter:Hide() end
+    if button.icon then button.icon:Show() end
+end
+
+local function ForEachPluginButton(fn)
+    local icons = LDBIcon()
+    if not icons then return 0 end
+    local n = 0
+    for _, name in ipairs(icons:GetButtonList()) do
+        -- GetButtonList returns NAMES -- it walks lib.objects and collects the
+        -- keys (LibDBIcon-1.0.lua:451). The bundled annotations type it as
+        -- returning buttons, which makes the lookup below look like a type
+        -- error; it is the annotation that is wrong, so the suppression sits on
+        -- this line rather than loosening anything.
+        ---@diagnostic disable-next-line: param-type-mismatch
+        local button = icons:GetMinimapButton(name)
+        if button then
+            n = n + 1
+            fn(button, name)
+        end
+    end
+    return n
+end
+
+local function ApplyAllLetters()
+    if not letterEnabled then
+        ForEachPluginButton(RevertLetter)
+        return
+    end
+    ForEachPluginButton(function(button, name)
+        ApplyLetter(button, name)
+        -- Re-asserted when the button is shown rather than polled: the flyout
+        -- shows and hides these, and an addon that swaps its icon later leaves
+        -- our FontString alone but may put its own texture back.
+        if not letterHooked[button] then
+            letterHooked[button] = true
+            button:HookScript("OnShow", function(self)
+                if letterEnabled then ApplyLetter(self, name) end
+            end)
+        end
+    end)
+end
+
+-- Addons that load late register their icon late, and LibDBIcon says so rather
+-- than leaving it to be noticed. Registered once; the flag decides what it does.
+local function EnsureLetterCallback()
+    local icons = LDBIcon()
+    if not icons or letterCallbackOwner.registered then return end
+    if type(icons.RegisterCallback) ~= "function" then return end
+    letterCallbackOwner.registered = true
+    icons.RegisterCallback(letterCallbackOwner, "LibDBIcon_IconCreated",
+        function(_, button, name)
+            if letterEnabled then ApplyLetter(button, name) end
+        end)
+end
+
+local LetteredButtonsEntry = {
+    key = "letterButtons",
+    name = "Lettered Plugin Buttons",
+    Available = function()
+        if not AniMods.IsAddOnLoaded("EllesmereUIMinimap") then
+            return false, "EllesmereUIMinimap is not loaded, so there is no "
+                       .. "button group to unify."
+        end
+        if not LDBIcon() then
+            return false, "LibDBIcon is not loaded. It is what owns addon "
+                       .. "minimap buttons, and nothing here can find them "
+                       .. "without it."
+        end
+        return true
+    end,
+    Apply = function()
+        letterEnabled = true
+        EnsureLetterCallback()
+        ApplyAllLetters()
+        return true
+    end,
+    Revert = function()
+        letterEnabled = false
+        ForEachPluginButton(RevertLetter)
+    end,
+    GetInfoRows = function()
+        local total, declared = 0, 0
+        ForEachPluginButton(function(button)
+            total = total + 1
+            local obj = button.dataObject
+            if type(obj) == "table" and (obj.iconR or obj.iconG or obj.iconB) then
+                declared = declared + 1
+            end
+        end)
+        return {
+            {
+                label = "Buttons lettered",
+                value = tostring(total),
+                help  = "Every addon minimap button LibDBIcon owns, which is "
+                     .. "what EllesmereUI groups into its flyout. One you have "
+                     .. "ungrouped onto the ring is lettered too -- there is no "
+                     .. "supported way to ask EllesmereUI what it grouped.",
+            },
+            {
+                label = "Using the addon's own colour",
+                value = ("%d of %d"):format(declared, total),
+                help  = "An icon's hue cannot be read -- WoW has no way to look "
+                     .. "at a texture's art -- so the colour is the one the "
+                     .. "addon declared through LibDataBroker. The rest get a "
+                     .. "hue hashed from their name, stable for the life of the "
+                     .. "install.",
+            },
+        }
+    end,
+}
+
+-- ---------------------------------------------------------------------------
 -- Entry framework
 -- ---------------------------------------------------------------------------
 
-local ENTRIES = { MissingStatsEntry }
+local ENTRIES = { MissingStatsEntry, LetteredButtonsEntry }
 local entryApplied = {} -- key -> true once Apply() has actually succeeded
 
 local function PollEntry(entry)
