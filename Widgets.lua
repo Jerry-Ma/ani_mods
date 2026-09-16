@@ -2292,6 +2292,71 @@ end
 -- Accepts either a Blizzard atlas name or a plain texture path, so style
 -- previews can show either without the caller resolving anything.
 
+-- ── Single-line text input ──────────────────────────────────────────────────
+-- For a setting whose value is a short string the player types: a widget's
+-- label, a slash command.
+--
+-- Commits on ENTER and on losing focus, not on every keystroke. A per-keystroke
+-- commit would write the saved variables a dozen times per word and, worse,
+-- would republish a data broker on each one -- so half-typed text would appear
+-- on the bar as it was written. ESCAPE reverts to the value it was given, which
+-- is the only way out of a bad edit that does not require knowing what was
+-- there before.
+function W.Input(parent, width)
+    local f = CreateFrame("Frame", nil, parent)
+    f:SetSize(width or 160, 22)
+
+    local bg = W.Tex(f, "BACKGROUND", 1, 1, 1, 0.05)
+    bg:SetAllPoints()
+
+    local edit = CreateFrame("EditBox", nil, f)
+    edit:SetPoint("TOPLEFT", 6, 0)
+    edit:SetPoint("BOTTOMRIGHT", -6, 0)
+    edit:SetAutoFocus(false)
+    edit:SetMultiLine(false)
+    W.SetFont(edit, 12)
+
+    local o = { frame = f, edit = edit, value = "" }
+
+    function o:SetValue(text)
+        o.value = text or ""
+        edit:SetText(o.value)
+        edit:SetCursorPosition(0)
+    end
+    function o:SetOnCommit(fn) o._onCommit = fn end
+
+    local function Commit()
+        local text = edit:GetText() or ""
+        if text == o.value then return end
+        o.value = text
+        if o._onCommit then o._onCommit(text) end
+    end
+
+    edit:SetScript("OnEnterPressed", function(self) Commit() self:ClearFocus() end)
+    edit:SetScript("OnEditFocusLost", Commit)
+    edit:SetScript("OnEscapePressed", function(self)
+        self:SetText(o.value)
+        self:ClearFocus()
+    end)
+
+    -- The border brightens on focus, which is the only cue that typing will go
+    -- here: an edit box with no caret visible looks exactly like a label.
+    local edges = {}
+    for i = 1, 4 do edges[i] = W.Tex(f, "ARTWORK", 1, 1, 1, 0.12) end
+    edges[1]:SetPoint("TOPLEFT"); edges[1]:SetPoint("TOPRIGHT"); edges[1]:SetHeight(1)
+    edges[2]:SetPoint("BOTTOMLEFT"); edges[2]:SetPoint("BOTTOMRIGHT"); edges[2]:SetHeight(1)
+    edges[3]:SetPoint("TOPLEFT"); edges[3]:SetPoint("BOTTOMLEFT"); edges[3]:SetWidth(1)
+    edges[4]:SetPoint("TOPRIGHT"); edges[4]:SetPoint("BOTTOMRIGHT"); edges[4]:SetWidth(1)
+
+    local function Edges(alpha)
+        for i = 1, 4 do edges[i]:SetColorTexture(1, 1, 1, alpha) end
+    end
+    edit:SetScript("OnEditFocusGained", function() Edges(0.35) end)
+    edit:HookScript("OnEditFocusLost", function() Edges(0.12) end)
+
+    return o
+end
+
 function W.Icon(parent, size)
     local f = CreateFrame("Frame", nil, parent)
     f:SetSize(size or 20, size or 20)

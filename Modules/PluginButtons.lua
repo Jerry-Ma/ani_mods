@@ -54,6 +54,7 @@ local function ModuleDB()
     local db = AniModsDB.pluginButtons
     db.publish = db.publish or {}
     db.labels = db.labels or {}
+    db.accents = db.accents or {}
     db.custom = db.custom or {}
     return db
 end
@@ -271,18 +272,144 @@ local function SetLabel(key, text)
     end
 end
 
--- ---------------------------------------------------------------------------
--- Forwarding
--- ---------------------------------------------------------------------------
-
 -- The SOURCE object, looked up live rather than captured. An addon can replace
 -- its own OnClick after registering -- reloading a profile, enabling a feature
 -- -- and a captured function would keep calling the old one.
+--
+-- Declared here rather than beside the other forwarding helpers because the
+-- accent code below reads the same object for its declared colour, and a Lua
+-- local only exists for closures written after it.
 local function Source(sourceName)
     local libStub = _G.LibStub
     local ldb = libStub and libStub:GetLibrary("LibDataBroker-1.1", true)
     return ldb and ldb:GetDataObjectByName(sourceName) or nil
 end
+
+-- ---------------------------------------------------------------------------
+-- Accent colour
+-- ---------------------------------------------------------------------------
+-- Two letters carry very little on their own, so colour does the rest of the
+-- identifying. Each widget gets one, resolved in this order:
+--
+--   1. Yours, if you set one.
+--   2. The addon's own, if it declared iconR/iconG/iconB on its LibDataBroker
+--      object. That is the tint its author chose for its minimap icon, which is
+--      the closest thing to a brand colour that exists as DATA rather than as
+--      artwork.
+--   3. A hue hashed from the name, so everything has one.
+--
+-- There is deliberately no shipped table of brand colours, and no script that
+-- reads one out of addon source. Nothing in an addon declares "this is my
+-- colour" in any common shape -- colours live in per-feature tables, hex
+-- strings, class-colour lookups and textures, differently in every addon -- so
+-- a scan would return hundreds of unrelated literals per addon and the result
+-- would need checking by hand, which is a hand-made table with extra steps.
+--
+-- What IS extractable is (2), from the running client: "Dump colours" in the
+-- panel writes out what every addon actually declares. That output is the data
+-- table, built from the real source rather than guessed at, and anything it
+-- cannot answer for is a line you can fill in yourself.
+
+-- A hand-picked spread rather than evenly spaced hues, which produce muddy
+-- olives and near-blacks that read as broken next to a declared colour.
+local PALETTE = {
+    { 0.90, 0.36, 0.33 }, { 0.95, 0.57, 0.20 }, { 0.94, 0.79, 0.27 },
+    { 0.55, 0.80, 0.33 }, { 0.30, 0.78, 0.35 }, { 0.20, 0.80, 0.62 },
+    { 0.20, 0.74, 0.89 }, { 0.32, 0.58, 0.92 }, { 0.51, 0.47, 0.92 },
+    { 0.68, 0.42, 0.88 }, { 0.89, 0.40, 0.68 }, { 0.80, 0.55, 0.42 },
+}
+
+-- Position-weighted so shared prefixes land apart: a plain byte sum puts
+-- "Details" and "Deadly" on neighbouring entries, and neighbours in a bar
+-- matching is the one case that has to be avoided.
+local function PaletteColor(name)
+    local sum = 0
+    for i = 1, #name do sum = sum + name:byte(i) * i end
+    return PALETTE[(sum % #PALETTE) + 1]
+end
+
+local MIN_LUMA = 0.45
+
+-- A declared colour was chosen to sit on a bright icon, not to be read as text
+-- on a dark bar, so the whole colour is lifted until it clears a legibility
+-- floor. Hue and balance are kept. An unreadable label is a bug, not fidelity.
+local function Readable(r, g, b)
+    local luma = 0.299 * r + 0.587 * g + 0.114 * b
+    if luma >= MIN_LUMA or luma <= 0 then return r, g, b end
+    local lift = MIN_LUMA / luma
+    return math.min(1, r * lift), math.min(1, g * lift), math.min(1, b * lift)
+end
+
+local function ToHex(r, g, b)
+    return ("%02x%02x%02x"):format(r * 255 + 0.5, g * 255 + 0.5, b * 255 + 0.5)
+end
+
+-- The colour the addon declared, or nil. Custom commands have no author to ask.
+local function DeclaredHex(key)
+    if KeyIsCustom(key) or builtins[key] then return nil end
+    local obj = Source(key)
+    if type(obj) ~= "table" then return nil end
+    if not (obj.iconR or obj.iconG or obj.iconB) then return nil end
+    -- LibDBIcon's own defaulting: a partially declared colour fills the missing
+    -- channels with white, exactly as its Icon_UpdateIcon does.
+    return ToHex(Readable(obj.iconR or 1, obj.iconG or 1, obj.iconB or 1))
+end
+
+-- Sampled from each addon's own icon art by Tools\scan-addon-colors.ps1 -- the
+-- dominant saturated hue, weighted by saturation and binned by hue so a
+-- gradient stays one colour. Regenerate it by running that script; do not hand
+-- edit, put your own choices in the panel's colour editor instead.
+--
+-- IT IS SHORT, AND THAT IS NOT A BUG IN THE SCRIPT. Sampling needs the art to
+-- be a readable file in the AddOns folder, and for most addons it is not:
+-- eleven ship their icon as BLP, Blizzard's own format, which System.Drawing
+-- cannot read; and far more point their minimap icon at something like
+-- Interface\Icons\INV_Misc_Book_09, which lives in the game's archive and is
+-- not on disk at all. Nothing can sample a texture that is not a file. The
+-- runtime sources below cover what this cannot.
+local ADDON_ACCENTS = {
+    ["AniMods"] = "a43d0e",
+    ["EllesmereUI_WindTools"] = "62e6ef",
+    ["EUI_Kogotool"] = "2175f2",
+    ["STT"] = "af8b52",
+}
+
+-- A colour that is only correct while the game is running, so it cannot be a
+-- table entry. EllesmereUI's accent is a live setting the player changes, and
+-- AniMods already follows it everywhere else -- a widget opening EllesmereUI's
+-- settings in last week's accent would be the one thing in the suite that did
+-- not move with it.
+local function DynamicHex(key)
+    if key ~= "EllesmereUI" then return nil end
+    if not AniMods.AccentIsForeign() then return nil end
+    return ToHex(Readable(AniMods.W.ProviderAccent()))
+end
+
+local function AccentHex(key)
+    local own = ModuleDB().accents[key]
+    if type(own) == "string" and own:match("^%x%x%x%x%x%x$") then return own end
+    return DynamicHex(key)
+        or ADDON_ACCENTS[key]
+        or DeclaredHex(key)
+        or ToHex(unpack(PaletteColor(key)))
+end
+
+local function SetAccent(key, hex)
+    local db = ModuleDB()
+    if type(hex) == "string" and hex:match("^%x%x%x%x%x%x$") then
+        db.accents[key] = hex:lower()
+    else
+        db.accents[key] = nil
+    end
+end
+
+local function ColoredLabels()
+    return ModuleDB().colored ~= false
+end
+
+-- ---------------------------------------------------------------------------
+-- Forwarding
+-- ---------------------------------------------------------------------------
 
 -- `frame` is the display's own anchor -- the bar's widget frame, not ours. It
 -- is passed straight through so the addon's dropdown or tooltip opens against
@@ -375,7 +502,9 @@ end
 
 local function TextFor(key)
     if not (moduleEnabled and IsPublished(key)) then return "" end
-    return Label(key)
+    local label = Label(key)
+    if not ColoredLabels() then return label end
+    return ("|cff%s%s|r"):format(AccentHex(key), label)
 end
 
 local function RefreshText(key)
@@ -425,44 +554,103 @@ end
 -- Status panel
 -- ---------------------------------------------------------------------------
 
-local function CustomReport()
-    local lines = {}
-    for _, entry in ipairs(ModuleDB().custom) do
-        lines[#lines + 1] = (entry.label or "?") .. " = " .. (entry.command or "")
-    end
-    return table.concat(lines, "\n")
+local function HexToRGB(hex)
+    return tonumber(hex:sub(1, 2), 16) / 255,
+           tonumber(hex:sub(3, 4), 16) / 255,
+           tonumber(hex:sub(5, 6), 16) / 255
 end
 
--- One line per entry, "Label = /command". Rewritten wholesale rather than
--- edited row by row: the list is short, and a text box is the only editor that
--- lets you reorder, retitle and delete in one pass without a row of buttons per
--- entry.
-local function ApplyCustomReport(input)
+local function AddCustom()
     local db = ModuleDB()
-    local byLabel = {}
-    for _, entry in ipairs(db.custom) do byLabel[entry.label] = entry end
+    local entry = { id = NextCustomId(), label = "New", command = "/reload" }
+    db.custom[#db.custom + 1] = entry
+    -- Published on creation. A command you just wrote is one you want, and
+    -- making you tick it in a list immediately afterwards is a step that asks a
+    -- question you already answered.
+    SetPublished(CustomKey(entry.id), true)
+end
 
-    local kept = {}
-    for line in (input or ""):gmatch("[^\n]+") do
-        local label, command = line:match("^%s*(.-)%s*=%s*(.-)%s*$")
-        if label and label ~= "" and command and command ~= "" then
-            -- Matched by label so an unchanged line keeps its id, and with it
-            -- the widget already placed on your bar.
-            local existing = byLabel[label]
-            if existing then
-                existing.command = command
-                kept[#kept + 1] = existing
-            else
-                kept[#kept + 1] = { id = NextCustomId(), label = label, command = command }
-            end
+local function RemoveCustom(id)
+    local db = ModuleDB()
+    for i, entry in ipairs(db.custom) do
+        if entry.id == id then
+            table.remove(db.custom, i)
+            break
         end
     end
-    db.custom = kept
+    -- The widget cannot be taken back from LibDataBroker, so it is emptied, and
+    -- its label and colour go with the entry that defined them.
+    SetPublished(CustomKey(id), false)
+    SetLabel(CustomKey(id), nil)
+    SetAccent(CustomKey(id), nil)
+end
 
-    for _, entry in ipairs(kept) do
-        if IsPublished(CustomKey(entry.id)) then Publish(CustomKey(entry.id)) end
+-- Each published widget gets its own section, the way Data Bar gives a selected
+-- widget its own settings. An earlier version put every label in one text box
+-- and every colour in another, which meant editing one widget by rewriting a
+-- list of all of them -- and made the colour picker impossible, since a hex
+-- string typed into a text box is not a colour you can see.
+local function AppendWidgetSection(rows, source)
+    rows[#rows + 1] = { section = Label(source.key) }
+
+    rows[#rows + 1] = {
+        kind  = "input",
+        label = "Label",
+        get   = function() return Label(source.key) end,
+        set   = function(text) SetLabel(source.key, text); RefreshText(source.key) end,
+        help  = source.custom
+            and "What the widget shows on the bar."
+            or  "What the widget shows on the bar. Clear it to go back to the "
+             .. "abbreviation.",
+    }
+
+    if source.custom then
+        local id = CustomIdFromKey(source.key)
+        rows[#rows + 1] = {
+            kind  = "input",
+            label = "Command",
+            get   = function()
+                local entry = CustomById(id)
+                return entry and entry.command or ""
+            end,
+            set   = function(text)
+                local entry = CustomById(id)
+                if entry then entry.command = text end
+            end,
+            help  = "Anything you can type in chat, starting with a slash. It "
+                 .. "runs exactly as if you had typed it.",
+        }
     end
-    RefreshAll()
+
+    rows[#rows + 1] = {
+        color = true,
+        label = "Accent",
+        get   = function() return HexToRGB(AccentHex(source.key)) end,
+        set   = function(r, g, b)
+            SetAccent(source.key, ("%02x%02x%02x"):format(r * 255 + 0.5, g * 255 + 0.5, b * 255 + 0.5))
+            RefreshText(source.key)
+        end,
+        reset = function() SetAccent(source.key, nil); RefreshText(source.key) end,
+        help  = source.custom
+            and "Yours to pick -- a command has no author to inherit a colour "
+             .. "from and no icon to sample."
+            or  "Right-click to clear it and go back to what it resolves to on "
+             .. "its own: the addon's declared colour, a hue sampled from its "
+             .. "icon art, or a hue from its name.",
+    }
+
+    if source.custom then
+        rows[#rows + 1] = {
+            kind = "button", label = "Remove", button = "Remove",
+            help = "Deletes the entry. The widget itself cannot be taken back "
+                .. "from LibDataBroker, so it empties instead and leaves any "
+                .. "bar it was on.",
+            onClick = function()
+                RemoveCustom(CustomIdFromKey(source.key))
+                if AniMods.RefreshUI then AniMods.RefreshUI() end
+            end,
+        }
+    end
 end
 
 function PluginButtons:GetInfoRows()
@@ -491,60 +679,36 @@ function PluginButtons:GetInfoRows()
         onToggle  = function(key) SetPublished(key, not IsPublished(key)) end,
         summary   = ("%d of %d"):format(count, #sources),
         help      = "Each one published becomes a widget you can add in Data "
-                 .. "Bar (or any other LDB display). Only what you pick appears "
+                 .. "Bar (or any other LDB display), and gets its own section "
+                 .. "below to label and colour. Only what you pick appears "
                  .. "there, so the bar's own list stays short. Unpublishing "
                  .. "empties a widget rather than deleting it -- LibDataBroker "
                  .. "has no way to take a name back.",
     }
     rows[#rows + 1] = {
-        kind = "button", label = "Rename", button = "Edit",
-        help = "One line per widget, as \"Source = Label\". Set a label back to "
-            .. "the source's own name to clear the override.",
+        label = "Colored labels",
+        get   = ColoredLabels,
+        set   = function(v) ModuleDB().colored = v and true or false; RefreshAll() end,
+        help  = "Two letters carry very little on their own, so colour does the "
+             .. "rest of the identifying.",
+    }
+    rows[#rows + 1] = {
+        kind = "button", label = "Custom command", button = "Add",
+        help = "A widget that runs a slash command -- a reload button, a "
+            .. "toggle for something with no minimap icon of its own. It "
+            .. "appears below, published and ready to name.",
         onClick = function()
-            local lines = {}
-            for _, source in ipairs(sources) do
-                lines[#lines + 1] = source.key .. " = " .. Label(source.key)
-            end
-            AniMods.W.TextBox({
-                title    = "Widget labels",
-                action   = "Save",
-                text     = table.concat(lines, "\n"),
-                onAction = function(input)
-                    for line in (input or ""):gmatch("[^\n]+") do
-                        local key, label = line:match("^%s*(.-)%s*=%s*(.-)%s*$")
-                        if key and key ~= "" then SetLabel(key, label) end
-                    end
-                    RefreshAll()
-                    if AniMods.RefreshUI then AniMods.RefreshUI() end
-                end,
-            })
+            AddCustom()
+            if AniMods.RefreshUI then AniMods.RefreshUI() end
         end,
     }
 
-    rows[#rows + 1] = { section = "Custom commands" }
-    rows[#rows + 1] = {
-        kind = "button", label = "Edit the list", button = "Edit",
-        help = "One line per entry, as \"Label = /command\". Anything you can "
-            .. "type in chat works, and it runs exactly as if you had typed it. "
-            .. "A line whose label you leave alone keeps the widget you already "
-            .. "placed on the bar; delete the line to retire it.",
-        onClick = function()
-            AniMods.W.TextBox({
-                title    = "Custom command widgets",
-                action   = "Save",
-                text     = CustomReport(),
-                onAction = function(input)
-                    ApplyCustomReport(input)
-                    if AniMods.RefreshUI then AniMods.RefreshUI() end
-                end,
-            })
-        end,
-    }
-    rows[#rows + 1] = {
-        label = "Defined",
-        value = tostring(#ModuleDB().custom),
-        help  = "Each becomes a widget once you publish it above.",
-    }
+    -- Only what is published. An unpublished source has nothing to configure --
+    -- it is not a widget yet -- and a section per available addon would be
+    -- fourteen sections to find the two that matter.
+    for _, source in ipairs(sources) do
+        if IsPublished(source.key) then AppendWidgetSection(rows, source) end
+    end
 
     return rows
 end

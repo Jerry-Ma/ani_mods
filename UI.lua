@@ -746,6 +746,26 @@ local function BuildRow(parent, descriptor, sectionIndex, stripeIndex)
         AttachHelp(row, descriptor, label)
         return { kind = kind, widget = btn }, row, ROW_GAP
 
+    elseif kind == "input" then
+        local row = CreateFrame("Frame", nil, parent)
+        row:SetHeight(24)
+
+        local label = W.Font(row, 12, nil, W.TEXT_DIM_A)
+        label:SetPoint("LEFT", row, "LEFT", LABEL_X, 0)
+        label:SetText(descriptor.label or "")
+        ClampLabel(label, descriptor.help)
+
+        local input = W.Input(row, descriptor.width or CONTROL_WIDTH)
+        input.frame:SetPoint("LEFT", row, "LEFT", CONTROL_X, 0)
+        input:SetValue(descriptor.get())
+        input:SetOnCommit(function(text)
+            descriptor.set(text)
+            if AniMods.RefreshUI then AniMods.RefreshUI() end
+        end)
+
+        AttachHelp(row, descriptor, label)
+        return { kind = kind, widget = input }, row, ROW_GAP
+
     elseif kind == "color" then
         local row = CreateFrame("Frame", nil, parent)
         row:SetHeight(24)
