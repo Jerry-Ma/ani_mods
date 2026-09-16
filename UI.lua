@@ -746,6 +746,72 @@ local function BuildRow(parent, descriptor, sectionIndex, stripeIndex)
         AttachHelp(row, descriptor, label)
         return { kind = kind, widget = btn }, row, ROW_GAP
 
+    elseif kind == "widget" then
+        -- One line per configurable thing: what it is, what it shows, what
+        -- colour it shows it in. Three stacked rows per widget turned a list of
+        -- five into fifteen rows and put the label and the colour that applies
+        -- to it a centimetre apart vertically; side by side they read as one
+        -- setting, which is what they are.
+        local row = CreateFrame("Frame", nil, parent)
+        row:SetHeight(24)
+
+        local WIDGET_NAME_W, WIDGET_LABEL_W = 150, 110
+        local nameX = LABEL_X
+        local labelX = nameX + WIDGET_NAME_W + 8
+        local colorX = labelX + WIDGET_LABEL_W + 10
+        local removeX = colorX + 28
+
+        local c = { kind = kind }
+
+        -- The identity column. Static for an addon, whose name is not yours to
+        -- change; an input for a custom command, where the command IS what the
+        -- entry is and there is no other name for it.
+        if descriptor.nameGet then
+            local nameInput = W.Input(row, WIDGET_NAME_W)
+            nameInput.frame:SetPoint("LEFT", row, "LEFT", nameX, 0)
+            nameInput:SetValue(descriptor.nameGet())
+            nameInput:SetOnCommit(function(text) descriptor.nameSet(text) end)
+            c.nameInput = nameInput
+        else
+            local name = W.Font(row, 12, nil, W.TEXT_DIM_A)
+            name:SetPoint("LEFT", row, "LEFT", nameX, 0)
+            name:SetWidth(WIDGET_NAME_W)
+            name:SetJustifyH("LEFT")
+            name:SetWordWrap(false)
+            name:SetText(descriptor.name or "")
+            c.nameFS = name
+        end
+
+        local labelInput = W.Input(row, WIDGET_LABEL_W)
+        labelInput.frame:SetPoint("LEFT", row, "LEFT", labelX, 0)
+        labelInput:SetValue(descriptor.get())
+        labelInput:SetOnCommit(function(text)
+            descriptor.set(text)
+            if AniMods.RefreshUI then AniMods.RefreshUI() end
+        end)
+        c.widget = labelInput
+
+        local swatch = W.ColorSwatch(row, 18)
+        swatch.frame:SetPoint("LEFT", row, "LEFT", colorX, 0)
+        swatch:SetColor(descriptor.colorGet())
+        swatch:SetOnChange(function(r, g, b, a) descriptor.colorSet(r, g, b, a) end)
+        swatch:SetOnReset(function()
+            if descriptor.colorReset then descriptor.colorReset() end
+            swatch:SetColor(descriptor.colorGet())
+        end)
+        c.swatch = swatch
+
+        if descriptor.onRemove then
+            local remove = W.Button(row, 70, 20)
+            remove.frame:SetPoint("LEFT", row, "LEFT", removeX, 0)
+            remove:SetText("Remove")
+            remove:SetOnClick(descriptor.onRemove)
+            c.remove = remove
+        end
+
+        AttachHelp(row, descriptor, c.nameFS)
+        return c, row, ROW_GAP
+
     elseif kind == "input" then
         local row = CreateFrame("Frame", nil, parent)
         row:SetHeight(24)

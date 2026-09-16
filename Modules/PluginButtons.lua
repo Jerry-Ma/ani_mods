@@ -585,72 +585,58 @@ local function RemoveCustom(id)
     SetAccent(CustomKey(id), nil)
 end
 
--- Each published widget gets its own section, the way Data Bar gives a selected
--- widget its own settings. An earlier version put every label in one text box
--- and every colour in another, which meant editing one widget by rewriting a
--- list of all of them -- and made the colour picker impossible, since a hex
--- string typed into a text box is not a colour you can see.
-local function AppendWidgetSection(rows, source)
-    rows[#rows + 1] = { section = Label(source.key) }
+-- One row per published widget: what it is, what it shows, what colour it shows
+-- it in. Earlier versions put every label in one text box and every colour in
+-- another -- editing one widget meant rewriting a list of all of them, and a
+-- hex string typed into a text box is not a colour you can see. Then three
+-- stacked rows each, which put a label and the colour that applies to it a
+-- centimetre apart. Side by side they read as one setting, which is what
+-- they are.
+local function WidgetRow(source)
+    local id = source.custom and CustomIdFromKey(source.key) or nil
 
-    rows[#rows + 1] = {
-        kind  = "input",
-        label = "Label",
-        get   = function() return Label(source.key) end,
-        set   = function(text) SetLabel(source.key, text); RefreshText(source.key) end,
-        help  = source.custom
-            and "What the widget shows on the bar."
-            or  "What the widget shows on the bar. Clear it to go back to the "
-             .. "abbreviation.",
-    }
+    local row = {
+        kind = "widget",
+        get  = function() return Label(source.key) end,
+        set  = function(text) SetLabel(source.key, text); RefreshText(source.key) end,
 
-    if source.custom then
-        local id = CustomIdFromKey(source.key)
-        rows[#rows + 1] = {
-            kind  = "input",
-            label = "Command",
-            get   = function()
-                local entry = CustomById(id)
-                return entry and entry.command or ""
-            end,
-            set   = function(text)
-                local entry = CustomById(id)
-                if entry then entry.command = text end
-            end,
-            help  = "Anything you can type in chat, starting with a slash. It "
-                 .. "runs exactly as if you had typed it.",
-        }
-    end
-
-    rows[#rows + 1] = {
-        color = true,
-        label = "Accent",
-        get   = function() return HexToRGB(AccentHex(source.key)) end,
-        set   = function(r, g, b)
-            SetAccent(source.key, ("%02x%02x%02x"):format(r * 255 + 0.5, g * 255 + 0.5, b * 255 + 0.5))
+        colorGet = function() return HexToRGB(AccentHex(source.key)) end,
+        colorSet = function(r, g, b)
+            SetAccent(source.key,
+                ("%02x%02x%02x"):format(r * 255 + 0.5, g * 255 + 0.5, b * 255 + 0.5))
             RefreshText(source.key)
         end,
-        reset = function() SetAccent(source.key, nil); RefreshText(source.key) end,
-        help  = source.custom
-            and "Yours to pick -- a command has no author to inherit a colour "
-             .. "from and no icon to sample."
-            or  "Right-click to clear it and go back to what it resolves to on "
-             .. "its own: the addon's declared colour, a hue sampled from its "
-             .. "icon art, or a hue from its name.",
+        colorReset = function() SetAccent(source.key, nil); RefreshText(source.key) end,
     }
 
     if source.custom then
-        rows[#rows + 1] = {
-            kind = "button", label = "Remove", button = "Remove",
-            help = "Deletes the entry. The widget itself cannot be taken back "
-                .. "from LibDataBroker, so it empties instead and leaves any "
-                .. "bar it was on.",
-            onClick = function()
-                RemoveCustom(CustomIdFromKey(source.key))
-                if AniMods.RefreshUI then AniMods.RefreshUI() end
-            end,
-        }
+        -- The command IS the identity of a custom entry -- there is no other
+        -- name for it -- so it takes the column an addon spends on its name.
+        row.nameGet = function()
+            local entry = CustomById(id)
+            return entry and entry.command or ""
+        end
+        row.nameSet = function(text)
+            local entry = CustomById(id)
+            if entry then entry.command = text end
+        end
+        row.onRemove = function()
+            RemoveCustom(id)
+            if AniMods.RefreshUI then AniMods.RefreshUI() end
+        end
+        row.help = "The command runs exactly as if you had typed it in chat. "
+                .. "The colour is yours to pick: a command has no author to "
+                .. "inherit one from and no icon to sample."
+    else
+        row.name = source.key
+        row.help = "The label is what shows on the bar -- clear it to go back "
+                .. "to the abbreviation. Right-click the colour to clear it and "
+                .. "go back to what it resolves to on its own: the addon's "
+                .. "declared colour, a hue sampled from its icon art, or a hue "
+                .. "from its name."
     end
+
+    return row
 end
 
 function PluginButtons:GetInfoRows()
@@ -667,7 +653,14 @@ function PluginButtons:GetInfoRows()
             addonHeader = true
             items[#items + 1] = { header = true, text = "Addons" }
         end
-        items[#items + 1] = { key = source.key, text = Label(source.key) }
+        -- The abbreviation in its colour, then the full name. Picking from a
+        -- list of two-letter codes asks you to already know which is which; the
+        -- code is there as a PREVIEW of what the bar will show, and the name is
+        -- what you actually recognise.
+        items[#items + 1] = {
+            key  = source.key,
+            text = ("|cff%s%s|r  %s"):format(AccentHex(source.key), Label(source.key), source.name),
+        }
         if IsPublished(source.key) then count = count + 1 end
     end
 
@@ -704,10 +697,17 @@ function PluginButtons:GetInfoRows()
     }
 
     -- Only what is published. An unpublished source has nothing to configure --
-    -- it is not a widget yet -- and a section per available addon would be
-    -- fourteen sections to find the two that matter.
+    -- it is not a widget yet -- and a row per available addon would be fourteen
+    -- to find the two that matter.
+    local any = false
     for _, source in ipairs(sources) do
-        if IsPublished(source.key) then AppendWidgetSection(rows, source) end
+        if IsPublished(source.key) then
+            if not any then
+                any = true
+                rows[#rows + 1] = { section = "Published" }
+            end
+            rows[#rows + 1] = WidgetRow(source)
+        end
     end
 
     return rows
