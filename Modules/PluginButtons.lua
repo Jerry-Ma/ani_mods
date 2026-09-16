@@ -80,12 +80,14 @@ end
 local BUILTIN_SOURCES = {
     {
         name = "AniMods",
+        label = "/ani",
         Available = function() return type(AniMods.ToggleUI) == "function" end,
         OnClick = function() AniMods.ToggleUI() end,
         tip = "Open the AniMods panel.",
     },
     {
         name = "EllesmereUI",
+        label = "/eui",
         Available = function() return AniMods.IsAddOnLoaded("EllesmereUI") end,
         OnClick = function()
             -- The function first: it is a direct call, where the slash command
@@ -201,6 +203,63 @@ end
 -- Labels
 -- ---------------------------------------------------------------------------
 
+-- The slash command each addon registers for itself, from
+-- Tools\scan-addon-meta.ps1. It makes a far better label than any abbreviation
+-- we could invent: "/bw" and "/ns" are what you would TYPE to open the thing, so
+-- they are already the name you know it by, and the leading slash says at a
+-- glance that the widget is a way in rather than a readout.
+--
+-- Picked as the shortest command whose letters are a subsequence of the addon's
+-- name AND which starts with the same letter. An addon registers several and
+-- most are not its identity: MRT registers /rl for reload and /key for
+-- keystones, and "rt" is a subsequence of "mrt" that would have beaten "/mrt"
+-- on length alone.
+local ADDON_SLASH = {
+    ["!BugGrabber"] = "/buggrabber",
+    ["!KalielsTracker"] = "/kt",
+    ["AdvancedInterfaceOptions"] = "/aio",
+    ["AniMods"] = "/ani",
+    ["Auctionator"] = "/atr",
+    ["AutoItemMacro"] = "/aim",
+    ["AutoPotion"] = "/ap",
+    ["BigWigs"] = "/bw",
+    ["BugSack"] = "/bugsack",
+    ["Capping"] = "/capping",
+    ["Chattynator"] = "/ctnr",
+    ["ClickableRaidBuffs"] = "/crb",
+    ["CraftSim"] = "/cs",
+    ["DandersFrames"] = "/df",
+    ["Details"] = "/details",
+    ["EllesmereUI"] = "/eui",
+    ["EllesmereUIActionBars"] = "/eab",
+    ["EllesmereUICooldownManager"] = "/ecme",
+    ["EllesmereUIQuestTracker"] = "/eqt",
+    ["EllesmereUIResourceBars"] = "/erb",
+    ["EUI_Kogotool"] = "/euikogo",
+    ["Glider"] = "/glider",
+    ["GTFO"] = "/gtfo",
+    ["HandyNotes_MapNotes"] = "/mn",
+    ["HealerManaWatch"] = "/hmw",
+    ["KeystoneLoot"] = "/ksl",
+    ["LiteMount"] = "/lmt",
+    ["MiniAuras"] = "/minia",
+    ["MRT"] = "/mrt",
+    ["Myslot"] = "/myslot",
+    ["MythicDungeonTools"] = "/mdt",
+    ["NDui"] = "/ndui",
+    ["NDui_Plus"] = "/ndp",
+    ["NorthernSkyRaidTools"] = "/ns",
+    ["OPie"] = "/opie",
+    ["Platynator"] = "/platy",
+    ["Stats"] = "/st",
+    ["STT"] = "/st",
+    ["TomTom"] = "/tomtom",
+    ["TwintopInsanityBar"] = "/tt",
+    ["UltimateMouseCursor"] = "/umc",
+    ["VoidShieldHelper"] = "/vsh",
+    ["WorldQuestTracker"] = "/wqt",
+}
+
 local ABBREV_LEN = 2
 
 -- A data bar is a tight horizontal row, so a widget spends its width badly on
@@ -254,7 +313,13 @@ local function DefaultLabel(key)
         local entry = CustomById(CustomIdFromKey(key))
         return entry and entry.label or "?"
     end
-    return Abbreviate(key)
+    -- A builtin names its own, because the label has to match what clicking it
+    -- does: EllesmereUI's shortest self-referential command is /ee, which opens
+    -- its quick menu, while this widget opens its settings.
+    local builtin = builtins[key]
+    if builtin and builtin.label then return builtin.label end
+    -- The addon's own slash command, then initials as the last resort.
+    return ADDON_SLASH[key] or Abbreviate(key)
 end
 
 local function Label(key)
@@ -381,7 +446,18 @@ local ADDON_ACCENTS = {
 -- not move with it.
 local function DynamicHex(key)
     if key ~= "EllesmereUI" then return nil end
-    if not AniMods.AccentIsForeign() then return nil end
+    if not AniMods.IsAddOnLoaded("EllesmereUI") then return nil end
+    -- EllesmereUI's own accent, whatever it is set to right now. Asked for
+    -- directly rather than through W.ProviderAccent, which answers "the accent
+    -- AniMods is using" -- the same thing only while EllesmereUI is the
+    -- provider, and AniMods' own colour otherwise.
+    local eui = _G.EllesmereUI
+    if eui and type(eui.GetAccentColor) == "function" then
+        local ok, r, g, b = _G.pcall(eui.GetAccentColor)
+        if ok and type(r) == "number" and type(g) == "number" and type(b) == "number" then
+            return ToHex(Readable(r, g, b))
+        end
+    end
     return ToHex(Readable(AniMods.W.ProviderAccent()))
 end
 
@@ -624,16 +700,8 @@ local function WidgetRow(source)
             RemoveCustom(id)
             if AniMods.RefreshUI then AniMods.RefreshUI() end
         end
-        row.help = "The command runs exactly as if you had typed it in chat. "
-                .. "The colour is yours to pick: a command has no author to "
-                .. "inherit one from and no icon to sample."
     else
         row.name = source.key
-        row.help = "The label is what shows on the bar -- clear it to go back "
-                .. "to the abbreviation. Right-click the colour to clear it and "
-                .. "go back to what it resolves to on its own: the addon's "
-                .. "declared colour, a hue sampled from its icon art, or a hue "
-                .. "from its name."
     end
 
     return row
@@ -704,7 +772,22 @@ function PluginButtons:GetInfoRows()
         if IsPublished(source.key) then
             if not any then
                 any = true
+                -- The help lives on the section, said once, rather than as a
+                -- "?" on every row -- one per row is a column of question marks
+                -- down the middle of the list.
                 rows[#rows + 1] = { section = "Published" }
+                rows[#rows + 1] = {
+                    label = "Name, label, color",
+                    value = "",
+                    help  = "The middle column is what the widget shows on the "
+                         .. "bar; clear it to go back to the addon's own slash "
+                         .. "command. Right-click a color to clear it and go "
+                         .. "back to what it resolves to on its own: "
+                         .. "EllesmereUI's live accent, the addon's declared "
+                         .. "color, a hue sampled from its icon art, or a hue "
+                         .. "from its name. A custom entry's first column is "
+                         .. "its command, and it runs exactly as typed.",
+                }
             end
             rows[#rows + 1] = WidgetRow(source)
         end

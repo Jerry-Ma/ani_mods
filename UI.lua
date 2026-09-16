@@ -809,7 +809,9 @@ local function BuildRow(parent, descriptor, sectionIndex, stripeIndex)
             c.remove = remove
         end
 
-        AttachHelp(row, descriptor, c.nameFS)
+        -- No "?" marker. These rows come in a list, and one per row is a column
+        -- of question marks down the middle of it -- the help belongs on the
+        -- section that introduces them, where it is said once.
         return c, row, ROW_GAP
 
     elseif kind == "input" then

@@ -193,7 +193,60 @@ function Get-DeclaredHex {
     return $null
 }
 
+# The slash command an addon registers for itself, which makes a far better
+# widget label than any abbreviation: "/bw" and "/ns" are what you would type,
+# so they are already the name you know it by.
+#
+# An addon registers several, and most of them are not its identity -- MRT
+# registers /rl for reload and /key for keystones alongside /mrt. A command
+# counts only if its letters are a SUBSEQUENCE of the addon's name: /bw fits
+# BigWigs, /ns fits NorthernSkyRaidTools, /ksl fits KeystoneLoot, while /rl does
+# not fit MRT and /key does not fit Details. Shortest of the survivors wins,
+# because that is the alias the author made for exactly this purpose.
+function Test-Subsequence {
+    param([string] $Needle, [string] $Haystack)
+    $i = 0
+    foreach ($ch in $Haystack.ToCharArray()) {
+        if ($i -lt $Needle.Length -and $ch -eq $Needle[$i]) { $i++ }
+    }
+    return $i -eq $Needle.Length
+}
+
+function Get-SlashCommand {
+    param([System.IO.DirectoryInfo] $AddonDir)
+
+    $name = ($AddonDir.Name -replace '[^A-Za-z0-9]', '').ToLowerInvariant()
+    if (-not $name) { return $null }
+
+    $files = Get-ChildItem -Path $AddonDir.FullName -Filter '*.lua' -File -Recurse -ErrorAction SilentlyContinue |
+        Select-Object -First 400
+    if (-not $files) { return $null }
+
+    $found = @{}
+    foreach ($file in $files) {
+        $hits = Select-String -Path $file.FullName -Pattern 'SLASH_\w+\d+\s*=\s*"(/[^"]+)"' -AllMatches -ErrorAction SilentlyContinue
+        foreach ($hit in $hits) {
+            foreach ($m in $hit.Matches) {
+                $cmd = $m.Groups[1].Value.ToLowerInvariant()
+                if ($cmd -match '^/[a-z0-9]+$') { $found[$cmd] = $true }
+            }
+        }
+    }
+
+    $best = $null
+    foreach ($cmd in $found.Keys) {
+        $letters = $cmd.Substring(1)
+        # Must start where the name starts. "rt" is a subsequence of "mrt" and
+        # would beat "/mrt" on length, but nobody reads /rt as MRT.
+        if ($letters[0] -ne $name[0]) { continue }
+        if (-not (Test-Subsequence -Needle $letters -Haystack $name)) { continue }
+        if (-not $best -or $cmd.Length -lt $best.Length) { $best = $cmd }
+    }
+    return $best
+}
+
 $results = @()
+$slashes = @()
 $skippedBlp = @()
 $noIcon = @()
 
@@ -221,8 +274,25 @@ Get-ChildItem -Path $AddOnsPath -Directory | Sort-Object Name | ForEach-Object {
         if ($hex) { $from = 'source' }
     }
 
+    # A near-black or near-white "theme colour" is a background, not a brand.
+    # The source probe is the one that finds these -- an author calls the panel
+    # backdrop themeColor as readily as the highlight -- and shipping one means
+    # shipping a label nobody can read.
+    if ($hex -and $from -eq 'source') {
+        $r = [Convert]::ToInt32($hex.Substring(0, 2), 16)
+        $g = [Convert]::ToInt32($hex.Substring(2, 2), 16)
+        $b = [Convert]::ToInt32($hex.Substring(4, 2), 16)
+        $luma = (0.299 * $r + 0.587 * $g + 0.114 * $b) / 255.0
+        if ($luma -lt 0.18 -or $luma -gt 0.95) { $hex = $null }
+    }
+
     if ($hex) {
         $results += [pscustomobject]@{ Addon = $addon.Name; Hex = $hex; From = $from }
+    }
+
+    $slash = Get-SlashCommand -AddonDir $addon
+    if ($slash) {
+        $slashes += [pscustomobject]@{ Addon = $addon.Name; Slash = $slash }
     }
 }
 
@@ -236,7 +306,16 @@ foreach ($row in $results) {
 Write-Output "}"
 
 Write-Output ""
-Write-Output ("-- {0} addons resolved." -f $results.Count)
+Write-Output "-- The slash command each addon registers for itself, picked as the"
+Write-Output "-- shortest whose letters are a subsequence of the addon's name."
+Write-Output "local ADDON_SLASH = {"
+foreach ($row in $slashes) {
+    Write-Output ('    ["{0}"] = "{1}",' -f $row.Addon, $row.Slash)
+}
+Write-Output "}"
+
+Write-Output ""
+Write-Output ("-- {0} colours, {1} slash commands." -f $results.Count, $slashes.Count)
 if ($skippedBlp.Count -gt 0) {
     Write-Output ("-- BLP icons, not readable here: {0}" -f ($skippedBlp -join ', '))
 }
