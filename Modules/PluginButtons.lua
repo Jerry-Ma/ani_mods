@@ -28,6 +28,10 @@
 -- Objects are registered ONCE for every button found and never removed:
 -- LibDataBroker has no unregister, and a name can only be claimed once. Which of
 -- them you actually display is the bar's business, not this module's.
+--
+-- Two sources are named rather than discovered -- AniMods and EllesmereUI, whose
+-- minimap buttons are hand-rolled rather than LibDBIcon's, so neither appears in
+-- GetButtonList. See BUILTIN_SOURCES for why that list is curated.
 
 local AniMods = _G.AniMods
 local Broker = AniMods.Broker
@@ -47,6 +51,62 @@ local OBJECT_PREFIX = "AniModsClick_"
 -- name -> { object = ldbObject, source = sourceName }
 local proxies = {}
 local moduleEnabled = true
+
+-- ---------------------------------------------------------------------------
+-- Sources that are not LibDBIcon buttons
+-- ---------------------------------------------------------------------------
+-- LibDBIcon does not own every addon button on the minimap. AniMods' own is
+-- hand-rolled (General.lua says why -- one button does not justify the library),
+-- and EllesmereUI opens its options from its own chrome, so neither appears in
+-- GetButtonList and neither could be proxied by the scan alone.
+--
+-- Curated rather than discovered. A generic sweep of Minimap's children would
+-- find these two and also every piece of furniture around them -- the zoom
+-- buttons, the tracking button, EllesmereUI's own flyout toggle and indicator
+-- row -- and telling a plugin button from a decoration by shape is the kind of
+-- guessing that produces a widget nobody asked for. A named list of two is
+-- honest about being a list of two.
+--
+-- This is also the shape a user-defined command widget takes: a name, a test
+-- for whether it applies, and something to run.
+local function RunSlash(command, handlerKey)
+    local handler = _G.SlashCmdList and _G.SlashCmdList[handlerKey]
+    if type(handler) == "function" then
+        handler("")
+        return true
+    end
+    -- Nothing to fall back to: a slash command is registered by the addon that
+    -- owns it, so a missing handler means the addon is not there to open.
+    AniMods.Print(("Nothing is handling %s right now."):format(command))
+    return false
+end
+
+local BUILTIN_SOURCES = {
+    {
+        name = "AniMods",
+        Available = function() return type(AniMods.ToggleUI) == "function" end,
+        OnClick = function() AniMods.ToggleUI() end,
+        tip = "Open the AniMods panel.",
+    },
+    {
+        name = "EllesmereUI",
+        Available = function() return AniMods.IsAddOnLoaded("EllesmereUI") end,
+        OnClick = function()
+            -- The function first: it is a direct call, where the slash command
+            -- goes back through the chat parser to reach the same place.
+            local eui = _G.EllesmereUI
+            if eui and type(eui.OpenConfig) == "function" then
+                eui.OpenConfig()
+                return
+            end
+            RunSlash("/eui", "EUIOPTIONS")
+        end,
+        tip = "Open EllesmereUI's settings.",
+    },
+}
+
+local builtins = {}
+for _, spec in ipairs(BUILTIN_SOURCES) do builtins[spec.name] = spec end
 
 local function ModuleDB()
     AniModsDB.pluginButtons = AniModsDB.pluginButtons or {}
@@ -74,6 +134,11 @@ end
 -- is passed straight through so the addon's dropdown or tooltip opens against
 -- the thing that was clicked, which is the whole point of a proxy.
 local function ForwardClick(sourceName, frame, mouseButton)
+    local builtin = builtins[sourceName]
+    if builtin then
+        _G.xpcall(builtin.OnClick, _G.geterrorhandler())
+        return
+    end
     local obj = Source(sourceName)
     if not (obj and type(obj.OnClick) == "function") then return end
     -- xpcall, not a bare call: this runs another addon's handler from inside
@@ -87,6 +152,15 @@ end
 -- GameTooltip. Whichever the source has is the one forwarded; a source with
 -- neither gets a plain line naming it, so the widget is never silent on hover.
 local function ForwardEnter(sourceName, frame)
+    local builtin = builtins[sourceName]
+    if builtin then
+        _G.GameTooltip:SetOwner(frame, "ANCHOR_NONE")
+        _G.GameTooltip:SetPoint("BOTTOM", frame, "TOP", 0, 6)
+        _G.GameTooltip:AddLine(sourceName, 1, 1, 1)
+        if builtin.tip then _G.GameTooltip:AddLine(builtin.tip, 0.7, 0.7, 0.7) end
+        _G.GameTooltip:Show()
+        return
+    end
     local obj = Source(sourceName)
     if obj and type(obj.OnEnter) == "function" then
         _G.xpcall(obj.OnEnter, _G.geterrorhandler(), frame)
@@ -103,6 +177,7 @@ local function ForwardEnter(sourceName, frame)
 end
 
 local function ForwardLeave(sourceName, frame)
+    if builtins[sourceName] then _G.GameTooltip:Hide() return end
     local obj = Source(sourceName)
     if obj and type(obj.OnLeave) == "function" then
         _G.xpcall(obj.OnLeave, _G.geterrorhandler(), frame)
@@ -173,10 +248,30 @@ end
 
 -- Sorted, so what the panel lists is stable between openings: LibDBIcon builds
 -- its list by walking a hash, which hands back a different order every call.
+--
+-- Deduplicated by name, because an addon may be in both lists -- a curated
+-- entry here and a LibDBIcon button of its own -- and a second proxy for the
+-- same thing would only be a second name for one widget.
 local function SourceNames()
+    local seen, names = {}, {}
+
+    for _, spec in ipairs(BUILTIN_SOURCES) do
+        if spec.Available() then
+            seen[spec.name] = true
+            names[#names + 1] = spec.name
+        end
+    end
+
     local icons = LDBIcon()
-    if not icons then return {} end
-    local names = icons:GetButtonList()
+    if icons then
+        for _, name in ipairs(icons:GetButtonList()) do
+            if not seen[name] then
+                seen[name] = true
+                names[#names + 1] = name
+            end
+        end
+    end
+
     table.sort(names)
     return names
 end
@@ -221,9 +316,11 @@ function PluginButtons:GetInfoRows()
     rows[#rows + 1] = {
         label = "LibDBIcon present",
         state = icons and true or false,
-        help  = "The library that owns addon minimap buttons. Without it there "
-             .. "is nothing to proxy -- not a failure, just an install with no "
-             .. "addon buttons on the minimap.",
+        help  = "The library that owns most addon minimap buttons. Without it "
+             .. "only the named sources are proxied -- AniMods and "
+             .. "EllesmereUI, whose buttons are their own rather than "
+             .. "LibDBIcon's -- which is an install with no addon buttons on "
+             .. "the minimap, not a failure.",
     }
 
     local published = 0
