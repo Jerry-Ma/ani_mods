@@ -30,7 +30,7 @@
     Pixels below this saturation are treated as neutral and ignored entirely.
 
 .EXAMPLE
-    .\scan-addon-colors.ps1 | Set-Clipboard
+    .\scan-addon-meta.ps1 | Set-Clipboard
 #>
 [CmdletBinding()]
 param(
@@ -90,62 +90,194 @@ function Get-IconCandidate {
     return $null
 }
 
+# BLP2, Blizzard's own texture format, which System.Drawing knows nothing about.
+# Most addon icons are in it -- including NorthernSkyRaidTools' -- so without
+# this the sampler misses exactly the addons whose colour anyone would notice.
+#
+# Header: magic(4) type(4) encoding(1) alphaDepth(1) alphaEncoding(1) hasMips(1)
+# width(4) height(4) mipOffsets(16*4) mipSizes(16*4), so mip 0's data starts at
+# the offset stored at byte 20. Three encodings appear in practice:
+#
+#   3  uncompressed BGRA, read straight out
+#   1  palettised: 256 BGRA entries follow the 148-byte header, then one index
+#      per pixel
+#   2  DXT, where only the two RGB565 ENDPOINTS of each 4x4 block are read
+#      rather than decoding the block properly. For a hue histogram that is the
+#      right granularity anyway -- the endpoints ARE the colours the block is
+#      built from -- and it skips implementing index unpacking and
+#      interpolation for no gain in the answer.
+function Get-BlpColors {
+    param([string] $Path)
+
+    try { $b = [IO.File]::ReadAllBytes($Path) } catch { return @() }
+    if ($b.Length -lt 148) { return @() }
+    if ([Text.Encoding]::ASCII.GetString($b, 0, 4) -ne 'BLP2') { return @() }
+
+    $enc       = $b[8]
+    $alphaEnc  = $b[10]
+    $width     = [BitConverter]::ToUInt32($b, 12)
+    $height    = [BitConverter]::ToUInt32($b, 16)
+    $mipOffset = [BitConverter]::ToUInt32($b, 20)
+    $mipSize   = [BitConverter]::ToUInt32($b, 84)
+    if ($mipOffset -le 0 -or $mipSize -le 0 -or ($mipOffset + $mipSize) -gt $b.Length) { return @() }
+
+    $colors = New-Object System.Collections.ArrayList
+
+    if ($enc -eq 3) {
+        $step = [Math]::Max(1, [int](($width * $height) / 16384)) * 4
+        for ($i = 0; $i -lt $mipSize - 3; $i += $step) {
+            $o = $mipOffset + $i
+            $a = $b[$o + 3]
+            if ($a -lt 128) { continue }
+            [void]$colors.Add([System.Drawing.Color]::FromArgb($a, $b[$o + 2], $b[$o + 1], $b[$o]))
+        }
+        return $colors
+    }
+
+    if ($enc -eq 1) {
+        # Palette sits between the header and the first mip.
+        for ($i = 0; $i -lt $mipSize; $i++) {
+            $idx = $b[$mipOffset + $i]
+            $p = 148 + $idx * 4
+            if ($p + 3 -ge $b.Length) { continue }
+            [void]$colors.Add([System.Drawing.Color]::FromArgb(255, $b[$p + 2], $b[$p + 1], $b[$p]))
+        }
+        return $colors
+    }
+
+    if ($enc -ne 2) { return @() }
+
+    # DXT1 is 8 bytes a block and starts with the colour pair; DXT3 and DXT5 are
+    # 16 and put 8 bytes of alpha first.
+    $blockSize  = if ($alphaEnc -eq 0) { 8 } else { 16 }
+    $colorStart = if ($alphaEnc -eq 0) { 0 } else { 8 }
+
+    for ($o = $mipOffset; $o -le $mipOffset + $mipSize - $blockSize; $o += $blockSize) {
+        # A block whose alpha endpoints are both zero is fully transparent --
+        # background, and its colour endpoints are usually black, which would
+        # drag the histogram toward a colour that is not on screen.
+        if ($alphaEnc -eq 7 -and $b[$o] -eq 0 -and $b[$o + 1] -eq 0) { continue }
+
+        $c = $o + $colorStart
+        foreach ($which in 0, 2) {
+            $packed = [BitConverter]::ToUInt16($b, $c + $which)
+            # RGB565 expanded so full-scale stays full-scale: a plain shift
+            # leaves white at 248 and tints every bright colour.
+            $r = (($packed -shr 11) -band 0x1F); $r = ($r * 255 + 15) / 31
+            $g = (($packed -shr 5) -band 0x3F);  $g = ($g * 255 + 31) / 63
+            $bl = ($packed -band 0x1F);          $bl = ($bl * 255 + 15) / 31
+            [void]$colors.Add([System.Drawing.Color]::FromArgb(255, [int]$r, [int]$g, [int]$bl))
+        }
+    }
+    return $colors
+}
+
+# The hue histogram itself, over whatever pixels it is handed.
+function Get-DominantFromColors {
+    param($Colors, [double] $MinSaturation, [double] $MinValue)
+
+    # 24 hue bins of 15 degrees. Fine enough to keep cyan and blue apart,
+    # coarse enough that a gradient stays one colour.
+    $bins = New-Object 'double[]' 24
+    $sumR = New-Object 'double[]' 24
+    $sumG = New-Object 'double[]' 24
+    $sumB = New-Object 'double[]' 24
+
+    foreach ($c in $Colors) {
+        $sat = $c.GetSaturation()
+        $val = $c.GetBrightness()
+        if ($sat -lt $MinSaturation) { continue }   # grey: background or outline
+        if ($val -lt $MinValue) { continue }        # near-black: shadow
+
+        # Weighted by saturation, so a vivid core outweighs a washed-out halo
+        # of the same hue.
+        $bin = [int]([Math]::Floor($c.GetHue() / 15.0)) % 24
+        $bins[$bin] += $sat
+        $sumR[$bin] += $c.R * $sat
+        $sumG[$bin] += $c.G * $sat
+        $sumB[$bin] += $c.B * $sat
+    }
+
+    $best = -1
+    $bestWeight = 0.0
+    for ($i = 0; $i -lt 24; $i++) {
+        if ($bins[$i] -gt $bestWeight) { $bestWeight = $bins[$i]; $best = $i }
+    }
+    if ($best -lt 0) { return $null }   # no saturated pixels at all: a grey icon
+
+    return ('{0:x2}{1:x2}{2:x2}' -f
+        [int][Math]::Round($sumR[$best] / $bins[$best]),
+        [int][Math]::Round($sumG[$best] / $bins[$best]),
+        [int][Math]::Round($sumB[$best] / $bins[$best]))
+}
+
 function Get-DominantHex {
     param([string] $Path, [double] $MinSaturation, [double] $MinValue)
 
     $ext = [System.IO.Path]::GetExtension($Path).ToLowerInvariant()
-    if ($ext -eq '.blp') { return $null }   # not readable here; reported by the caller
+    if ($ext -eq '.blp') {
+        $colors = Get-BlpColors -Path $Path
+        if (-not $colors -or $colors.Count -eq 0) { return $null }
+        return Get-DominantFromColors -Colors $colors -MinSaturation $MinSaturation -MinValue $MinValue
+    }
 
     try { $bitmap = [System.Drawing.Bitmap]::FromFile($Path) } catch { return $null }
 
     try {
-        # 24 hue bins of 15 degrees. Fine enough to keep cyan and blue apart,
-        # coarse enough that a gradient stays one colour.
-        $bins = New-Object 'double[]' 24
-        $sumR = New-Object 'double[]' 24
-        $sumG = New-Object 'double[]' 24
-        $sumB = New-Object 'double[]' 24
-
         # Big icons are sampled on a grid rather than read whole: a 512px icon is
         # a quarter-million pixels and the answer does not change.
         $stepX = [Math]::Max(1, [int]($bitmap.Width / 128))
         $stepY = [Math]::Max(1, [int]($bitmap.Height / 128))
 
+        $colors = New-Object System.Collections.ArrayList
         for ($y = 0; $y -lt $bitmap.Height; $y += $stepY) {
             for ($x = 0; $x -lt $bitmap.Width; $x += $stepX) {
                 $c = $bitmap.GetPixel($x, $y)
-                if ($c.A -lt 128) { continue }          # transparent: not part of the art
-
-                $sat = $c.GetSaturation()
-                $val = $c.GetBrightness()
-                if ($sat -lt $MinSaturation) { continue }   # grey: background or outline
-                if ($val -lt $MinValue) { continue }        # near-black: shadow
-
-                # Weighted by saturation, so a vivid core outweighs a washed-out
-                # halo of the same hue.
-                $bin = [int]([Math]::Floor($c.GetHue() / 15.0)) % 24
-                $bins[$bin] += $sat
-                $sumR[$bin] += $c.R * $sat
-                $sumG[$bin] += $c.G * $sat
-                $sumB[$bin] += $c.B * $sat
+                if ($c.A -lt 128) { continue }   # transparent: not part of the art
+                [void]$colors.Add($c)
             }
         }
-
-        $best = -1
-        $bestWeight = 0.0
-        for ($i = 0; $i -lt 24; $i++) {
-            if ($bins[$i] -gt $bestWeight) { $bestWeight = $bins[$i]; $best = $i }
-        }
-        if ($best -lt 0) { return $null }   # no saturated pixels at all: a grey icon
-
-        $r = [int][Math]::Round($sumR[$best] / $bins[$best])
-        $g = [int][Math]::Round($sumG[$best] / $bins[$best])
-        $b = [int][Math]::Round($sumB[$best] / $bins[$best])
-        return ('{0:x2}{1:x2}{2:x2}' -f $r, $g, $b)
+        return Get-DominantFromColors -Colors $colors -MinSaturation $MinSaturation -MinValue $MinValue
     }
     finally {
         $bitmap.Dispose()
     }
+}
+
+# The colour an addon prints its OWN NAME in.
+#
+# This is the best signal there is, and it beats sampling the icon: it is the
+# addon stating, in its own code, which colour represents it -- where an icon has
+# to be measured and guessed at. NorthernSkyRaidTools prints
+# "|cFF00FFFFNSRT|r", and that pure cyan is the same colour its icon is drawn
+# in, arrived at without decoding anything.
+#
+# The match is what makes it reliable. A colour escape alone means nothing --
+# addons colour every noun they print -- so the text inside the escape has to BE
+# the addon: its name, or its initials. "|cFF00FFFFNSRT|r" counts;
+# "|cFF00FFFF"..groupNumber.."|r" two lines below it does not.
+function Get-PrefixHex {
+    param([System.IO.DirectoryInfo] $AddonDir)
+
+    $alnum = ($AddonDir.Name -replace '[^A-Za-z0-9]', '').ToLowerInvariant()
+    $initials = ((([regex]::Matches($AddonDir.Name, '[A-Z]')) | ForEach-Object { $_.Value }) -join '').ToLowerInvariant()
+
+    $files = Get-ChildItem -Path $AddonDir.FullName -Filter '*.lua' -File -Recurse -ErrorAction SilentlyContinue |
+        Select-Object -First 400
+    foreach ($file in $files) {
+        $hits = Select-String -Path $file.FullName `
+            -Pattern '\|c[fF][fF]([0-9a-fA-F]{6})([A-Za-z0-9 !\-]{2,20})\|r' -AllMatches -ErrorAction SilentlyContinue
+        foreach ($hit in $hits) {
+            foreach ($m in $hit.Matches) {
+                $label = ($m.Groups[2].Value -replace '[^A-Za-z0-9]', '').ToLowerInvariant()
+                if (-not $label) { continue }
+                if ($label -eq $alnum -or ($initials.Length -ge 2 -and $label -eq $initials)) {
+                    return $m.Groups[1].Value.ToLowerInvariant()
+                }
+            }
+        }
+    }
+    return $null
 }
 
 # A colour the addon NAMES as its own, read out of its source.
@@ -255,30 +387,38 @@ Get-ChildItem -Path $AddOnsPath -Directory | Sort-Object Name | ForEach-Object {
     $hex = $null
     $from = $null
 
-    # The art first: it is what the player actually associates with the addon,
-    # where a named constant is only what its author called something.
-    $icon = Get-IconCandidate -AddonDir $addon
-    if ($icon) {
-        if ([System.IO.Path]::GetExtension($icon).ToLowerInvariant() -eq '.blp') {
-            $skippedBlp += $addon.Name
-        } else {
-            $hex = Get-DominantHex -Path $icon -MinSaturation $MinSaturation -MinValue $MinValue
-            if ($hex) { $from = 'icon' }
-        }
-    } else {
-        $noIcon += $addon.Name
-    }
+    # The addon's own code first, art second. A colour written in source is the
+    # addon SAYING which colour it is; a colour sampled from art is us measuring
+    # and inferring. Where both exist they agree -- NorthernSkyRaidTools prints
+    # 00ffff and its icon samples 00f6f7 -- which is the reassuring case, not the
+    # interesting one; where they differ, the statement wins.
+    $hex = Get-PrefixHex -AddonDir $addon
+    if ($hex) { $from = 'prefix' }
 
     if (-not $hex) {
         $hex = Get-DeclaredHex -AddonDir $addon
-        if ($hex) { $from = 'source' }
+        if ($hex) { $from = 'named' }
+    }
+
+    $icon = Get-IconCandidate -AddonDir $addon
+    if (-not $hex) {
+        if ($icon) {
+            $hex = Get-DominantHex -Path $icon -MinSaturation $MinSaturation -MinValue $MinValue
+            if ($hex) {
+                $from = 'icon'
+            } elseif ([System.IO.Path]::GetExtension($icon).ToLowerInvariant() -eq '.blp') {
+                $skippedBlp += $addon.Name
+            }
+        } else {
+            $noIcon += $addon.Name
+        }
     }
 
     # A near-black or near-white "theme colour" is a background, not a brand.
     # The source probe is the one that finds these -- an author calls the panel
     # backdrop themeColor as readily as the highlight -- and shipping one means
     # shipping a label nobody can read.
-    if ($hex -and $from -eq 'source') {
+    if ($hex -and $from -ne 'icon') {
         $r = [Convert]::ToInt32($hex.Substring(0, 2), 16)
         $g = [Convert]::ToInt32($hex.Substring(2, 2), 16)
         $b = [Convert]::ToInt32($hex.Substring(4, 2), 16)
@@ -296,12 +436,12 @@ Get-ChildItem -Path $AddOnsPath -Directory | Sort-Object Name | ForEach-Object {
     }
 }
 
-Write-Output "-- Generated by Tools\scan-addon-colors.ps1 -- do not hand-edit."
-Write-Output "-- Each value is the dominant saturated hue of that addon's own icon art."
+Write-Output "-- Generated by Tools\scan-addon-meta.ps1 -- do not hand-edit."
+Write-Output "-- Source of each value is noted: what the addon prints its own name in,"
+Write-Output "-- a constant it names as its identity, or the dominant hue of its icon."
 Write-Output "local ADDON_ACCENTS = {"
 foreach ($row in $results) {
-    Write-Output ('    ["{0}"] = "{1}",{2}' -f $row.Addon, $row.Hex,
-        $(if ($row.From -eq 'source') { '  -- named in its own source' } else { '' }))
+    Write-Output ('    ["{0}"] = "{1}",  -- {2}' -f $row.Addon, $row.Hex, $row.From)
 }
 Write-Output "}"
 

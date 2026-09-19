@@ -81,6 +81,10 @@ local BUILTIN_SOURCES = {
     {
         name = "AniMods",
         label = "/ani",
+        -- Our own, so we know it rather than inferring it: the orange in the
+        -- icon. The scanner would pick the blue this addon prints its chat
+        -- prefix in, which is a habit rather than an identity.
+        accent = "a43d0e",
         Available = function() return type(AniMods.ToggleUI) == "function" end,
         OnClick = function() AniMods.ToggleUI() end,
         tip = "Open the AniMods panel.",
@@ -427,23 +431,68 @@ local function DeclaredHex(key)
     return ToHex(Readable(obj.iconR or 1, obj.iconG or 1, obj.iconB or 1))
 end
 
--- Sampled from each addon's own icon art by Tools\scan-addon-colors.ps1 -- the
--- dominant saturated hue, weighted by saturation and binned by hue so a
--- gradient stays one colour. Regenerate it by running that script; do not hand
--- edit, put your own choices in the panel's colour editor instead.
+-- Built by Tools\scan-addon-meta.ps1. Do not hand-edit -- regenerate it, and put
+-- your own choices in the panel, where they persist as overrides.
 --
--- IT IS SHORT, AND THAT IS NOT A BUG IN THE SCRIPT. Sampling needs the art to
--- be a readable file in the AddOns folder, and for most addons it is not:
--- eleven ship their icon as BLP, Blizzard's own format, which System.Drawing
--- cannot read; and far more point their minimap icon at something like
--- Interface\Icons\INV_Misc_Book_09, which lives in the game's archive and is
--- not on disk at all. Nothing can sample a texture that is not a file. The
--- runtime sources below cover what this cannot.
+-- Three sources, in this order. The addon's own CODE first, its art second: a
+-- colour written in source is the addon saying which colour it is, where a
+-- colour sampled from art is us measuring and inferring.
+--
+--   prefix  The colour it prints its own name in -- NorthernSkyRaidTools has
+--           print("|cFF00FFFFNSRT|r ..."), so its accent is that cyan. The
+--           best signal there is, and the match is what makes it safe: the text
+--           inside the escape has to BE the addon's name or initials, or every
+--           coloured noun an addon prints would qualify.
+--   named   A constant whose variable name claims the colour is the addon's
+--           identity: accent, brand, theme, primary.
+--   icon    The dominant saturated hue of its icon art, weighted by saturation
+--           and binned by hue so a gradient stays one colour.
+--
+-- Where both code and art answer they agree -- NorthernSkyRaidTools prints
+-- 00ffff and its icon samples 00f6f7 -- which is the reassuring case rather
+-- than the interesting one.
 local ADDON_ACCENTS = {
-    ["AniMods"] = "a43d0e",
+    ["!BugGrabber"] = "ffff00",
+    ["AutoItemMacro"] = "ffff00",
+    ["BigWigs"] = "33ff99",
+    ["BugSack"] = "ff4411",
+    ["Capping"] = "33ff99",
+    ["ClickableRaidBuffs"] = "00ccff",
+    ["DandersFrames"] = "66ccff",
+    ["DandersFrames_Options"] = "ffd100",
+    ["Details"] = "00eeee",
     ["EllesmereUI_WindTools"] = "62e6ef",
-    ["EUI_Kogotool"] = "2175f2",
-    ["STT"] = "af8b52",
+    ["EllesmereUIOptions"] = "0dd19e",
+    ["EllesmereUIRaidFrames"] = "0dd19e",
+    ["EUI_Kogotool"] = "ffcc33",
+    ["ExwindCore"] = "a330c9",
+    ["HandyNotes_MapNotes"] = "dc0e0c",
+    ["KeystoneLoot"] = "9d5db8",
+    ["M33kAuras"] = "8800ff",
+    ["MeetingStone"] = "44a7e7",
+    ["MiniAuras"] = "ba9a4f",
+    ["MRT"] = "ffff00",
+    ["Myslot"] = "ffd100",
+    ["MythicPlusUtility"] = "29989d",
+    ["NDui"] = "0080ff",
+    ["NDui_Plus"] = "f0cc79",
+    ["NorthernSkyRaidTools"] = "00ffff",
+    ["OPie"] = "0080ff",
+    ["RaiderIO"] = "e6a52c",
+    ["RCLootCouncil"] = "87cefa",
+    ["RCLootCouncil_EPGP"] = "ffcc00",
+    ["SavedInstances"] = "ff0000",
+    ["STT"] = "00ff00",
+    ["STT_TeamListMonitor"] = "eba60d",
+    ["TomTom"] = "ffff78",
+    ["WarpDeplete"] = "3b93c2",
+    ["WeakAuras"] = "f7fbf7",
+    ["WorldQuestTracker"] = "ffaa00",
+    -- AniMods and EllesmereUI are deliberately absent: both are named sources
+    -- below and carry their own accent, which is not what the scanner would
+    -- pick for either. AniMods prints its chat prefix in blue while its
+    -- identity is the orange in its icon, and EllesmereUI's is a live setting
+    -- rather than a constant.
 }
 
 -- A colour that is only correct while the game is running, so it cannot be a
@@ -471,7 +520,9 @@ end
 local function AccentHex(key)
     local own = ModuleDB().accents[key]
     if type(own) == "string" and own:match("^%x%x%x%x%x%x$") then return own end
+    local builtin = builtins[key]
     return DynamicHex(key)
+        or (builtin and builtin.accent)
         or ADDON_ACCENTS[key]
         or DeclaredHex(key)
         or ToHex(unpack(PaletteColor(key)))
