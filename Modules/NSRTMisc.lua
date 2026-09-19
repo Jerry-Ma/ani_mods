@@ -137,7 +137,7 @@ local function RestoreAll()
 end
 
 local function Report(message)
-    print("|cff33ccffAniMods|r: " .. message)
+    AniMods.Print(message)
 end
 
 -- ---------------------------------------------------------------------------

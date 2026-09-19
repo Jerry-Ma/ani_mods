@@ -40,6 +40,24 @@ function AniMods.RegisterModule(name, module)
     modules[name] = module
 end
 
+-- AniMods' own voice in chat.
+--
+-- It was CALLED before it existed -- BarToggle's three failure paths and
+-- PluginButtons' bad-command path all went through AniMods.Print, which nothing
+-- defined, so every one of them would have thrown "attempt to call a nil value"
+-- at the exact moment it was trying to explain why something had not worked.
+--
+-- One prefix, one colour, everywhere: ff8800, the orange in the icon. Severity
+-- belongs in the words rather than in the colour, because three differently
+-- coloured prefixes meant three different answers to what colour AniMods is --
+-- and PluginButtons' scanner reads exactly that, the colour an addon prints its
+-- own name in, to accent an addon's widget.
+local PREFIX = "|cffff8800AniMods|r: "
+
+function AniMods.Print(message)
+    print(PREFIX .. tostring(message))
+end
+
 -- WoW's addon sandbox does not expose the `debug` table at all (confirmed:
 -- indexing it is a nil-value error here), only specific whitelisted globals
 -- like debugstack(). This combines the original error message with the call
@@ -533,7 +551,7 @@ end
 
 _G.AniMods_OnAddonCompartmentClick = function()
     if not CompartmentEnabled() then
-        print("|cffffff00AniMods:|r compartment entry is switched off in General. Use |cffffd700/ani|r.")
+        AniMods.Print("compartment entry is switched off in General. Use |cffffd700/ani|r.")
         return
     end
     if AniMods.ToggleUI then AniMods.ToggleUI() end

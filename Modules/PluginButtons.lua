@@ -81,10 +81,10 @@ local BUILTIN_SOURCES = {
     {
         name = "AniMods",
         label = "/ani",
-        -- Our own, so we know it rather than inferring it: the orange in the
-        -- icon. The scanner would pick the blue this addon prints its chat
-        -- prefix in, which is a habit rather than an identity.
-        accent = "a43d0e",
+        -- The same orange AniMods prints its own name in (Core.lua's PREFIX).
+        -- Pinned rather than scanned only because this is our own addon and the
+        -- answer is not worth re-deriving; the scanner now agrees with it.
+        accent = "ff8800",
         Available = function() return type(AniMods.ToggleUI) == "function" end,
         OnClick = function() AniMods.ToggleUI() end,
         tip = "Open the AniMods panel.",
@@ -260,11 +260,20 @@ local ADDON_SLASH = {
     ["NDui"] = "/ndui",
     ["NDui_Plus"] = "/ndp",
     ["NorthernSkyRaidTools"] = "/ns",
+    -- The LibDataBroker object name, which is what a widget is keyed by at
+    -- runtime. It is not always the folder name -- NorthernSkyRaidTools
+    -- registers NSRT -- and a table keyed only by folder never matched, so the
+    -- widget fell back to initials and to a hue hashed from its name.
+    ["NSRT"] = "/ns",
     ["OPie"] = "/opie",
     ["Platynator"] = "/platy",
     ["Stats"] = "/st",
+    ["StatsPlus"] = "/st",
     ["STT"] = "/st",
     ["TomTom"] = "/tomtom",
+    ["TomTom_Coords"] = "/tomtom",
+    ["TomTom_CrazyArrow"] = "/tomtom",
+    ["TomTom-Paste"] = "/tomtom",
     ["TwintopInsanityBar"] = "/tt",
     ["UltimateMouseCursor"] = "/umc",
     ["VoidShieldHelper"] = "/vsh",
@@ -466,6 +475,7 @@ local ADDON_ACCENTS = {
     ["EllesmereUIRaidFrames"] = "0dd19e",
     ["EUI_Kogotool"] = "ffcc33",
     ["ExwindCore"] = "a330c9",
+    ["ExwindTools"] = "a330c9",
     ["HandyNotes_MapNotes"] = "dc0e0c",
     ["KeystoneLoot"] = "9d5db8",
     ["M33kAuras"] = "8800ff",
@@ -477,6 +487,7 @@ local ADDON_ACCENTS = {
     ["NDui"] = "0080ff",
     ["NDui_Plus"] = "f0cc79",
     ["NorthernSkyRaidTools"] = "00ffff",
+    ["NSRT"] = "00ffff",
     ["OPie"] = "0080ff",
     ["RaiderIO"] = "e6a52c",
     ["RCLootCouncil"] = "87cefa",
@@ -485,6 +496,9 @@ local ADDON_ACCENTS = {
     ["STT"] = "00ff00",
     ["STT_TeamListMonitor"] = "eba60d",
     ["TomTom"] = "ffff78",
+    ["TomTom_Coords"] = "ffff78",
+    ["TomTom_CrazyArrow"] = "ffff78",
+    ["TomTom-Paste"] = "ffff78",
     ["WarpDeplete"] = "3b93c2",
     ["WeakAuras"] = "f7fbf7",
     ["WorldQuestTracker"] = "ffaa00",

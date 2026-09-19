@@ -148,8 +148,11 @@ local function Need()
     if S then return S end
     if not warned then
         warned = true
-        print("|cffff4444AniMods:|r a widget was built before the skin provider "
-            .. "was ready. Wrap the construction in |cffffd700AniMods.W.OnReady|r.")
+        -- Through AniMods.Print, not a raw print with its own red: the prefix
+        -- colour is the addon's identity, and PluginButtons' scanner reads it
+        -- out of source, so a second colour here would be a second answer.
+        AniMods.Print("a widget was built before the skin provider was ready. "
+            .. "Wrap the construction in |cffffd700AniMods.W.OnReady|r.")
     end
     return nil
 end
