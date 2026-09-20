@@ -1,24 +1,27 @@
 -- EllesmereUI Misc
--- The bag for small EllesmereUI-only tweaks -- one-off "it should look like it
--- belongs" fixes too slight to be modules of their own, each an independently
--- switchable ENTRY (see ENTRIES below) rather than one bundled all-or-nothing
--- setting. One so far:
+-- The bag for things that are meaningless without EllesmereUI, each an
+-- independently switchable ENTRY (see ENTRIES below) rather than one bundled
+-- all-or-nothing setting. Two so far:
 --
 --   Missing Stats -- item level and your primary stat, added to
---   EllesmereUIQoL's stats block, which shows neither.
+--                    EllesmereUIQoL's stats block, which shows neither.
+--   Social Status -- EllesmereUIMinimap's friends button as a data bar widget:
+--                    our counts, its own popup on hover.
 --
--- The bar for adding an entry: it touches EllesmereUI specifically, it is small
--- enough that a whole module would be ceremony, and it is REVERSIBLE. That last
--- one is not decoration -- these apply and revert live, which is why this module
--- escapes the framework's usual "toggling takes effect next reload" rule (see
--- README), and an irreversible entry would quietly take that property away from
--- every other entry in the bag.
+-- The bar for adding an entry: it touches EllesmereUI specifically, it cannot
+-- work without it, and it is REVERSIBLE. That last one is not decoration --
+-- these apply and revert live, which is why this module escapes the framework's
+-- usual "toggling takes effect next reload" rule (see README), and an
+-- irreversible entry would quietly take that property away from every other
+-- entry in the bag.
 --
--- This bag existed before, was emptied down to one non-EllesmereUI entry, and
--- was deleted; the entry that was left became its own module (Extra Button
--- Click-Through, which is about Blizzard's frames and needs no EllesmereUI).
--- It is back because Missing Stats genuinely is EllesmereUI-only: it adds rows
--- to EllesmereUI's block and has nothing to say without one.
+-- The bar used to say "small enough that a whole module would be ceremony", and
+-- Social Status is not that: it arrived with its own counting walk, icon
+-- resolution and broker registration. The clause is gone rather than left
+-- quietly broken. What actually decides membership is whether a thing is
+-- meaningless without EllesmereUI; size is whatever that costs. Extra Button
+-- Click-Through went the other way on the same test -- small, but about
+-- Blizzard's frames, so it is a module of its own.
 
 local AniMods = _G.AniMods
 
@@ -545,39 +548,224 @@ local function RepositionPopup(anchor)
     AniMods.W.AnchorNear(popup, anchor, 4)
 end
 
--- Published for Social Status rather than called by it directly, so the reach
--- into EllesmereUI lives in the module that is about EllesmereUI.
-local FriendsPopup = {
-    Available = function()
-        return friendsPopupEnabled and FindFriendsButton() ~= nil
-    end,
-    Show = function(anchor)
-        if not friendsPopupEnabled then return false end
-        local button = FindFriendsButton()
-        if not (button and anchor) then return false end
-        local onEnter = button:GetScript("OnEnter")
-        if not onEnter then return false end
-        -- xpcall: this runs another addon's handler from inside a data bar's
-        -- hover path, and an error escaping would read as the bar being broken.
-        if not _G.xpcall(onEnter, _G.geterrorhandler(), anchor) then return false end
-        RepositionPopup(anchor)
-        return true
-    end,
-    Hide = function()
-        local button = FindFriendsButton()
-        if not button then return end
-        local onLeave = button:GetScript("OnLeave")
-        if onLeave then _G.xpcall(onLeave, _G.geterrorhandler(), button) end
-    end,
+local function ShowPopup(anchor)
+    if not friendsPopupEnabled then return false end
+    local button = FindFriendsButton()
+    if not (button and anchor) then return false end
+    local onEnter = button:GetScript("OnEnter")
+    if not onEnter then return false end
+    -- xpcall: this runs another addon's handler from inside a data bar's hover
+    -- path, and an error escaping would read as the bar being broken.
+    if not _G.xpcall(onEnter, _G.geterrorhandler(), anchor) then return false end
+    RepositionPopup(anchor)
+    return true
+end
+
+local function HidePopup()
+    local button = FindFriendsButton()
+    if not button then return end
+    local onLeave = button:GetScript("OnLeave")
+    if onLeave then _G.xpcall(onLeave, _G.geterrorhandler(), button) end
+end
+
+-- ── The counts ──────────────────────────────────────────────────────────────
+--
+-- The only thing here that is ours. EllesmereUI's GatherOnlineFriends is a
+-- file-local called from one place and its result is stored nowhere, so unlike
+-- the popup there is no surface to borrow -- a count hangs off no frame script.
+--
+-- It does not matter: this is plain Blizzard API with nothing clever in it, so
+-- there is no EllesmereUI-specific judgement to drift away from. If that ever
+-- stops being true the symptom is the number disagreeing with the list the
+-- popup shows, and the list is the one to believe.
+
+local guildNameScratch, seenBNetScratch = {}, {}
+
+local function CountOnline()
+    local guildCount, friendCount = 0, 0
+    local guildSet, seenBNet = guildNameScratch, seenBNetScratch
+    -- Not `local t = wipe(x)`: wipe() is a Blizzard C function and its return
+    -- value isn't something to depend on. Clear, then use.
+    _G.wipe(guildSet)
+    _G.wipe(seenBNet)
+    local myName = _G.UnitName("player")
+
+    if _G.IsInGuild and _G.IsInGuild() then
+        local total = _G.GetNumGuildMembers() or 0
+        for i = 1, total do
+            local name, _, _, _, _, _, _, _, online = _G.GetGuildRosterInfo(i)
+            if online and name then
+                local short = name:match("^([^%-]+)") or name
+                if short ~= myName then
+                    guildCount = guildCount + 1
+                    guildSet[short] = true
+                end
+            end
+        end
+    end
+
+    local numBNet = _G.BNGetNumFriends and _G.BNGetNumFriends() or 0
+    for i = 1, numBNet do
+        local acct = _G.C_BattleNet and _G.C_BattleNet.GetFriendAccountInfo
+            and _G.C_BattleNet.GetFriendAccountInfo(i)
+        local gameInfo = acct and acct.gameAccountInfo
+        if acct and gameInfo and gameInfo.isOnline and gameInfo.clientProgram == "WoW" then
+            local charName = gameInfo.characterName
+            if charName then seenBNet[charName] = true end
+            local key = charName
+            if not key then
+                local rawTag = acct.battleTag or acct.accountName
+                key = (rawTag and rawTag:match("^([^#]+)")) or rawTag or "???"
+            end
+            -- A guildmate reached through Battle.net is one person, counted
+            -- under Guild rather than twice.
+            if not guildSet[key] then
+                friendCount = friendCount + 1
+            end
+        end
+    end
+
+    local numChar = _G.C_FriendList and _G.C_FriendList.GetNumFriends
+        and _G.C_FriendList.GetNumFriends() or 0
+    for i = 1, numChar do
+        local info = _G.C_FriendList.GetFriendInfoByIndex(i)
+        if info and info.connected then
+            local charName = info.name
+            if charName and not seenBNet[charName] then
+                local short = charName:match("^([^%-]+)") or charName
+                if not guildSet[short] then
+                    friendCount = friendCount + 1
+                end
+            end
+        end
+    end
+
+    return guildCount, friendCount
+end
+
+-- ── The widget ──────────────────────────────────────────────────────────────
+
+local Broker = AniMods.Broker
+local CATEGORY_COLOR = { GUILD = "ffd700", FRIENDS = "59c0ff" }
+
+-- Ordered candidates per category; the first usable one wins (W.ResolveIcon).
+-- Atlas art is preferred over EllesmereUI's own line-art PNGs: at 14px thin
+-- white strokes read as a scratch where an atlas is solid filled colour, which
+-- is what every other icon on the bar is.
+--
+-- Guild is the one category with no usable atlas of its own -- the guild-ish
+-- ones that exist are either the wrong thing (communities-icon-addgroupplus is
+-- a green plus meaning "add a group") or frame furniture -- so it leads with
+-- EllesmereUI's micromenu art. `coords` is a SQUARE region containing the
+-- glyph, measured from the opaque pixels: menu-guild's art is a wide band in
+-- the bottom half of a 128x128 canvas, and every display draws an icon in a
+-- square box, so a tight crop gets stretched back. See Broker.lua's Icons note.
+local EUI_MEDIA = "Interface\\AddOns\\EllesmereUI\\media\\"
+local ICON_CANDIDATES = {
+    GUILD = {
+        { texture = EUI_MEDIA .. "micromenu\\menu-guild.png", addon = "EllesmereUI",
+          coords = { 0.0859, 0.9063, 0.1797, 1.0000 }, canvas = 128 },
+        -- Last on purpose: a Blizzard atlas is the one thing guaranteed to be
+        -- there, so every list ends in one and no category can go iconless.
+        { atlas = "UI-HUD-MicroMenu-GuildCommunities-Up" },
+    },
+    FRIENDS = {
+        { texture = EUI_MEDIA .. "micromenu\\menu-friends.png", addon = "EllesmereUI",
+          coords = { 0.0938, 0.9141, 0.1797, 1.0000 }, canvas = 128 },
+        -- EllesmereUIMinimap's own friends button draws this one too.
+        { atlas = "housefinder_neighborhood-friends-icon" },
+    },
 }
 
-local FriendsPopupEntry = {
-    key = "friendsPopup",
-    name = "Friends Popup",
+local OBJECT_NAME = "AniModsSocialStatus"
+
+local socialObject
+local socialEnabled = false
+local guildOnline, friendsOnline = 0, 0
+local socialEvents
+
+-- Its own sub-table, so the Icon style and Display mode settings the shared
+-- Broker helpers read and write stay separate from the entry's on/off flag.
+local function SocialDB()
+    local db = MiscDB()
+    db.social = db.social or {}
+    return db.social
+end
+
+-- Resolved once, on first use: C_Texture.GetAtlasInfo needs the client up, so
+-- this cannot be decided at file-load time. `false` caches a genuine miss.
+-- Keyed by style as well as category, because the Icon style setting changes
+-- which candidate wins and a cache keyed on category alone would keep serving
+-- the art from before the switch.
+local resolvedIcons = {}
+
+local function CategoryIcon(category)
+    local key = category .. ":" .. Broker.GetIconStyle(SocialDB)
+    if resolvedIcons[key] == nil then
+        resolvedIcons[key] = AniMods.W.ResolveIcon(ICON_CANDIDATES[category],
+            Broker.PreferredIconKind(SocialDB)) or false
+    end
+    return resolvedIcons[key] or nil
+end
+
+local function BrokerPart(category, count)
+    local part = { count = count, color = CATEGORY_COLOR[category] }
+    local icon = CategoryIcon(category)
+    if icon then
+        part.atlas   = icon.atlas
+        part.texture = icon.texture
+        part.coords  = icon.coords
+        part.canvas  = icon.canvas
+    end
+    return part
+end
+
+local function UpdateBroker()
+    if not socialObject then return end
+    if not socialEnabled then
+        -- Blanked rather than unregistered: LibDataBroker has no unregister,
+        -- and a bar lays out by measured width, so an empty widget takes no
+        -- share and leaves without being removed from anything.
+        Broker.SetText(socialObject, "")
+        return
+    end
+    Broker.SetText(socialObject, Broker.BuildText(SocialDB, {
+        BrokerPart("GUILD", guildOnline),
+        BrokerPart("FRIENDS", friendsOnline),
+    }))
+end
+
+local function InitSocialBroker()
+    if socialObject then return end
+    socialObject = Broker.Register(OBJECT_NAME, {
+        label = "AniMods: Social Status",
+        OnClick = function()
+            if _G.InCombatLockdown() then return end
+            _G.ToggleFriendsFrame()
+        end,
+        -- EllesmereUIDataBars, and other displays following the same
+        -- convention, call OnEnter(anchorFrame) in preference to
+        -- OnTooltipShow -- confirmed in EllesmereUIDataBars_Blocks.lua's
+        -- ShowTip. That is what lets the hover hand over to EllesmereUI's own
+        -- popup rather than a GameTooltip.
+        --
+        -- There is deliberately NO OnTooltipShow fallback. This entry only
+        -- exists where EllesmereUIMinimap does, so the popup is always the
+        -- answer; a second renderer would be a second thing to keep looking
+        -- like EllesmereUI's, which is exactly what was just deleted.
+        OnEnter = function(anchor) ShowPopup(anchor) end,
+        OnLeave = function() HidePopup() end,
+    })
+end
+
+local SocialStatusEntry = {
+    key = "socialStatus",
+    name = "Social Status",
     Available = function()
         if not AniMods.IsAddOnLoaded("EllesmereUIMinimap") then
-            return false, "EllesmereUIMinimap is not loaded, so there is no "
-                       .. "friends popup to lend."
+            return false, "EllesmereUIMinimap is not loaded. This widget is "
+                       .. "its friends button in data bar form, and its popup "
+                       .. "on hover is EllesmereUI's own."
         end
         if not FindFriendsButton() then
             return false, "EllesmereUI's friends indicator is not on the "
@@ -587,25 +775,52 @@ local FriendsPopupEntry = {
         return true
     end,
     Apply = function()
+        socialEnabled = true
         friendsPopupEnabled = true
-        AniMods.EUIFriendsPopup = FriendsPopup
+        InitSocialBroker()
+        guildOnline, friendsOnline = CountOnline()
+        UpdateBroker()
+
+        if socialEvents then return true end
+        -- Coalesced: BN_FRIEND_INFO_CHANGED alone fires once per friend whose
+        -- status, AFK flag or rich-presence blurb changes, arriving in bursts
+        -- of dozens at login and whenever a group logs on together, and
+        -- GUILD_ROSTER_UPDATE fires repeatedly per roster query. Answering each
+        -- separately meant running the full walk N times to produce the number
+        -- the last one alone would have produced.
+        local Refresh = AniMods.Coalesce(function()
+            if not socialEnabled then return end
+            guildOnline, friendsOnline = CountOnline()
+            UpdateBroker()
+            if AniMods.RefreshUI then AniMods.RefreshUI() end
+        end)
+
+        socialEvents = _G.CreateFrame("Frame")
+        for _, event in ipairs({
+            "GUILD_ROSTER_UPDATE", "FRIENDLIST_UPDATE",
+            "BN_FRIEND_INFO_CHANGED", "BN_FRIEND_ACCOUNT_ONLINE", "BN_FRIEND_ACCOUNT_OFFLINE",
+            "PLAYER_ENTERING_WORLD",
+        }) do
+            socialEvents:RegisterEvent(event)
+        end
+        socialEvents:SetScript("OnEvent", Refresh)
         return true
     end,
     Revert = function()
+        socialEnabled = false
         friendsPopupEnabled = false
-        -- The table stays published; its own flag is what decides. Taking it
-        -- away would make Social Status' lookup race this entry's order.
+        UpdateBroker()
     end,
     GetInfoRows = function()
-        return {
-            {
-                label = "Used by",
-                value = "Social Status",
-                help  = "Its data bar widget shows this popup on hover instead "
-                     .. "of drawing its own. Switch this off and the widget "
-                     .. "falls back to a plain tooltip with the same names.",
-            },
+        local rows = {
+            -- Read, not recounted: the event handler already did the walk.
+            { label = "Guild online", value = tostring(guildOnline) },
+            { label = "Friends online", value = tostring(friendsOnline) },
         }
+        for _, row in ipairs(Broker.SectionRows(SocialDB, UpdateBroker, OBJECT_NAME)) do
+            rows[#rows + 1] = row
+        end
+        return rows
     end,
 }
 
@@ -613,7 +828,7 @@ local FriendsPopupEntry = {
 -- Entry framework
 -- ---------------------------------------------------------------------------
 
-local ENTRIES = { MissingStatsEntry, FriendsPopupEntry }
+local ENTRIES = { MissingStatsEntry, SocialStatusEntry }
 local entryApplied = {} -- key -> true once Apply() has actually succeeded
 
 local function PollEntry(entry)
