@@ -142,10 +142,16 @@ function Broker.AtlasEscape(atlas)
     return ("|A:%s:%d:%d|a"):format(atlas, ICON_H, w)
 end
 
+-- Whether this widget may colour itself. Shared rather than written out at each
+-- use, so the default (on) lives in one place -- it is read by the text builder
+-- and by anything else a module tints from the same setting.
+function Broker.IsColored(getDB)
+    return getDB().brokerColoredText ~= false
+end
+
 function Broker.BuildText(getDB, parts)
-    local db = getDB()
     local showIcon = Broker.GetDisplayMode(getDB) == "icon"
-    local colored = db.brokerColoredText ~= false
+    local colored = Broker.IsColored(getDB)
 
     local rendered = {}
     for i, part in ipairs(parts) do
@@ -205,6 +211,46 @@ function Broker.SetText(obj, text)
     obj.text = text
 end
 
+-- LibDataBroker's own `icon` contract: a real texture the display draws, sizes
+-- and tints itself, instead of an escape sequence packed into `text`.
+--
+-- The Icons note above explains why most of these modules cannot use it: LDB
+-- carries ONE icon per data object, and Social Status draws two while Group
+-- Roles draws three. A widget with exactly one icon has no such problem and
+-- should use this instead, because it gets three things the inline form cannot
+-- have -- a Texture that can be hover-tinted, sizing the display controls, and
+-- the display's OWN show-icon setting (EllesmereUIDataBars calls it Show Icon),
+-- which is where a reader goes looking for it rather than into our panel.
+--
+-- `hex` tints it through iconR/iconG/iconB, LDB's tint convention;
+-- EllesmereUIDataBars honours it (its IconTint) unless the block carries an
+-- icon colour the user picked, which is the user overruling us and should win.
+-- Passing nil clears the tint back to white rather than leaving the last one on.
+--
+-- That tint matters more than it looks: EllesmereUIDataBars' broker block
+-- strips |cff codes out of broker TEXT by default (its stripColors, on so a
+-- plugin's own colours cannot silently beat the block's Text Color and accent
+-- hover). A colour that says something -- a warning state, not decoration --
+-- therefore has to travel on the icon to survive the default settings.
+--
+-- Guarded assignment throughout, for the reason Broker.SetText documents: every
+-- write to a data object fires its AttributeChanged callback whether or not the
+-- value actually changed.
+function Broker.SetIcon(obj, texture, hex)
+    if not obj then return end
+    if obj.icon ~= texture then obj.icon = texture end
+
+    local r, g, b
+    if hex then
+        r = tonumber(hex:sub(1, 2), 16) / 255
+        g = tonumber(hex:sub(3, 4), 16) / 255
+        b = tonumber(hex:sub(5, 6), 16) / 255
+    end
+    if obj.iconR ~= r then obj.iconR = r end
+    if obj.iconG ~= g then obj.iconG = g end
+    if obj.iconB ~= b then obj.iconB = b end
+end
+
 -- The whole "Broker widget" section for a module's GetInfoRows(): whether the
 -- widget was published, under what name, and how it draws.
 --
@@ -221,11 +267,17 @@ end
 --
 -- `objectName` is reported verbatim, because that is the string to look for
 -- in a data bar's widget picker -- more use than a yes/no.
--- `opts.noIconStyle` drops the Icon style row for a widget whose icon comes
--- from neither art family. GearSync is the case: it draws the equipment set's
--- own icon, the one picked in Blizzard's set dialog, so the control would be
--- offering a choice that changes nothing. An inert control is worse than a
--- missing one -- it invites you to try it and then says nothing back.
+-- `opts.nativeIcon` says this widget publishes LDB's own `icon` field rather
+-- than inline art (see Broker.SetIcon). Both icon controls then belong to the
+-- DISPLAY, not to us: the data bar decides whether to draw it and at what size,
+-- and the art is the widget's own rather than a pick from either family. So
+-- Style and Icon style are replaced by one line saying where the setting went.
+-- An inert control is worse than a missing one -- it invites you to try it and
+-- then says nothing back -- but silently dropping two rows leaves a reader
+-- hunting for them, which is what that line is for.
+--
+-- `opts.colorHelp` is the "?" on Colored text, for a widget where the colour
+-- means something rather than decorating.
 function Broker.SectionRows(getDB, onChange, objectName, opts)
     local ldb = _G.LibStub and _G.LibStub:GetLibrary("LibDataBroker-1.1", true)
     local published = ldb and objectName and ldb:GetDataObjectByName(objectName)
@@ -256,7 +308,17 @@ function Broker.SectionRows(getDB, onChange, objectName, opts)
     end
 
     -- Display options only matter once there is something to display.
-    if published then
+    if published and opts and opts.nativeIcon then
+        rows[#rows + 1] = {
+            label = "Icon",
+            value = "Drawn by the data bar",
+            help  = "This widget publishes LibDataBroker's own icon rather than "
+                 .. "packing art into its text, so the data bar draws a real "
+                 .. "texture -- one it sizes, tints on hover and can switch off "
+                 .. "itself. EllesmereUIDataBars calls that setting Show Icon, "
+                 .. "on the block. There is nothing to choose here.",
+        }
+    elseif published then
         rows[#rows + 1] = {
             label   = "Style",
             options = Broker.DISPLAY_MODE_LABEL,
@@ -265,7 +327,7 @@ function Broker.SectionRows(getDB, onChange, objectName, opts)
             set     = function(v) getDB().brokerDisplayMode = v; onChange() end,
         }
         -- Only meaningful while icons are being drawn at all.
-        if Broker.GetDisplayMode(getDB) == "icon" and not (opts and opts.noIconStyle) then
+        if Broker.GetDisplayMode(getDB) == "icon" then
             rows[#rows + 1] = {
                 label   = "Icon style",
                 options = Broker.ICON_STYLE_LABEL,
@@ -282,11 +344,17 @@ function Broker.SectionRows(getDB, onChange, objectName, opts)
                      .. "than going missing.",
             }
         end
+    end
 
+    -- Outside the branch above: colour is the one display choice that is ours
+    -- either way, since it is carried in what we publish rather than in how the
+    -- bar chooses to draw it.
+    if published then
         rows[#rows + 1] = {
             label = "Colored text",
-            get   = function() return getDB().brokerColoredText ~= false end,
+            get   = function() return Broker.IsColored(getDB) end,
             set   = function(v) getDB().brokerColoredText = v; onChange() end,
+            help  = opts and opts.colorHelp or nil,
         }
     end
 

@@ -276,15 +276,33 @@ local popup
 -- already says something is off and the click already fixes it, so the target
 -- belongs in the tooltip -- where it is read at the moment you are asking.
 --
--- The icon is the SET'S OWN, the one picked in Blizzard's set dialog. That is
--- both more informative than a generic gear glyph and self-maintaining: rename
--- or re-icon a set and the bar follows. It is also why this widget has no "Icon
--- style" row -- neither art family applies, so the control would change nothing.
+-- The icon is the SET'S OWN, the one picked in Blizzard's set dialog -- more
+-- informative than a generic gear glyph, and self-maintaining: re-icon a set
+-- and the bar follows.
+--
+-- It is published through LibDataBroker's `icon` field rather than packed into
+-- the text as an escape sequence, which this widget can do and most of the
+-- others cannot: LDB carries one icon per object, and Social Status draws two
+-- while Group Roles draws three. See Broker.SetIcon. The payoff is that the
+-- data bar draws a real Texture it can size, hover-tint and switch off from its
+-- own Show Icon setting, which is where anyone would look for it.
+--
+-- THE STATE COLOUR RIDES ON THE ICON, not only on the text. EllesmereUIDataBars
+-- strips |cff codes out of broker text by default, so a text-only colour would
+-- have been invisible until you went and turned that off -- which is no way to
+-- carry a warning. The text is tinted too, for bars that keep the codes.
+-- Text AND icon, together: an icon left behind after the text was cleared is
+-- art sitting on the bar beside nothing.
+local function BlankBroker()
+    Broker.SetText(ldbObject, "")
+    Broker.SetIcon(ldbObject, nil, nil)
+end
+
 local function UpdateBroker()
     if not ldbObject then return end
 
     if not moduleEnabled then
-        Broker.SetText(ldbObject, "")
+        BlankBroker()
         return
     end
 
@@ -293,17 +311,16 @@ local function UpdateBroker()
     -- Nothing to say on a character with no equipment sets at all. Empty rather
     -- than "none": a zero-width widget takes no share of the bar and simply is
     -- not there, which is the honest rendering of having nothing to report.
+    -- The icon goes with it, or the bar would draw art beside no text.
     if not st.anySet then
-        Broker.SetText(ldbObject, "")
+        BlankBroker()
         return
     end
 
+    local color = Broker.IsColored(ModuleDB) and STATE_COLOR[st.state] or nil
+    Broker.SetIcon(ldbObject, st.equippedIcon or st.targetIcon, color)
     Broker.SetText(ldbObject, Broker.BuildText(ModuleDB, {
-        {
-            text    = st.equippedName or "No set",
-            color   = STATE_COLOR[st.state],
-            texture = st.equippedIcon or st.targetIcon,
-        },
+        { text = st.equippedName or "No set", color = STATE_COLOR[st.state] },
     }))
 end
 
@@ -417,10 +434,14 @@ end
 -- Watching
 -- ---------------------------------------------------------------------------
 
-Refresh = function()
+-- Coalesced, because PLAYER_EQUIPMENT_CHANGED fires once per SLOT: a set swap
+-- arrives as a dozen-odd events in the same frame, and every one of them would
+-- otherwise re-walk the equipment sets and repaint the panel to reach the same
+-- answer. One redraw per frame is the most any of this can be seen at.
+Refresh = AniMods.Coalesce(function()
     UpdateBroker()
     if AniMods.RefreshUI then AniMods.RefreshUI() end
-end
+end)
 
 local function OnLoadoutApplied()
     -- One frame later: TLM fires this as it applies, and the active loadout it
@@ -469,6 +490,12 @@ local function EnsureWatcher()
     -- be the module arguing.
     watcher:RegisterEvent("EQUIPMENT_SETS_CHANGED")
     watcher:RegisterEvent("EQUIPMENT_SWAP_FINISHED")
+    -- And the one neither of those covers: swapping an ITEM by hand, which can
+    -- take you out of a set (or into one) without any set ever being applied.
+    -- isEquipped is recomputed from what you are wearing, so this is the event
+    -- that actually decides which set the widget names. Display only, like the
+    -- two above -- changing clothes is your doing.
+    watcher:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
     -- Display only. Logging in is not a decision to change builds, but the sets
     -- are not readable until the world is, so this is when the widget can first
     -- say anything at all.
@@ -555,10 +582,17 @@ function GearSync:GetInfoRows()
         end,
     }
 
-    -- No "Icon style" row: the widget draws the equipment set's own icon, so
-    -- neither art family is involved and the control would change nothing.
-    for _, row in ipairs(Broker.SectionRows(ModuleDB, UpdateBroker, "AniModsGearSync",
-        { noIconStyle = true })) do
+    for _, row in ipairs(Broker.SectionRows(ModuleDB, UpdateBroker, "AniModsGearSync", {
+        -- The icon is the equipment set's own and is published through LDB's
+        -- own field, so both icon controls belong to the data bar.
+        nativeIcon = true,
+        colorHelp  = "The colour is the whole warning: amber means the set you "
+                  .. "are wearing is not the one your loadout names. It is put "
+                  .. "on the icon as well as the text, because data bars "
+                  .. "commonly strip colour codes out of broker text -- "
+                  .. "EllesmereUIDataBars does by default. Turning this off "
+                  .. "leaves the widget readable and silent.",
+    })) do
         rows[#rows + 1] = row
     end
 
