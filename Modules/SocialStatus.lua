@@ -4,26 +4,25 @@
 -- button group that shows online friends/guildies on hover) so the same
 -- information can live in a databar instead.
 --
--- EllesmereUIMinimap's own version is entirely unreachable from outside
--- that file: the button itself has no name (CreateIndicatorBtn does
--- `CreateFrame("Button", nil, parent)`), the table holding it
--- (_customIndicators) is a plain local, and its tooltip function
--- (ShowFriendsTooltip) is wired via HookScript, which isn't retrievable
--- through GetScript() even if the frame could be found -- there's no
--- exposed accessor the way EllesmereUIChat exposes `EllesmereUI._chatCFD`
--- or EllesmereUIQoL_RaidTools exposes `_G._EUI_RaidTools_DB()`. So this is a
--- faithful PORT of GatherOnlineFriends/ShowFriendsTooltip (both in
--- EllesmereUIMinimap.lua) rather than a call into them -- same data
--- sources, same online-filtering/dedup rules, same visual layout (dark
--- bordered popup, class-colored two-column rows, section headers with
--- accent-colored counts, dividers between sections), so it looks and
--- behaves like the same popup, just anchored to this broker instead of
--- EUI's minimap button. Deliberately NOT ported: EUI's right-click
+-- The COUNTS are a port of EllesmereUIMinimap's GatherOnlineFriends: same data
+-- sources, same online-filtering and dedup rules. The POPUP is not a port any
+-- more -- it is EllesmereUI's own, shown through the Friends Popup entry in
+-- EllesmereUI Misc (which owns the reach into it) and anchored at this widget.
+--
+-- This header used to claim EllesmereUI's popup was "entirely unreachable": the
+-- button unnamed, and ShowFriendsTooltip "wired via HookScript, which isn't
+-- retrievable through GetScript()". Both halves were wrong, and about two
+-- hundred lines of ported layout rested on them. The button is unnamed but
+-- carries `_indicatorKey == "_friends"`, the same structural probe the flyout
+-- toggle is found by; and its handler is installed with SetScript, so GetScript
+-- returns that exact closure -- a HookScript'd one would come back composed and
+-- work too. The lesson worth keeping: "there is no accessor" is a claim about
+-- an API, and a frame's scripts are not an API you have to be given.
+--
+-- What is still not reached, and does not need to be: EUI's right-click
 -- whisper/invite row menu, its hover-stability grace timers, and its
--- dev-mode/protected-instance whisper guards -- interactive conveniences
--- specific to living on the minimap, not part of "look and feel", and
--- dependent on EUI-internal locals (EBS, MO_Evaluate) with no access path
--- anyway.
+-- dev-mode/protected-instance whisper guards. Those come with its popup now
+-- rather than being reimplemented here.
 --
 -- Only active when EllesmereUIMinimap is loaded -- the counting logic
 -- itself is plain Blizzard API and needs nothing from EUI, but the whole
@@ -257,226 +256,41 @@ local function CountOnline()
 end
 
 -- ---------------------------------------------------------------------------
--- Custom tooltip -- ported layout from ShowFriendsTooltip: dark bordered
--- popup, section headers ("Title (count)", count in accent color), two
--- column rows (class-colored name [+ BNet tag prefix] [+ level suffix] on
--- the left, zone on the right), dividers between sections, sized to fit its
--- content. `anchor` is the frame this is shown next to (see OnEnter below).
+-- The popup: EllesmereUI's own
 -- ---------------------------------------------------------------------------
+-- This used to be a PORT of EllesmereUIMinimap's friends popup -- its
+-- two-column layout, section headers, dividers and row cap, rebuilt here in
+-- about two hundred lines. The header above it claimed EllesmereUI's version
+-- was unreachable: the button unnamed, and its tooltip wired with HookScript,
+-- "which isn't retrievable through GetScript()".
+--
+-- Both halves were wrong. The button is unnamed but not unfindable -- every
+-- EllesmereUI indicator carries an `_indicatorKey`, and this one is "_friends",
+-- the same structural probe the flyout toggle is found by. And it is wired with
+-- SetScript, not HookScript, so GetScript hands back that exact closure; a
+-- HookScript'd one would come back composed and work too.
+--
+-- So the popup is now EllesmereUI's, drawn by EllesmereUI, anchored at our
+-- widget -- see the Friends Popup entry in EllesmereUI Misc, which owns the
+-- reach into it. It cannot drift from the original because it IS the original,
+-- and two hundred lines of layout that had to be kept looking like someone
+-- else's are gone.
+--
+-- The plain renderer below stays. It is not a second copy of the popup: it is
+-- what a data bar that cannot anchor a foreign frame gets instead, and what is
+-- shown when the entry is switched off.
 
-local FTT_PAD, FTT_ROW_H, FTT_HDR_H, FTT_GAP, FTT_DIV_PAD = 8, 14, 16, 2, 5
 local MAX_ROWS_PER_SECTION = 30 -- EUI's own hard cap; its user-configurable friendsMaxRows setting isn't reachable from here
 
--- Every bridge into EllesmereUI goes through AniMods.W: it's the one place
--- that knows what the skinning API exposes. Duplicating those lookups here is
--- how this module ended up reading .r off RegAccent (a function) in a sibling
--- module and crashing on login.
---
--- One font for the whole addon now: the skin API reports the user's single
--- configured UI font, with no per-EllesmereUI-module override. This popup
--- used to ask for EllesmereUIMinimap's font specifically, to match the button
--- it mirrors -- a nicety that cost a private GetFontPath(addonKey) call, and
--- one the theme font satisfies anyway in every configuration that doesn't
--- deliberately set the minimap apart.
-
-local socialPopup
-local ttRows, ttHeaders, ttDividers = {}, {}, {}
-
--- The shared popup shell (W.Tooltip): themed panel, correct strata, and the
--- inner child the restrip rule requires.
---
--- Only the SHELL is shared. This popup's body is a bespoke two-column layout --
--- class-coloured names with a Battle.net tag prefix and a right-aligned zone,
--- grouped under headers with dividers -- which no line-based API expresses, so
--- it builds its own content on `.inner` instead of calling AddLine. That is
--- what `.inner` is exposed for; the alternative was this module keeping a
--- private copy of the shell, which is precisely why SoundSwitch had nothing to
--- reuse and fell back to a bare GameTooltip.
-local function GetSocialTT()
-    socialPopup = socialPopup or AniMods.W.Tooltip()
-    return socialPopup.frame
-end
-
--- The child every piece of tooltip content is parented to. Anything created
--- straight on the panel would be a direct region of a restrip-registered
--- frame -- the dividers below are Textures, and FadeRegions alpha-zeroes
--- exactly those -- so the popup would quietly lose its rules the first time
--- the player opened a Blizzard window.
-local function TTInner()
-    GetSocialTT()
-    return socialPopup.inner
-end
-
-local function EnsureTTRow(idx)
-    if ttRows[idx] then return ttRows[idx] end
-    local row = CreateFrame("Frame", nil, TTInner())
-    row:SetHeight(FTT_ROW_H)
-    local nameFS = row:CreateFontString(nil, "OVERLAY")
-    nameFS:SetJustifyH("LEFT")
-    nameFS:SetPoint("LEFT", row, "LEFT", 0, 0)
-    local zoneFS = row:CreateFontString(nil, "OVERLAY")
-    zoneFS:SetJustifyH("RIGHT")
-    zoneFS:SetPoint("RIGHT", row, "RIGHT", 0, 0)
-    ttRows[idx] = { frame = row, name = nameFS, zone = zoneFS }
-    return ttRows[idx]
-end
-
-local function EnsureTTHeader(idx)
-    if ttHeaders[idx] then return ttHeaders[idx] end
-    local fs = TTInner():CreateFontString(nil, "OVERLAY")
-    fs:SetJustifyH("CENTER")
-    fs:SetTextColor(1, 1, 1, 0.9)
-    ttHeaders[idx] = fs
-    return fs
-end
-
-local function EnsureTTDivider(idx)
-    if ttDividers[idx] then return ttDividers[idx] end
-    local tex = TTInner():CreateTexture(nil, "ARTWORK")
-    tex:SetColorTexture(1, 1, 1, 0.12)
-    tex:SetHeight(1)
-    ttDividers[idx] = tex
-    return tex
-end
-
+--- @return boolean shown  false when nothing lent us a popup
 local function ShowSocialTooltip(anchor)
-    local guild, favorites, friends = GatherOnlineFriends()
-    local tt = GetSocialTT()
-    local total = #guild + #favorites + #friends
-    -- Re-applied per show rather than once at creation, so the popup follows a
-    -- live theme font change. Through W.SetFont, which carries the theme's
-    -- OUTLINE FLAG as well as the path -- the four hand-rolled
-    -- `SetFont(font, N, "")` calls this replaced hardcoded no-outline and so
-    -- silently ignored an outline-configured theme.
-    local SetFont = AniMods.W.SetFont
-
-    for i = 1, #ttRows do
-        ttRows[i].frame:Hide()
-        ttRows[i].name:Hide()
-        ttRows[i].zone:Hide()
-    end
-    for i = 1, #ttHeaders do ttHeaders[i]:Hide() end
-    for i = 1, #ttDividers do ttDividers[i]:Hide() end
-
-    tt:ClearAllPoints()
-    tt:SetPoint("TOP", anchor, "BOTTOM", 0, -4)
-
-    if total == 0 then
-        local row = EnsureTTRow(1)
-        SetFont(row.name, 10)
-        row.name:SetText("|cff888888No friends online|r")
-        row.zone:SetText("")
-        row.frame:ClearAllPoints()
-        row.frame:SetPoint("TOPLEFT", tt, "TOPLEFT", FTT_PAD, -FTT_PAD)
-        row.frame:SetPoint("TOPRIGHT", tt, "TOPRIGHT", -FTT_PAD, -FTT_PAD)
-        row.frame:Show()
-        row.name:Show()
-        tt:SetSize(FTT_PAD * 2 + 140, FTT_PAD + FTT_ROW_H + FTT_PAD)
-        tt:Show()
-        return
-    end
-
-    local sections = {}
-    if #favorites > 0 then sections[#sections + 1] = { title = "Favorites", list = favorites } end
-    if #guild > 0 then sections[#sections + 1] = { title = "Guild", list = guild } end
-    if #friends > 0 then sections[#sections + 1] = { title = "Friends", list = friends } end
-
-    local rowIdx, hdrIdx, divIdx = 0, 0, 0
-    local maxNameW, maxZoneW = 0, 0
-    local curY = -FTT_PAD
-
-    -- AniMods.W.Accent() rather than reading a color table off EllesmereUI
-    -- directly: it goes through GetAccentColor(), which resolves the ACTIVE
-    -- theme (class-colored, custom, faction) instead of just the default
-    -- green, and it's the single place that knows the fallback.
-    local ar, ag, ab = AniMods.W.Accent()
-    local acHex = ("%02x%02x%02x"):format(ar * 255, ag * 255, ab * 255)
-
-    for si, sec in ipairs(sections) do
-        if si > 1 then
-            curY = curY - FTT_DIV_PAD
-            divIdx = divIdx + 1
-            local div = EnsureTTDivider(divIdx)
-            div:ClearAllPoints()
-            div:SetPoint("TOPLEFT", tt, "TOPLEFT", FTT_PAD, curY)
-            div:SetPoint("TOPRIGHT", tt, "TOPRIGHT", -FTT_PAD, curY)
-            div:Show()
-            curY = curY - div:GetHeight() - FTT_DIV_PAD
-        end
-
-        curY = curY - 5
-        hdrIdx = hdrIdx + 1
-        local hdr = EnsureTTHeader(hdrIdx)
-        SetFont(hdr, 12)
-        hdr:SetText(sec.title .. " (|cff" .. acHex .. #sec.list .. "|r)")
-        hdr:ClearAllPoints()
-        hdr:SetPoint("TOP", tt, "TOP", 0, curY)
-        hdr:Show()
-        curY = curY - FTT_HDR_H - 5
-
-        local shown = math.min(#sec.list, MAX_ROWS_PER_SECTION)
-        for i = 1, shown do
-            local e = sec.list[i]
-            rowIdx = rowIdx + 1
-            local row = EnsureTTRow(rowIdx)
-            SetFont(row.name, 10)
-            SetFont(row.zone, 10)
-
-            local cc = e.class and RAID_CLASS_COLORS and RAID_CLASS_COLORS[e.class]
-            local colored = cc and cc:WrapTextInColorCode(e.name) or e.name
-            if e.bnetTag then
-                colored = "|cffffd100" .. e.bnetTag .. "|r (" .. colored .. ")"
-            end
-            local lvl = tonumber(e.level)
-            if lvl and lvl > 0 then
-                colored = colored .. " |cffb0b0b0" .. lvl .. "|r"
-            end
-            row.name:SetText(colored)
-            row.name:SetTextColor(1, 1, 1, 0.85)
-
-            local zone = e.zone or ""
-            row.zone:SetText(zone ~= "" and ("|cff888888" .. zone .. "|r") or "")
-
-            row.frame:ClearAllPoints()
-            row.frame:SetPoint("TOPLEFT", tt, "TOPLEFT", FTT_PAD, curY)
-            row.frame:SetPoint("TOPRIGHT", tt, "TOPRIGHT", -FTT_PAD, curY)
-            row.frame:Show()
-            row.name:Show()
-            row.zone:Show()
-
-            local nw = row.name:GetStringWidth() or 0
-            local zw = row.zone:GetStringWidth() or 0
-            if nw > maxNameW then maxNameW = nw end
-            if zw > maxZoneW then maxZoneW = zw end
-
-            curY = curY - (FTT_ROW_H + FTT_GAP)
-        end
-
-        if #sec.list > MAX_ROWS_PER_SECTION then
-            rowIdx = rowIdx + 1
-            local row = EnsureTTRow(rowIdx)
-            SetFont(row.name, 10)
-            row.name:SetText("|cff888888...and " .. (#sec.list - MAX_ROWS_PER_SECTION) .. " more|r")
-            row.zone:SetText("")
-            row.frame:ClearAllPoints()
-            row.frame:SetPoint("TOPLEFT", tt, "TOPLEFT", FTT_PAD, curY)
-            row.frame:SetPoint("TOPRIGHT", tt, "TOPRIGHT", -FTT_PAD, curY)
-            row.frame:Show()
-            row.name:Show()
-            curY = curY - (FTT_ROW_H + FTT_GAP)
-        end
-    end
-
-    local contentW = FTT_PAD + maxNameW + 16 + maxZoneW + FTT_PAD
-    local ttW = math.max(contentW, 160)
-    local ttH = -curY + FTT_PAD
-
-    tt:SetSize(ttW, ttH)
-    tt:Show()
+    local popup = AniMods.EUIFriendsPopup
+    return (popup and popup.Show(anchor)) and true or false
 end
 
 local function HideSocialTooltip()
-    if socialPopup then socialPopup:Hide() end
+    local popup = AniMods.EUIFriendsPopup
+    if popup then popup.Hide() end
 end
 
 -- Plain-GameTooltip fallback for any LDB display that doesn't support the
@@ -496,12 +310,19 @@ local function ShowSocialTooltipPlain(tt)
     for si, sec in ipairs(sections) do
         if si > 1 then tt:AddLine(" ") end
         tt:AddLine(("%s (%d)"):format(sec.title, #sec.list), 1, 0.82, 0)
-        for _, e in ipairs(sec.list) do
+        -- Capped the way EllesmereUI caps its own, so the two render the same
+        -- list rather than this one running down the screen in a big guild.
+        local shown = math.min(#sec.list, MAX_ROWS_PER_SECTION)
+        for i = 1, shown do
+            local e = sec.list[i]
             local cc = e.class and RAID_CLASS_COLORS and RAID_CLASS_COLORS[e.class]
             local r, g, b = 1, 1, 1
             if cc then r, g, b = cc.r, cc.g, cc.b end
             local label = e.bnetTag and (e.bnetTag .. " (" .. e.name .. ")") or e.name
             tt:AddDoubleLine(label, e.zone or "", r, g, b, 0.6, 0.6, 0.6)
+        end
+        if #sec.list > shown then
+            tt:AddLine(("...and %d more"):format(#sec.list - shown), 0.6, 0.6, 0.6)
         end
     end
 end
@@ -607,8 +428,21 @@ local function InitLDB()
         -- plain GameTooltip can't be given a border/second-frame layout
         -- like this. OnTooltipShow stays as a fallback for displays that
         -- only support the plain GameTooltip path.
-        OnEnter = function(anchor) ShowSocialTooltip(anchor) end,
-        OnLeave = function() HideSocialTooltip() end,
+        -- EllesmereUI's own popup when the Friends Popup entry is lending it,
+        -- and GameTooltip with the same names when it is not -- switched off,
+        -- or EllesmereUIMinimap's friends indicator hidden. A widget that shows
+        -- nothing on hover because one setting is off would read as broken.
+        OnEnter = function(anchor)
+            if ShowSocialTooltip(anchor) then return end
+            _G.GameTooltip:SetOwner(anchor, "ANCHOR_NONE")
+            _G.GameTooltip:SetPoint("TOP", anchor, "BOTTOM", 0, -4)
+            ShowSocialTooltipPlain(_G.GameTooltip)
+            _G.GameTooltip:Show()
+        end,
+        OnLeave = function()
+            HideSocialTooltip()
+            _G.GameTooltip:Hide()
+        end,
         OnTooltipShow = ShowSocialTooltipPlain,
     })
 end

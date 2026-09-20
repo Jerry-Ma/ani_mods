@@ -462,10 +462,122 @@ local MissingStatsEntry = {
 }
 
 -- ---------------------------------------------------------------------------
+-- Entry: Friends Popup
+-- ---------------------------------------------------------------------------
+-- Lends EllesmereUIMinimap's own online-friends popup to anything in AniMods
+-- that wants it -- today, Social Status' data bar widget.
+--
+-- Social Status used to PORT that popup: a copy of its two-column layout,
+-- section headers, dividers and row cap, roughly two hundred lines that had to
+-- be kept looking like something another addon owns. It does not have to.
+--
+-- The button is found by shape, the way the flyout toggle is: EllesmereUI gives
+-- every indicator button an `_indicatorKey`, and the friends one is "_friends".
+-- Its OnEnter is then read straight off the frame -- which is possible, contrary
+-- to what Social Status' header used to claim. It is installed with SetScript,
+-- not HookScript, and GetScript returns that exact closure; even a HookScript'd
+-- handler comes back composed, so the claim was wrong either way.
+--
+-- CALLED WITH OUR FRAME, not EllesmereUI's. The closure ends in
+-- ShowFriendsTooltip(self), so whatever frame is passed becomes the anchor --
+-- which is the whole trick, and it is safe because everything the handler does
+-- first is guarded on fields only its own button has:
+--
+--   if self._overAtlas and self._icon then ...   -- nil on ours, no-op
+--   if self._icon then self._icon:SetAlpha(1) end -- nil on ours, no-op
+--   if GetFFD(self).freeMoveJustDragged then      -- weak table, mints {} for
+--                                                 -- any frame
+--
+-- So the popup that appears is EllesmereUI's, drawn by EllesmereUI, anchored
+-- where we asked. It cannot drift from the original because it IS the original.
+
+local FRIENDS_INDICATOR_KEY = "_friends"
+
+local friendsButton
+
+local function FindFriendsButton()
+    if friendsButton and friendsButton:GetScript("OnEnter") then return friendsButton end
+    local minimap = _G.Minimap
+    if not minimap then return nil end
+    for _, child in ipairs({ minimap:GetChildren() }) do
+        ---@diagnostic disable-next-line: undefined-field
+        if child._indicatorKey == FRIENDS_INDICATOR_KEY then
+            friendsButton = child
+            return child
+        end
+    end
+    return nil
+end
+
+local friendsPopupEnabled = false
+
+-- Published for Social Status rather than called by it directly, so the reach
+-- into EllesmereUI lives in the module that is about EllesmereUI.
+local FriendsPopup = {
+    Available = function()
+        return friendsPopupEnabled and FindFriendsButton() ~= nil
+    end,
+    Show = function(anchor)
+        if not friendsPopupEnabled then return false end
+        local button = FindFriendsButton()
+        if not (button and anchor) then return false end
+        local onEnter = button:GetScript("OnEnter")
+        if not onEnter then return false end
+        -- xpcall: this runs another addon's handler from inside a data bar's
+        -- hover path, and an error escaping would read as the bar being broken.
+        return _G.xpcall(onEnter, _G.geterrorhandler(), anchor) and true or false
+    end,
+    Hide = function()
+        local button = FindFriendsButton()
+        if not button then return end
+        local onLeave = button:GetScript("OnLeave")
+        if onLeave then _G.xpcall(onLeave, _G.geterrorhandler(), button) end
+    end,
+}
+
+local FriendsPopupEntry = {
+    key = "friendsPopup",
+    name = "Friends Popup",
+    Available = function()
+        if not AniMods.IsAddOnLoaded("EllesmereUIMinimap") then
+            return false, "EllesmereUIMinimap is not loaded, so there is no "
+                       .. "friends popup to lend."
+        end
+        if not FindFriendsButton() then
+            return false, "EllesmereUI's friends indicator is not on the "
+                       .. "minimap. Switch it on in EllesmereUI's minimap "
+                       .. "settings and this finds it."
+        end
+        return true
+    end,
+    Apply = function()
+        friendsPopupEnabled = true
+        AniMods.EUIFriendsPopup = FriendsPopup
+        return true
+    end,
+    Revert = function()
+        friendsPopupEnabled = false
+        -- The table stays published; its own flag is what decides. Taking it
+        -- away would make Social Status' lookup race this entry's order.
+    end,
+    GetInfoRows = function()
+        return {
+            {
+                label = "Used by",
+                value = "Social Status",
+                help  = "Its data bar widget shows this popup on hover instead "
+                     .. "of drawing its own. Switch this off and the widget "
+                     .. "falls back to a plain tooltip with the same names.",
+            },
+        }
+    end,
+}
+
+-- ---------------------------------------------------------------------------
 -- Entry framework
 -- ---------------------------------------------------------------------------
 
-local ENTRIES = { MissingStatsEntry }
+local ENTRIES = { MissingStatsEntry, FriendsPopupEntry }
 local entryApplied = {} -- key -> true once Apply() has actually succeeded
 
 local function PollEntry(entry)
