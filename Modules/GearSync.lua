@@ -6,15 +6,21 @@
 -- "SA-Raid" build, and the pairing needs no table to be maintained. The name IS
 -- the mapping.
 --
--- The parser is IMPORTED, not copied: AniMods.LoadoutName comes from
--- TalentLoadouts, which owns the convention. Two copies would drift the first
--- time a case token was added, and the symptom would be gear quietly not
--- swapping -- which looks like nothing at all rather than like a bug.
+-- MATCHING IS BY LONGEST PREFIX. A set named "HO" serves every HO-* loadout; a
+-- set named "H" serves every Holy one. So one set can cover a whole spec, a
+-- finer one can cover a hero talent, and a specific one can cover a single
+-- build -- and the most specific name that fits always wins, because a longer
+-- prefix is a more deliberate choice.
 --
--- MATCHING NEVER GUESSES. Exact name first, then a set named for the loadout's
--- base, then -- only if exactly one set shares that base -- that one. Two
--- candidates means doing nothing, because equipping the wrong set costs a
--- conscious regear and a wrong guess here would be silent.
+-- That also removes the need to refuse. An earlier version matched exact name,
+-- then base, then any set sharing the base -- and did nothing when two shared
+-- one, since picking between "SA-Raid1" and "SA-Raid-MT" was a guess. Longest
+-- prefix has no such case: set names are unique, so the longest one that fits
+-- is unique too.
+--
+-- NO ADDON IS REQUIRED. TalentLoadoutManager's names are read when it is there,
+-- and Blizzard's own saved loadouts when it is not -- the convention lives in
+-- the names, not in whoever stores them.
 --
 -- It acts on loadout CHANGES, not continuously. Equipping something else by
 -- hand afterwards is a decision, and a module that undid it every few seconds
@@ -27,13 +33,9 @@ local GearSync = {
     description = "Equips the gear set matching the talent loadout you apply.",
     dbKey = "gearSync",
     category = "Automation",
-    conditions = {
-        { text = "TalentLoadoutManager loaded",
-          help = "The loadout names this matches against are TLM's. Blizzard's "
-              .. "own loadout slots carry a different set of names, so without "
-              .. "TLM there is nothing to match.",
-          met = function() return AniMods.IsAddOnLoaded("TalentLoadoutManager") end },
-    },
+    -- No conditions. It reads whichever loadout source is present, and an
+    -- install with neither simply has no name to match on -- which the panel
+    -- says in a row rather than as a red badge.
 }
 
 local moduleEnabled = true
@@ -46,21 +48,36 @@ local function ModuleDB()
     return AniModsDB.gearSync
 end
 
-local function Naming()
-    return AniMods.LoadoutName
-end
-
 -- ---------------------------------------------------------------------------
 -- The two sides
 -- ---------------------------------------------------------------------------
 
+-- TalentLoadoutManager first when it is there, Blizzard's own saved loadout
+-- otherwise. TLM's list is a superset -- its loadouts are the ones a TLM user
+-- actually names and applies -- but nothing here needs it, because the
+-- convention lives in the NAME rather than in whoever stores it.
 local function ActiveLoadoutName()
     local api = _G.TalentLoadoutManagerAPI
     local char = api and api.CharacterAPI
-    if not (char and type(char.GetActiveLoadoutInfo) == "function") then return nil end
-    local ok, info = _G.pcall(char.GetActiveLoadoutInfo, char)
-    if not ok or type(info) ~= "table" then return nil end
-    return info.name
+    if char and type(char.GetActiveLoadoutInfo) == "function" then
+        local ok, info = _G.pcall(char.GetActiveLoadoutInfo, char)
+        if ok and type(info) == "table" and info.name then return info.name, "TLM" end
+    end
+
+    -- Blizzard's, by the route SpecSwitch documents: the last-selected saved
+    -- config for this spec, then that config's name.
+    local talents, traits = _G.C_ClassTalents, _G.C_Traits
+    if not (talents and talents.GetLastSelectedSavedConfigID and traits and traits.GetConfigInfo) then
+        return nil, nil
+    end
+    local specIndex = _G.C_SpecializationInfo.GetSpecialization()
+    local specID = specIndex and _G.C_SpecializationInfo.GetSpecializationInfo(specIndex)
+    if not specID then return nil, nil end
+    local configID = talents.GetLastSelectedSavedConfigID(specID)
+    if not configID then return nil, nil end
+    local info = traits.GetConfigInfo(configID)
+    if type(info) ~= "table" or not info.name then return nil, nil end
+    return info.name, "Blizzard"
 end
 
 -- name -> setID, plus the ID of whatever is equipped right now.
@@ -82,41 +99,39 @@ end
 -- Matching
 -- ---------------------------------------------------------------------------
 
+--- The set whose name is the LONGEST prefix of the loadout name.
+---
+--- "HO" serves every HO-* loadout and "H" every Holy one, so one set can cover
+--- a spec, a finer one a hero talent, and a specific one a single build. The
+--- longest match wins because a longer name is a more deliberate choice -- an
+--- exact match is simply the longest possible prefix, needing no special case.
+---
+--- Compared case-insensitively. The convention's letters carry meaning but
+--- their capitalisation does not, and a set named "ha-raid" failing to match
+--- "HA-Raid1" would be a silent nothing rather than a visible mistake.
+---
 --- @return number|nil setID
 --- @return string reason  what was matched, or why nothing was
 local function FindSet(loadoutName)
-    local naming = Naming()
-    if not naming then return nil, "the loadout parser is not available" end
+    local byName = EquipmentSets()
+    local wanted = loadoutName:lower()
 
-    local byName, _ = EquipmentSets()
-
-    if byName[loadoutName] then
-        return byName[loadoutName], "exact name"
-    end
-
-    local base = naming.Base(loadoutName)
-    if base == naming.UNCATEGORISED then
-        return nil, ("%q carries no case token, so it has no base to match on"):format(loadoutName)
-    end
-
-    if byName[base] then
-        return byName[base], "base name"
-    end
-
-    -- Last resort: a set whose own name reduces to the same base. Only when
-    -- there is exactly one -- "SA-Raid1" and "SA-Raid-MT" are both plausible
-    -- partners for an "SA-Raid" build, and picking between them is a guess.
-    local found, count = nil, 0
+    local bestName, bestID
     for name, id in pairs(byName) do
-        if naming.Base(name) == base then
-            found, count = id, count + 1
+        if name ~= "" and wanted:sub(1, #name) == name:lower() then
+            if not bestName or #name > #bestName then
+                bestName, bestID = name, id
+            end
         end
     end
-    if count == 1 then return found, "shared base" end
-    if count > 1 then
-        return nil, ("%d sets share the base %q, so none was picked"):format(count, base)
+
+    if not bestID then
+        return nil, ("no set name is a prefix of %q"):format(loadoutName)
     end
-    return nil, ("no set matches %q or %q"):format(loadoutName, base)
+    if #bestName == #loadoutName then
+        return bestID, "exact name"
+    end
+    return bestID, ("prefix %q"):format(bestName)
 end
 
 -- ---------------------------------------------------------------------------
@@ -175,13 +190,24 @@ local callbackRegistered = false
 
 local function EnsureCallback()
     if callbackRegistered then return end
-    local api = _G.TalentLoadoutManagerAPI
-    if not (api and api.Event and type(api.RegisterCallback) == "function") then return end
     callbackRegistered = true
-    -- TalentLoadoutManagerAPI implements CallbackRegistryMixin, which its own
-    -- header points out is there to be used -- so this is the addon's intended
-    -- way in rather than a hook into its internals.
-    api:RegisterCallback(api.Event.CustomLoadoutApplied, OnLoadoutApplied, callbackOwner)
+
+    local api = _G.TalentLoadoutManagerAPI
+    if api and api.Event and type(api.RegisterCallback) == "function" then
+        -- TalentLoadoutManagerAPI implements CallbackRegistryMixin, which its
+        -- own header points out is there to be used -- so this is the addon's
+        -- intended way in rather than a hook into its internals.
+        api:RegisterCallback(api.Event.CustomLoadoutApplied, OnLoadoutApplied, callbackOwner)
+    end
+
+    -- Blizzard's side, for an install with no TalentLoadoutManager and for the
+    -- loadouts TLM does not own. This is the same pointer SpecSwitch watches:
+    -- there is no event for "a saved loadout was selected", only the call that
+    -- records which one.
+    local talents = _G.C_ClassTalents
+    if talents and talents.UpdateLastSelectedSavedConfigID then
+        _G.hooksecurefunc(talents, "UpdateLastSelectedSavedConfigID", OnLoadoutApplied)
+    end
 end
 
 local function EnsureWatcher()
@@ -191,7 +217,17 @@ local function EnsureWatcher()
     -- A spec change swaps the active loadout without applying one, so the
     -- callback above never fires for it.
     watcher:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
+    -- The panel's "Now" section reports live state -- which sets exist and
+    -- which is worn -- so it has to hear about both. Neither triggers a sync:
+    -- saving a set or changing clothes is your doing, and re-equipping over it
+    -- would be the module arguing.
+    watcher:RegisterEvent("EQUIPMENT_SETS_CHANGED")
+    watcher:RegisterEvent("EQUIPMENT_SWAP_FINISHED")
     watcher:SetScript("OnEvent", function(_, event)
+        if event == "EQUIPMENT_SETS_CHANGED" or event == "EQUIPMENT_SWAP_FINISHED" then
+            if AniMods.RefreshUI then AniMods.RefreshUI() end
+            return
+        end
         if not moduleEnabled then return end
         if event == "PLAYER_REGEN_ENABLED" then
             if pendingName then
@@ -213,22 +249,17 @@ end
 
 function GearSync:GetInfoRows()
     local rows = {}
-    local loadoutName = ActiveLoadoutName()
-    local naming = Naming()
+    local loadoutName, source = ActiveLoadoutName()
 
     rows[#rows + 1] = { section = "Now" }
     rows[#rows + 1] = {
         label = "Talent loadout",
         value = loadoutName or "none",
-        help  = "TLM's active loadout. Blizzard's own slot name is a different "
-             .. "thing and is not what this matches on.",
-    }
-    rows[#rows + 1] = {
-        label = "Base",
-        value = (loadoutName and naming and naming.Base(loadoutName)) or "-",
-        help  = "The {Prefix}-{Case} part of the name, shared by every variant "
-             .. "of a build. An equipment set named for the base pairs with all "
-             .. "of them.",
+        help  = source
+            and ("Read from " .. source .. ". TalentLoadoutManager is used when "
+                .. "it is installed, Blizzard's own saved loadouts otherwise -- "
+                .. "the convention lives in the name, not in whoever stores it.")
+            or  "No saved loadout is selected, so there is no name to match on.",
     }
 
     local _, equippedID = EquipmentSets()
@@ -236,13 +267,21 @@ function GearSync:GetInfoRows()
         label = "Equipped set",
         value = (equippedID and _G.C_EquipmentSet.GetEquipmentSetInfo(equippedID)) or "none",
     }
+
+    local matchID, matchWhy = nil, nil
+    if loadoutName then matchID, matchWhy = FindSet(loadoutName) end
+    rows[#rows + 1] = {
+        label = "Would equip",
+        value = (matchID and _G.C_EquipmentSet.GetEquipmentSetInfo(matchID)) or "nothing",
+        help  = "The set whose name is the longest prefix of the loadout name. "
+             .. "\"HO\" serves every HO-* loadout and \"H\" every Holy one, so "
+             .. "one set can cover a spec and a more specific name always wins. "
+             .. "Matched ignoring case."
+             .. (matchWhy and ("\n\nRight now: " .. matchWhy .. ".") or ""),
+    }
     rows[#rows + 1] = {
         label = "Last result",
         value = lastResult.reason or "nothing tried yet",
-        help  = "Matching is exact name, then a set named for the base, then a "
-             .. "set sharing the base -- and only when exactly one does. Two "
-             .. "candidates means doing nothing, because equipping the wrong "
-             .. "set costs a regear and a wrong guess would be silent.",
     }
 
     rows[#rows + 1] = { section = "Behaviour" }
