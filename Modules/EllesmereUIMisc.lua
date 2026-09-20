@@ -510,38 +510,38 @@ local function FindFriendsButton()
 end
 
 local friendsPopupEnabled = false
-local friendsPopupFrame
 
 -- EllesmereUI anchors that popup by its MINIMAP button row's grow direction
--- (EBS._Grow.Dir), which is the right answer beside the minimap and a
--- meaningless one for a widget on a data bar -- a bar along the top of the
--- screen would get a popup growing upward, off it.
+-- (EBS._Grow.edge[EBS._Grow.Dir()]). Beside the minimap that is right; for a
+-- widget on a data bar it is not. With the row growing left, the popup's
+-- TOPRIGHT pins to the widget's TOPLEFT -- so it hangs off the side of a
+-- top-right widget instead of dropping below it.
 --
--- The frame is a file-local over there, so it is found by the relationship
--- instead: EllesmereUI anchors it TO the frame we passed, so the popup is the
--- one child of UIParent whose first point is relative to our anchor. That is
--- identification, not a guess -- nothing else in the UI is anchored to a frame
--- we created a moment ago. Cached once found.
-local function FindPopupAnchoredTo(anchor)
-    if friendsPopupFrame then return friendsPopupFrame end
-    for _, child in ipairs({ _G.UIParent:GetChildren() }) do
-        if child ~= anchor and child:IsShown() and child.GetNumPoints and child:GetNumPoints() > 0 then
-            local _, relativeTo = child:GetPoint(1)
-            if relativeTo == anchor then
-                friendsPopupFrame = child
-                return child
-            end
-        end
-    end
-    return nil
+-- The frame comes from EllesmereUI's own addon registry. Its module table is a
+-- file-local, but Lite.GetAddon is the accessor EllesmereUI itself uses to
+-- reach sibling modules -- and that table carries `_friendsTT`, assigned
+-- beside the file-local precisely so it can be reached.
+--
+-- An earlier version hunted for the frame among UIParent's children by looking
+-- for one anchored to our widget. That found nothing -- the popup is not
+-- parented there -- and the failure was silent, which is how the placement
+-- looked untouched rather than broken.
+local function PopupFrame()
+    local lite = _G.EllesmereUI and _G.EllesmereUI.Lite
+    if not (lite and lite.GetAddon) then return nil end
+    local ebs = lite.GetAddon("EllesmereUIMinimap", true)
+    local frame = ebs and ebs._friendsTT
+    return (type(frame) == "table" and frame.SetPoint) and frame or nil
 end
 
 local function RepositionPopup(anchor)
-    local popup = FindPopupAnchoredTo(anchor)
+    local popup = PopupFrame()
     if not popup then return end
-    -- The same rule every other AniMods popup follows: open downward from a
-    -- widget in the top half of the screen, upward from one in the bottom, and
-    -- align by screen thirds horizontally so it never runs off the side.
+    -- Re-anchored on every show, because EllesmereUI clears and re-points it
+    -- each time. The same rule every other AniMods popup follows: open downward
+    -- from a widget in the top half of the screen, upward from one in the
+    -- bottom, and align by screen thirds horizontally so it never runs off the
+    -- side.
     AniMods.W.AnchorNear(popup, anchor, 4)
 end
 
