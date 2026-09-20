@@ -221,7 +221,12 @@ end
 --
 -- `objectName` is reported verbatim, because that is the string to look for
 -- in a data bar's widget picker -- more use than a yes/no.
-function Broker.SectionRows(getDB, onChange, objectName)
+-- `opts.noIconStyle` drops the Icon style row for a widget whose icon comes
+-- from neither art family. GearSync is the case: it draws the equipment set's
+-- own icon, the one picked in Blizzard's set dialog, so the control would be
+-- offering a choice that changes nothing. An inert control is worse than a
+-- missing one -- it invites you to try it and then says nothing back.
+function Broker.SectionRows(getDB, onChange, objectName, opts)
     local ldb = _G.LibStub and _G.LibStub:GetLibrary("LibDataBroker-1.1", true)
     local published = ldb and objectName and ldb:GetDataObjectByName(objectName)
 
@@ -260,7 +265,7 @@ function Broker.SectionRows(getDB, onChange, objectName)
             set     = function(v) getDB().brokerDisplayMode = v; onChange() end,
         }
         -- Only meaningful while icons are being drawn at all.
-        if Broker.GetDisplayMode(getDB) == "icon" then
+        if Broker.GetDisplayMode(getDB) == "icon" and not (opts and opts.noIconStyle) then
             rows[#rows + 1] = {
                 label   = "Icon style",
                 options = Broker.ICON_STYLE_LABEL,

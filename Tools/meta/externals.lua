@@ -34,6 +34,14 @@ EllesmereUIRaidToolsIcon = nil
 ---@type any
 _EUI_RaidTools_DB = nil
 
+---EllesmereUIBlizzardSkin's own Equipment tab button on the character sheet.
+---Its skin overlays Blizzard's EquipmentManagerPane with a gear-sets panel of
+---its own, so clicking this button -- not PaperDollSidebarTab3 -- is what
+---switches that sheet to the equipment view. GearSync's right-click uses it
+---when the skin built one and Blizzard's tab when it did not.
+---@type any
+EUI_CharSheet_Equipment = nil
+
 ---EllesmereUI's SAVED VARIABLE table, not its namespace (that is
 ---`EllesmereUI`). AutoCombatLog reads and writes EllesmereUIDB.autoLogging to
 ---switch EllesmereUIQoL's own auto-logging on.
