@@ -9,6 +9,18 @@
 -- more -- it is EllesmereUI's own, shown through the Friends Popup entry in
 -- EllesmereUI Misc (which owns the reach into it) and anchored at this widget.
 --
+-- That asymmetry is DELIBERATE and settled, not an oversight waiting to be
+-- fixed. The popup was borrowable because it hangs off a frame script, and a
+-- frame's scripts are reachable; a count hangs off nothing -- EllesmereUI's
+-- friends button carries an icon and no number, and GatherOnlineFriends stores
+-- its result nowhere. So there is no surface to borrow even in principle.
+--
+-- It does not matter, because the counting is plain Blizzard API with nothing
+-- clever in it: BNGetNumFriends, C_FriendList, C_GuildInfo, an online test and
+-- a dedup. There is no EllesmereUI-specific judgement to drift away from. If
+-- that ever stops being true, the symptom is the number disagreeing with the
+-- list the popup shows -- and the popup is the one to believe.
+--
 -- This header used to claim EllesmereUI's popup was "entirely unreachable": the
 -- button unnamed, and ShowFriendsTooltip "wired via HookScript, which isn't
 -- retrievable through GetScript()". Both halves were wrong, and about two
