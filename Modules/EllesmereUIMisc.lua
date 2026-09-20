@@ -94,14 +94,21 @@ end
 local STATS_FRAME_NAME = "AniModsMissingStats"
 local EUI_FRAME_NAME = "EUI_SecondaryStats"
 
--- EllesmereUIQoL's own defaults for its block, used only if its FontString
--- cannot be read for some reason.
+-- EllesmereUIQoL's own constants, copied rather than read: they are file-locals
+-- over there with nothing exported, so the only way to match them is to match
+-- them. Every one of these is a value the rows are measured against, and being
+-- off by one makes these two rows visibly not part of the list they sit in --
+-- LABEL_GAP was two spaces against EllesmereUI's one, which is exactly what
+-- made the item level and primary stat sit further from their colons than every
+-- row below them.
+--
+-- EllesmereUIQoL.lua: ROW_GAP = 3, LABEL_GAP = " ", font size 12.
 local DEFAULT_FONT_SIZE = 12
-local DEFAULT_SPACING = 2
+local DEFAULT_SPACING = 3
+local LABEL_GAP = " "
 -- Gap between our rows and EUI's, in the same units as the row spacing: the two
 -- are one list, not two stacked panels.
 local BLOCK_GAP = 2
-local LABEL_GAP = "  "
 
 local statsFrame, statsText
 local lastSize = { w = 160, h = 40 }
@@ -291,7 +298,18 @@ local function UpdateStats()
     local rows, vals = {}, {}
     local anySecret = false
 
+    -- The label is TEMPLATE text, not an argument: it is baked into the string
+    -- that SetFormattedText then fills, so a "%" inside it would be read as a
+    -- format spec and eat one of the figures. These labels come from the
+    -- client, and no locale has one today -- but EllesmereUI escapes its own
+    -- for this exact reason, and a crash that waits for a translation is worse
+    -- than one that happens now.
+    local function Esc(text)
+        return (text:gsub("%%", "%%%%"))
+    end
+
     local function Row(label, body, value)
+        label = Esc(label)
         if value == nil then
             rows[#rows + 1] = ("|cff%s%s:|r%s?"):format(hex, label, LABEL_GAP)
             return
