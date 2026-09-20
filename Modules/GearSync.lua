@@ -434,14 +434,37 @@ end
 -- Watching
 -- ---------------------------------------------------------------------------
 
--- Coalesced, because PLAYER_EQUIPMENT_CHANGED fires once per SLOT: a set swap
--- arrives as a dozen-odd events in the same frame, and every one of them would
--- otherwise re-walk the equipment sets and repaint the panel to reach the same
--- answer. One redraw per frame is the most any of this can be seen at.
-Refresh = AniMods.Coalesce(function()
+local function Redraw()
     UpdateBroker()
     if AniMods.RefreshUI then AniMods.RefreshUI() end
-end)
+end
+
+-- Next frame. For everything whose answer is readable the moment its event
+-- fires: a loadout was applied, a spec changed, a click was made.
+Refresh = AniMods.Coalesce(Redraw)
+
+-- And the same redraw a third of a second later, for the events that mean YOUR
+-- GEAR CHANGED. Two reasons, and the second is a bug this fixes.
+--
+-- The first is volume: PLAYER_EQUIPMENT_CHANGED fires once per SLOT, so a set
+-- swap arrives as a dozen-odd events and each would re-walk the sets to reach
+-- the answer the last one produces anyway.
+--
+-- The second is that the answer is not there yet. C_EquipmentSet's isEquipped
+-- is derived from what you are wearing, so mid-swap it still names the set you
+-- are leaving -- EllesmereUIBlizzardSkin waits exactly this long before reading
+-- it, saying so in its QueueColorRefresh: Blizzard's numLost/isEquipped
+-- metadata needs all slots to settle first.
+--
+-- That is what made a manual set switch leave the widget on its old colour. The
+-- redraw ran inside EQUIPMENT_SWAP_FINISHED, read the set being left as still
+-- equipped, concluded everything agreed -- and nothing fired afterwards to say
+-- otherwise, because EQUIPMENT_SETS_CHANGED is structural (add, rename, delete)
+-- and not "a different set is on now". The tooltip looked right throughout
+-- because it recomputes at hover, long after the dust has settled, which is
+-- exactly the shape of a staleness bug: the cached view is wrong and the
+-- computed-on-demand one is not.
+local RefreshSettled = AniMods.Coalesce(Redraw, 0.3)
 
 local function OnLoadoutApplied()
     -- One frame later: TLM fires this as it applies, and the active loadout it
@@ -484,26 +507,34 @@ local function EnsureWatcher()
     -- A spec change swaps the active loadout without applying one, so the
     -- callback above never fires for it.
     watcher:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
-    -- Which sets exist and which is worn are half of what the widget and the
-    -- panel display, so both have to be heard. Neither triggers a sync: saving
-    -- a set or changing clothes is your doing, and re-equipping over it would
-    -- be the module arguing.
+    -- The three that mean your gear or your sets moved. All display, none a
+    -- sync: saving a set or changing clothes is your doing, and re-equipping
+    -- over it would be the module arguing. All settled rather than immediate,
+    -- for the reason RefreshSettled gives at length.
+    --
+    -- All THREE, because no one of them covers the others. EQUIPMENT_SETS_CHANGED
+    -- is structural -- a set added, renamed or deleted -- and stays silent when
+    -- you merely put a different one on. EQUIPMENT_SWAP_FINISHED covers that,
+    -- and only that. And PLAYER_EQUIPMENT_CHANGED is the one for swapping an
+    -- ITEM by hand, which can take you out of a set without any set ever having
+    -- been applied.
     watcher:RegisterEvent("EQUIPMENT_SETS_CHANGED")
     watcher:RegisterEvent("EQUIPMENT_SWAP_FINISHED")
-    -- And the one neither of those covers: swapping an ITEM by hand, which can
-    -- take you out of a set (or into one) without any set ever being applied.
-    -- isEquipped is recomputed from what you are wearing, so this is the event
-    -- that actually decides which set the widget names. Display only, like the
-    -- two above -- changing clothes is your doing.
     watcher:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
     -- Display only. Logging in is not a decision to change builds, but the sets
     -- are not readable until the world is, so this is when the widget can first
     -- say anything at all.
     watcher:RegisterEvent("PLAYER_ENTERING_WORLD")
     watcher:SetScript("OnEvent", function(_, event)
-        -- Every one of these changes what is displayed, whether or not it
-        -- changes what is worn -- so the redraw is unconditional and what
-        -- follows is only about acting.
+        if event == "EQUIPMENT_SETS_CHANGED"
+            or event == "EQUIPMENT_SWAP_FINISHED"
+            or event == "PLAYER_EQUIPMENT_CHANGED" then
+            RefreshSettled()
+            return
+        end
+
+        -- The rest are readable at once, and some of them are also a reason to
+        -- act, which is what follows.
         Refresh()
 
         if not moduleEnabled then return end

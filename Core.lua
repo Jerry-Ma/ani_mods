@@ -122,7 +122,19 @@ AniMods.CompareVersions = CompareVersions
 -- the helper that avoids N walks was itself producing garbage on the same
 -- schedule. Nothing about the closure varies between bursts, so there is
 -- nothing to rebuild.
-function AniMods.Coalesce(fn)
+-- `delay` waits longer than the next frame, for the case where the burst
+-- finishing is not the same moment as the data being readable. Some of
+-- Blizzard's derived metadata is recomputed from a state that the events
+-- themselves are announcing changes to, and is wrong until every one of them
+-- has landed -- C_EquipmentSet's isEquipped is the one that led to this: it is
+-- worked out from what you are wearing, so it still names the OLD set while a
+-- swap is in flight. EllesmereUIBlizzardSkin waits 0.3s before reading it, for
+-- the same reason and by the same discovery.
+--
+-- Use it only where the wait is a documented property of the data. Everywhere
+-- else the default is right: a burst is over by the next frame, and a delay
+-- would be latency in exchange for nothing.
+function AniMods.Coalesce(fn, delay)
     local scheduled = false
     local run = function()
         scheduled = false
@@ -131,7 +143,7 @@ function AniMods.Coalesce(fn)
     return function()
         if scheduled then return end
         scheduled = true
-        C_Timer.After(0, run)
+        C_Timer.After(delay or 0, run)
     end
 end
 
