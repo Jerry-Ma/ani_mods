@@ -104,6 +104,18 @@ local function BaseOf(name)
     return BaseName(prefix, case)
 end
 
+-- Published so the convention has ONE definition. Gear Sync matches equipment
+-- set names against loadout names, which only works while both are read by the
+-- same parser -- a second copy of CASE_TOKENS would drift the first time a case
+-- was added, and the symptom would be gear quietly not swapping rather than
+-- anything that looks like a bug.
+AniMods.LoadoutName = {
+    Parse        = ParseName,
+    Base         = BaseOf,
+    CASE_TOKENS  = CASE_TOKENS,
+    UNCATEGORISED = UNCATEGORISED,
+}
+
 -- ---------------------------------------------------------------------------
 -- Talking to TLM
 -- ---------------------------------------------------------------------------

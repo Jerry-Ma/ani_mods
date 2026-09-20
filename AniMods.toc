@@ -8,7 +8,7 @@
 ## AddonCompartmentFuncOnEnter: AniMods_OnAddonCompartmentEnter
 ## AddonCompartmentFuncOnLeave: AniMods_OnAddonCompartmentLeave
 ## SavedVariables: AniModsDB
-## OptionalDeps: EllesmereUI, EllesmereUIBlizzardSkin, EllesmereUIQoL, EllesmereUIChat, EllesmereUIMinimap, NDui, NorthernSkyRaidTools, MRT
+## OptionalDeps: EllesmereUI, EllesmereUIBlizzardSkin, EllesmereUIQoL, EllesmereUIChat, EllesmereUIMinimap, NDui, NorthernSkyRaidTools, MRT, TalentLoadoutManager
 
 Libs\LibStub\LibStub.lua
 
@@ -26,6 +26,7 @@ Modules\ChatContextSwitch.lua
 Modules\DamageMeter.lua
 Modules\EllesmereUIMisc.lua
 Modules\ExtraButtonClicks.lua
+Modules\GearSync.lua
 Modules\GroupRoles.lua
 Modules\NSRTMisc.lua
 Modules\PluginButtons.lua
