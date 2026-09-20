@@ -935,6 +935,9 @@ end
 -- and looks best centred, and only the outer thirds actually need to be pushed
 -- inward. Clamping is still on as a backstop for a popup wider than the space
 -- its third leaves.
+-- Exported as W.AnchorNear too: EllesmereUI's friends popup is anchored by its
+-- MINIMAP button row's grow direction, which means nothing for a widget on a
+-- data bar, so EllesmereUI Misc re-anchors it with this after showing it.
 local function AnchorNear(frame, anchor, gap)
     gap = gap or 4
     frame:ClearAllPoints()
@@ -960,6 +963,8 @@ local function AnchorNear(frame, anchor, gap)
 
     frame:SetPoint(mine, anchor, yours, 0, openDown and -gap or gap)
 end
+
+W.AnchorNear = AnchorNear
 
 -- ── Tooltip ─────────────────────────────────────────────────────────────────
 -- A themed hover popup for broker widgets.

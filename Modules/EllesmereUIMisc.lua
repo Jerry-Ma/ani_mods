@@ -510,6 +510,40 @@ local function FindFriendsButton()
 end
 
 local friendsPopupEnabled = false
+local friendsPopupFrame
+
+-- EllesmereUI anchors that popup by its MINIMAP button row's grow direction
+-- (EBS._Grow.Dir), which is the right answer beside the minimap and a
+-- meaningless one for a widget on a data bar -- a bar along the top of the
+-- screen would get a popup growing upward, off it.
+--
+-- The frame is a file-local over there, so it is found by the relationship
+-- instead: EllesmereUI anchors it TO the frame we passed, so the popup is the
+-- one child of UIParent whose first point is relative to our anchor. That is
+-- identification, not a guess -- nothing else in the UI is anchored to a frame
+-- we created a moment ago. Cached once found.
+local function FindPopupAnchoredTo(anchor)
+    if friendsPopupFrame then return friendsPopupFrame end
+    for _, child in ipairs({ _G.UIParent:GetChildren() }) do
+        if child ~= anchor and child:IsShown() and child.GetNumPoints and child:GetNumPoints() > 0 then
+            local _, relativeTo = child:GetPoint(1)
+            if relativeTo == anchor then
+                friendsPopupFrame = child
+                return child
+            end
+        end
+    end
+    return nil
+end
+
+local function RepositionPopup(anchor)
+    local popup = FindPopupAnchoredTo(anchor)
+    if not popup then return end
+    -- The same rule every other AniMods popup follows: open downward from a
+    -- widget in the top half of the screen, upward from one in the bottom, and
+    -- align by screen thirds horizontally so it never runs off the side.
+    AniMods.W.AnchorNear(popup, anchor, 4)
+end
 
 -- Published for Social Status rather than called by it directly, so the reach
 -- into EllesmereUI lives in the module that is about EllesmereUI.
@@ -525,7 +559,9 @@ local FriendsPopup = {
         if not onEnter then return false end
         -- xpcall: this runs another addon's handler from inside a data bar's
         -- hover path, and an error escaping would read as the bar being broken.
-        return _G.xpcall(onEnter, _G.geterrorhandler(), anchor) and true or false
+        if not _G.xpcall(onEnter, _G.geterrorhandler(), anchor) then return false end
+        RepositionPopup(anchor)
+        return true
     end,
     Hide = function()
         local button = FindFriendsButton()
