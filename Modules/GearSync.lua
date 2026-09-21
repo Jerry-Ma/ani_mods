@@ -97,19 +97,40 @@ local function ActiveLoadoutName()
     return info.name, "Blizzard"
 end
 
--- name -> setID, plus the ID of whatever is equipped right now.
+--- Every saved set by name, and EVERY set that is currently worn.
+---
+--- ISEQUIPPED IS NOT "THIS IS THE SET YOU CHOSE". It means every item in this
+--- set is on you right now -- so two sets holding the same gear are BOTH
+--- equipped, always, and there is no way to ask which one you picked. Blizzard
+--- does not record that.
+---
+--- This used to keep a single equippedID and let each pass overwrite the last,
+--- which silently meant "whichever equipped set happens to come last in
+--- GetEquipmentSetIDs". With an HO-Raid and an HO-M+ carrying identical gear
+--- that was a coin toss the module then reported as fact -- and lost, forever,
+--- because the losing name never changes. See Status for what is asked instead.
+---
+--- @return table byName         set name -> setID
+--- @return table equipped       setID -> true for every set fully worn
+--- @return number|nil firstWorn the lowest-ordered worn set, for display only
 local function EquipmentSets()
-    local byName, equippedID = {}, nil
+    local byName, equipped, firstWorn = {}, {}, nil
     local ids = _G.C_EquipmentSet.GetEquipmentSetIDs()
-    if type(ids) ~= "table" then return byName, nil end
+    if type(ids) ~= "table" then return byName, equipped, nil end
     for _, id in ipairs(ids) do
         local name, _, _, isEquipped = _G.C_EquipmentSet.GetEquipmentSetInfo(id)
         if name then
             byName[name] = id
-            if isEquipped then equippedID = id end
+            if isEquipped then
+                equipped[id] = true
+                -- In list order rather than pairs order, so a display with
+                -- nothing better to show at least shows the same thing twice
+                -- running.
+                if not firstWorn then firstWorn = id end
+            end
         end
     end
-    return byName, equippedID
+    return byName, equipped, firstWorn
 end
 
 -- ---------------------------------------------------------------------------
@@ -164,7 +185,9 @@ end
 --
 -- Four states, and only ONE of them is a problem:
 --
---   synced    -- the set the loadout names is the set you are wearing.
+--   synced    -- the set the loadout names is on you. Not "is the set you
+--                picked" -- see below, that is a question the game cannot
+--                answer and this does not ask.
 --   drift     -- a set matches and you are wearing something else. The state
 --                this widget exists for; it is quiet in every other.
 --   unmatched -- a loadout is applied and no set name is a prefix of it. Not a
@@ -173,12 +196,7 @@ end
 --   noloadout -- nothing applied, so there is nothing to compare against.
 local function Status()
     local loadout, source = ActiveLoadoutName()
-    local byName, equippedID = EquipmentSets()
-
-    local equippedName, equippedIcon
-    if equippedID then
-        equippedName, equippedIcon = _G.C_EquipmentSet.GetEquipmentSetInfo(equippedID)
-    end
+    local byName, equipped, firstWorn = EquipmentSets()
 
     local targetID, why
     if loadout then targetID, why = FindSet(byName, loadout) end
@@ -187,12 +205,37 @@ local function Status()
         targetName, targetIcon = _G.C_EquipmentSet.GetEquipmentSetInfo(targetID)
     end
 
+    -- THE QUESTION IS NOT WHICH SET IS ON. It is whether the one your loadout
+    -- names is on, and that is answerable where the other is not: ask about the
+    -- target set alone and identical sets stop mattering, because wearing
+    -- HO-Raid while your loadout wants an HO-M+ holding the same gear means you
+    -- are already wearing exactly what it asked for.
+    --
+    -- Asking the other way round is what made the warning unclearable. With two
+    -- sets carrying the same items both read as equipped, the old code kept
+    -- whichever came last, and if that was not the target the module concluded
+    -- drift -- then equipped the target, changed nothing (the gear was already
+    -- on), and drew the same conclusion again. The chat line said it had
+    -- equipped HO-M+ twice while the bar went on saying HO-Raid.
+    local synced = (targetID and equipped[targetID]) and true or false
+
+    -- What to NAME as worn. The target when it is on, so identical sets settle
+    -- on the one you meant rather than on list order. Otherwise any worn set,
+    -- which is display only and carries no decision.
+    local equippedID = synced and targetID or firstWorn
+    local equippedName, equippedIcon
+    if equippedID and equippedID == targetID then
+        equippedName, equippedIcon = targetName, targetIcon
+    elseif equippedID then
+        equippedName, equippedIcon = _G.C_EquipmentSet.GetEquipmentSetInfo(equippedID)
+    end
+
     local state
     if not loadout then
         state = "noloadout"
     elseif not targetID then
         state = "unmatched"
-    elseif targetID == equippedID then
+    elseif synced then
         state = "synced"
     else
         state = "drift"
