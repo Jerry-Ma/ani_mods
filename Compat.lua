@@ -158,8 +158,6 @@ local function FadeRegions(frame, keep)
     end
 end
 
-local looksCallbacks = {}
-
 function AniMods.BuildStockSkin()
     local S = {}
 
@@ -195,14 +193,21 @@ function AniMods.BuildStockSkin()
         return DEFAULT_FONT, ""
     end
 
-    -- Registered and kept, but nothing fires it: this provider's theme is
-    -- static (class colour cannot change mid-session). Honouring the contract
-    -- costs nothing and means Widgets.lua needs no special case; if AniMods
-    -- ever grows its own accent setting, AniMods.RefreshStockLooks() below is
-    -- the hook to call.
-    function S.OnLooksChanged(fn)
-        if type(fn) == "function" then looksCallbacks[#looksCallbacks + 1] = fn end
-    end
+    -- Part of the contract, and deliberately a no-op.
+    --
+    -- The member exists because Widgets.lua calls it on whichever facade
+    -- answers; under EllesmereUI it is how a theme change reaches us. This
+    -- provider has no theme that can change, so there is nothing to call back.
+    --
+    -- It once kept a callback list against the day AniMods grew an accent
+    -- setting of its own. That day came, and the list turned out to be the
+    -- wrong place: an accent change has to repaint under EITHER provider, so
+    -- General calls W.RefreshLooks directly and W owns the registry the widgets
+    -- actually register with. A provider-side list would have been empty
+    -- exactly when EllesmereUI was in use. Kept as a no-op rather than deleted
+    -- because the facade must answer the call; not kept as a list, because a
+    -- list nothing walks is a promise nothing keeps.
+    function S.OnLooksChanged() end
 
     -- Flat solid panel with the house border. opts.inset = darker nested
     -- fill, opts.shade = translucent wash, opts.noBorder = skip the border.
@@ -347,15 +352,4 @@ function AniMods.BuildStockSkin()
     end
 
     return S
-end
-
--- Fires every OnLooksChanged callback. Nothing calls this yet -- see the note
--- on S.OnLooksChanged -- but it is what an AniMods-owned accent setting would
--- call, and having it here keeps that a one-line change rather than a
--- redesign.
-function AniMods.RefreshStockLooks()
-    for i = 1, #looksCallbacks do
-        local ok, err = pcall(looksCallbacks[i])
-        if not ok then geterrorhandler()(err) end
-    end
 end

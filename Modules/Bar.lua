@@ -5,8 +5,8 @@
 -- ── Why this exists ──────────────────────────────────────────────────────────
 --
 -- Every AniMods module that shows live information publishes it as an LDB
--- data object rather than drawing it somewhere: GroupRoles, SocialStatus and
--- SoundSwitch all do. That is the right split -- it means EllesmereUIDataBars,
+-- data object rather than drawing it somewhere -- Group Roles, Sound Switch,
+-- Spec Switch, Gear Sync and the rest. That is the right split -- it means EllesmereUIDataBars,
 -- Titan, ChocolateBar, Bazooka or AbstractBar can all display them -- but it
 -- leaves a gap: with none of those installed there is nowhere for the data to
 -- appear at all. This closes it, without making AniMods depend on any of them.
@@ -324,8 +324,9 @@ local function EnsureItem(name)
 
     -- Forward the standard LDB interaction contract to the plugin. OnEnter is
     -- preferred over OnTooltipShow when a plugin offers both -- the same
-    -- precedence EllesmereUIDataBars uses, and what lets SocialStatus draw its
-    -- own bordered popup instead of a plain GameTooltip.
+    -- precedence EllesmereUIDataBars uses, and what lets a plugin draw a real
+    -- frame instead of a plain GameTooltip -- AniMods' own themed popup for
+    -- most of these, and EllesmereUI's own friends popup for Social Status.
     btn:SetScript("OnClick", function(self, button)
         local obj = ldb and ldb:GetDataObjectByName(name)
         if obj then Safe(obj.OnClick, self, button) end

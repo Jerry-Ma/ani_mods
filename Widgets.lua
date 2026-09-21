@@ -224,8 +224,10 @@ end
 -- Split out of W.Font because the outline flag is the part callers get wrong:
 -- S.GetFont() returns path AND the theme's outline flag, and code that reads
 -- only the path then passes "" hardcodes no-outline, so that one surface
--- silently ignores an outline-configured theme. SocialStatus' popup did exactly
--- that at four call sites.
+-- silently ignores an outline-configured theme. Social Status' hand-built popup
+-- did exactly that at four call sites, before it was replaced by a proxy to
+-- EllesmereUI's own -- so the example is history rather than something to go
+-- and look at.
 --
 -- Also what lets a long-lived FontString follow a live theme change: re-call
 -- this rather than reaching for SetFont directly.
@@ -983,9 +985,14 @@ W.AnchorNear = AnchorNear
 -- without a shared signature every broker would need two copies of its tooltip
 -- body, which is exactly the kind of divergence that rots.
 --
--- Each caller owns an instance. A single shared one would be cheaper and only
--- ever one is on screen, but SocialStatus builds a persistent pool of custom
--- rows on `.inner`, and that cannot share a frame with the line API.
+-- Each caller owns an instance, created lazily on its first hover. That used to
+-- be a requirement -- Social Status built a persistent pool of custom rows on an
+-- `.inner` field, which could not share a frame with the line API -- and is now
+-- only a convention: that popup is gone (it proxies EllesmereUI's own), no
+-- caller uses `.inner`, and a single shared instance would work, since only one
+-- can be hovered at a time. Left per-caller because four lazily-built frames
+-- cost nothing and sharing would couple the modules; recorded so the next
+-- reader does not go looking for a constraint that no longer exists.
 local TT_PAD, TT_LINE_H, TT_COL_GAP = 8, 14, 16
 
 function W.Tooltip()

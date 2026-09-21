@@ -1,7 +1,7 @@
 -- AniMods broker (LibDataBroker) helper.
 --
--- Shared by every module that publishes an LDB plugin (GroupRoles,
--- SocialStatus, SoundSwitch), which otherwise all grow the same ~60 lines of
+-- Shared by every module that publishes an LDB plugin -- seven of them now, so
+-- they are not listed here to go stale -- which otherwise all grow the same ~60 lines of
 -- near-identical boilerplate: acquiring the library, the "Icon + Text" vs
 -- "Text Only" display-mode setting, the inline-icon text builder, and the
 -- "Broker Display" rows for the AniMods panel. Those had already drifted

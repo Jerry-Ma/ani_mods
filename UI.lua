@@ -291,8 +291,9 @@ end
 -- are not installed, and anything it would report is either a default or a lie.
 --
 -- The cost is real too. GetInfoRows runs on every refresh while its tab is
--- open, and some are expensive by nature: SocialStatus' walks the whole guild
--- roster and both friend lists. Doing that for a module deliberately switched
+-- open, and some are expensive by nature: EllesmereUI Misc' walks the whole
+-- guild roster and both friend lists for its Social Status entry. Doing that
+-- for a module deliberately switched
 -- off -- or standing down because NDui is loaded -- is work for an answer
 -- nobody can act on.
 --
