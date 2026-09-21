@@ -212,11 +212,14 @@ primary mechanism: clamping a popup that opened the wrong way shoves it back *ov
 widget the cursor is on. GroupRoles' docked badge overrides the rule with its own
 setting, since which way it opens decides what it covers.
 
-SocialStatus uses only the *shell*, via the exposed `.inner`: its body is a bespoke
-two-column layout (class-coloured names, Battle.net tag prefix, right-aligned zone,
-grouped under headers with dividers) that no line-based API expresses. Before the shell
-was shared it owned a private copy, which is exactly why SoundSwitch had nothing to reuse
-and fell back to a bare `GameTooltip`.
+There was once a second mode: Social Status used only the *shell*, through an exposed
+`.inner`, because its body was a bespoke two-column layout no line-based API expresses.
+That went with the popup itself — Social Status now shows EllesmereUI's own — and `.inner`
+went with it, since nothing else ever used it. Every caller is on the line API now.
+
+Each caller still owns its own lazily-built instance, which is now convention rather than
+requirement: only one popup can be hovered at a time, so a shared one would work. Left
+alone because four lazily-built frames cost nothing and sharing would couple the modules.
 
 A module can optionally expose `GetInfoRows()`, returning an ordered list of rows
 rendered in its detail pane — this is the "debug + options" section every module gets
@@ -284,7 +287,7 @@ read-only label/value line, for a *measurement*; a yes/no belongs in `state` ins
 Conditions card. That is correctness before performance: these rows report *live* state,
 and a module that never ran has none — `Enable()` didn't fire, so its frames don't exist
 and anything it reported would be a default or a lie. The cost is real too: `GetInfoRows`
-runs on every refresh while its tab is open, and SocialStatus' walks the entire guild
+runs on every refresh while its tab is open, and EllesmereUI Misc' walks the entire guild
 roster and both friend lists. The test is `active`, which is false for conditions unmet,
 for user-disabled, and for an `Enable()` that threw — in all three the module isn't
 running. The tradeoff is that a switched-off module's settings aren't reachable until
@@ -362,17 +365,15 @@ Three rules keep it that way, and all three were learned by getting them wrong f
   idle. Its deferred body is built once per coalescer rather than once per burst —
   building it inside the scheduler is the obvious way and means the helper that exists
   to avoid N walks produces garbage on the same schedule as the bursts it's damping.
-- **Compute what the caller actually needs.** SocialStatus' broker needs two integers,
-  and recomputed them on every friend/guild event through the same
-  `GatherOnlineFriends()` the tooltip uses — allocating a 7-field table per online guild
-  member (700+ in a large guild), resolving each one's class through `C_CreatureInfo`,
-  and running three `table.sort`s, only to call `#` on the results. `CountOnline()` does
-  the same three walks and the same de-duplication without any of that; the full gather
-  is now reached only from the two tooltip paths, on hover. The de-dup rules are
-  deliberately duplicated between the two (sharing them would mean materialising the
-  lists again, the exact cost being avoided) — which makes them the one thing that has
-  to be kept in step, or the broker's numbers will silently disagree with its own
-  tooltip.
+- **Compute what the caller actually needs.** Social Status' broker needs two integers,
+  and recomputed them on every friend/guild event through the same full gather its
+  tooltip used — allocating a 7-field table per online guild member (700+ in a large
+  guild), resolving each one's class through `C_CreatureInfo`, and running three
+  `table.sort`s, only to call `#` on the results. `CountOnline()` does the same three
+  walks and the same de-duplication without any of that. The gather itself is gone
+  entirely now, along with the hand-built popup it fed — EllesmereUI draws that list —
+  so `CountOnline` is all that remains, and the de-dup rules it once had to keep in step
+  with a second implementation have nothing left to disagree with.
 
 - **Normalise once, not per access.** `Bar`'s `ModuleDB()` ran its migration check,
   duplicate repair and defaults on *every* call — and it's called from `Relayout`, from
@@ -391,7 +392,7 @@ Three rules keep it that way, and all three were learned by getting them wrong f
 
 Two smaller ones in the same spirit: hot loops reuse their scratch tables and their unit
 tokens rather than rebuilding a set of 40 identical strings per walk (`RAID_UNITS` /
-`PARTY_UNITS` in `GroupRoles.lua`, the `wipe()`d scratch sets in `SocialStatus.lua`);
+`PARTY_UNITS` in `GroupRoles.lua`, the `wipe()`d scratch sets behind `CountOnline`);
 and `Broker.SetText(obj, text)` assigns only on an actual change, because LDB data
 objects are proxy tables whose `__newindex` fires
 `LibDataBroker_AttributeChanged_<name>` unconditionally — it never compares against the
@@ -529,8 +530,7 @@ So **never add a texture directly to a frame passed to `S.Panel` or `S.Shell`**;
 silently vanishes the first time the player opens their collections. Our art goes on a
 child frame instead. That is why `W.Window` returns `.content` rather than letting callers
 draw on the window, why `W.Dropdown` and `W.Button` hold their label on an `inner` child,
-why `W.CheckMark` puts its fill on a child of the box, and why `SocialStatus`'s popup
-parents its rows and dividers to `TTInner()`. This is the one non-obvious part of the
+and why `W.CheckMark` puts its fill on a child of the box. This is the one non-obvious part of the
 contract, and the developer guide (`EllesmereUI\SKINNING_API.md`, which does ship) is
 worth reading alongside it.
 
@@ -809,11 +809,17 @@ both toggleable in **General**.
   (whether that entry's prerequisites are met, independent of the toggle) and "In effect"
   statement.
 
-  The bar for an entry: it touches EllesmereUI specifically, it's small enough that a
-  whole module would be ceremony, and it's **reversible**. That last one isn't
-  decoration — these apply and revert live, which is what exempts this module from the
-  framework's usual "toggle takes effect next reload" convention, and one irreversible
-  entry would quietly take that property away from every other entry in the bag.
+  The bar for an entry: it is **meaningless without EllesmereUI**, and it's
+  **reversible**. That second one isn't decoration — these apply and revert live, which
+  is what exempts this module from the framework's usual "toggle takes effect next
+  reload" convention, and one irreversible entry would quietly take that property away
+  from every other entry in the bag.
+
+  The bar used to include "small enough that a whole module would be ceremony". That
+  clause was removed rather than left quietly broken when Social Status folded in:
+  it arrives with its own counting walk, icon resolution and broker, and is plainly not
+  small. Membership is decided by being meaningless without EllesmereUI; size is
+  whatever that costs.
 
   - **Missing Stats** — EllesmereUIQoL draws a stats block (`EUI_SecondaryStats`) with
     crit, haste, mastery, versatility, the three tertiaries and an optional FPS/latency
@@ -851,6 +857,41 @@ both toggleable in **General**.
     hands back a secret, so the last known size is kept until the figures are readable,
     and the test is on what the arithmetic is about to touch rather than on what was fed
     in — the metrics belong to the last *laid out* string.
+
+  - **Social Status** — EllesmereUIMinimap's friends button as a data bar widget: online
+    guild and friend counts on the bar, and **its own popup** on hover.
+
+    It was a standalone module once, and a much bigger one. The header then claimed EUI's
+    button and its tooltip were "entirely unreachable from outside
+    EllesmereUIMinimap.lua" — the button unnamed, the table holding it a plain `local`,
+    the tooltip wired with `HookScript` and so not retrievable via `GetScript()` — and
+    concluded with a **faithful port**: `GatherOnlineFriends` and the whole custom
+    bordered popup, reproduced line for line.
+
+    **Both halves of that were false.** `HookScript` composes into the script, so
+    `GetScript` returns the wrapper including the hook; and the tooltip is wired with
+    plain `SetScript` anyway. The button is findable by *shape* rather than by name — it
+    carries `_indicatorKey == "_friends"` among `Minimap`'s children — and the popup
+    frame itself is reachable as `_friendsTT` on the module namespace that
+    `EllesmereUI.Lite.GetAddon("EllesmereUIMinimap", true)` returns. So the hover now
+    calls EUI's own `OnEnter` under `xpcall`, positioned by `W.AnchorNear`, and the port
+    is gone — around 170 lines of it, along with the plain-`GameTooltip` renderer that
+    only existed to serve a stock UI this no longer targets. There is no `OnTooltipShow`.
+
+    The lesson, recorded because it cost two rewrites: **a frame's scripts are not an API
+    you have to be given.** Identify by relationship and shape, not by name.
+
+    What stays ours is the **counts**, and only because there is nothing to borrow: a
+    count hangs off no frame script the way a popup does. It is plain Blizzard API with
+    no EllesmereUI-specific judgement in it, so there is nothing to drift from — and if
+    that ever stops being true, the symptom is the number disagreeing with the list the
+    popup shows, and the list is the one to believe.
+
+    Gated on EllesmereUIMinimap being loaded **and** its friends indicator existing, so
+    the popup is always the answer. It merged with what was briefly a separate "Friends
+    Popup" entry rather than sitting beside it: that one existed only to serve this
+    widget, so two entries meant one silently depending on the other being switched on,
+    and hovering with the wrong one off would have shown nothing.
 - **NSRT Misc** — the bag for small Northern Sky Raid Tools tweaks: things its own UI
   can't do, either because they're batch edits it only offers one row at a time, or
   because it offers no setting at all.
@@ -919,69 +960,6 @@ both toggleable in **General**.
   halfway through a batch edit. The module has no `Enable()`: it owns no frames, hooks
   nothing and registers no events, since everything it does happens on a click in its own
   tab.
-- **SocialStatus** — online guild/friend counts as a broker (LDB) plugin, mirroring
-  EllesmereUIMinimap's own "friends" button (the one in its minimap extra button group
-  that shows online friends/guildies on hover). That button and its tooltip function
-  are entirely unreachable from outside EllesmereUIMinimap.lua — the button has no
-  name (`CreateIndicatorBtn` does `CreateFrame("Button", nil, parent)`), the table
-  holding it is a plain `local`, and its tooltip is wired via `HookScript`, which isn't
-  retrievable through `GetScript()` even if the frame could be found — so this is a
-  **faithful port**, not a call into EUI's own code: `GatherOnlineFriends` and
-  `ShowFriendsTooltip` are reproduced line-for-line where they call plain Blizzard
-  APIs (`IsInGuild`/`GetNumGuildMembers`/`GetGuildRosterInfo` for guild;
-  `BNGetNumFriends`/`C_BattleNet.GetFriendAccountInfo` filtered to `isOnline` and
-  `clientProgram == "WoW"`, split into Battle.net favorites vs. regular friends, for
-  Battle.net; `C_FriendList.GetNumFriends`/`GetFriendInfoByIndex` filtered to
-  `connected`, deduplicated against Battle.net by character name, for character
-  friends; guild members removed from both friend lists by name so nobody's counted
-  twice) and its custom tooltip's layout is reproduced closely too (a real bordered
-  popup frame — not the standard `GameTooltip`, which can't host this — two-column
-  rows with class-colored names, a Battle.net tag prefix and level suffix where
-  applicable, right-aligned zone, section headers reading "Title (count)" in EUI's own
-  accent color when reachable, dividers between Favorites/Guild/Friends). Deliberately
-  **not** ported: EUI's right-click whisper/invite row menu, its hover-stability grace
-  timers, and its dev-mode/protected-instance whisper guards — interactive
-  conveniences specific to living on the minimap, not part of "look and feel", and
-  dependent on EUI-internal locals with no access path anyway.
-
-  Two tooltip paths, matching what different LDB display addons support: EllesmereUIDataBars
-  (confirmed in `EllesmereUIDataBars_Blocks.lua`'s `ShowTip`) calls a plugin's `OnEnter(anchorFrame)`
-  instead of `OnTooltipShow` when both are defined, handing full control to the plugin
-  — that's what makes the custom bordered popup possible, and is used for `OnEnter`/
-  `OnLeave` here; `OnTooltipShow(tt)` stays as a fallback, rendering the same grouped
-  data with plain `AddLine`/`AddDoubleLine` calls for any display that only supports
-  that path.
-
-  `text` is built the same shape as GroupRoles' broker (`Broker.BuildText`) — a
-  `Dropdown` "Style" in the "Broker widget" section, **Icon + Text** (Guild's minimap
-  guild-banner atlas + Friends' exact atlas EUI's own button uses,
-  `housefinder_neighborhood-friends-icon`, packed against each count with no
-  padding/separator — the icon tells them apart) or **Text Only** (falls back to a `/`
-  separator), plus independent colored-text (gold/blue). Left-clicking opens
-  Blizzard's own `ToggleFriendsFrame()` (same click action as EUI's button), guarded
-  against combat lockdown. Refreshes on `GUILD_ROSTER_UPDATE`/`FRIENDLIST_UPDATE`/
-  `BN_FRIEND_INFO_CHANGED`/`BN_FRIEND_ACCOUNT_ONLINE`/`BN_FRIEND_ACCOUNT_OFFLINE`.
-
-  **One condition: NDui not loaded** — its infobar ships both of these counts already
-  (`Modules/Infobar/Friends.lua` and `Guild.lua`), so this stands down rather than
-  showing them twice.
-
-  EllesmereUIMinimap is deliberately *not* a condition, though it was for a while, on the
-  reasoning that the whole point was to be the broker-shaped equivalent of a button
-  that's specifically EUI's. But the counting logic needs nothing from EUI and the broker
-  displays in any data bar, so the requirement withheld a working widget on the strength
-  of what *inspired* it. That's the distinction: a condition is right when another addon
-  already **does** this, and wrong when another addon merely **inspired** it.
-
-  Deliberately **not** a native EllesmereUIDataBars block type (which would come with
-  its own dedicated settings page, matching the depth of its built-in blocks like Gold
-  or Spec): EllesmereUIDataBars has no plugin/extension API for that — its block types
-  are a fixed, hardcoded list (`ns.BLOCK_TYPES` in `EllesmereUIDataBars.lua`), each
-  with its own builder inside `EllesmereUIDataBars_Blocks.lua`. Adding one natively
-  would mean editing that (CurseForge-managed, otherwise-untouched-by-AniMods) addon's
-  own files directly — silently wiped on its next update. Staying a plain LDB broker
-  means it survives every EUI update untouched, at the cost of using EllesmereUIDataBars'
-  generic "Broker Plugin" block type instead of a dedicated one.
 - **SpecSwitch** — switch specialization and loot spec from a data bar. **Left-click**
   opens a menu of specs, **right-click** a menu of loot specs (led by "Follow current
   spec", Blizzard's default and the state you want back after borrowing one for a boss).

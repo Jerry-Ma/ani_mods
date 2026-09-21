@@ -301,11 +301,11 @@ local function SetAccent(key)
         end
     end
 
-    -- W.RefreshLooks, not AniMods.RefreshStockLooks: the latter walks the
-    -- STOCK provider's callback list, which is empty whenever EllesmereUI is
-    -- the provider -- so under EllesmereUI this saved the colour and repainted
-    -- nothing. W owns the registry the widgets actually register with, and it
-    -- is the same one under either provider.
+    -- W.RefreshLooks, and deliberately not through the skin provider. This once
+    -- went via the stock provider's own callback list, which is empty whenever
+    -- EllesmereUI is the provider -- so under EllesmereUI it saved the colour
+    -- and repainted nothing. W owns the registry the widgets actually register
+    -- with, and it is the same one under either provider.
     AniMods.W.RefreshLooks()
 end
 

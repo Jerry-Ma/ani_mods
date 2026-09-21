@@ -105,9 +105,10 @@ end
 -- Public, because two different things have to be able to trigger it and only
 -- one of them is the provider: the host theme changing (EllesmereUI calls
 -- this through S.OnLooksChanged) and AniMods' own accent setting changing.
--- The second used to call AniMods.RefreshStockLooks, which walks the STOCK
--- provider's callback list -- empty whenever EllesmereUI is the provider, so
--- picking a swatch saved the colour and repainted nothing.
+-- The second used to go through the stock provider's own callback list, which
+-- is empty whenever EllesmereUI is the provider -- so picking a swatch saved
+-- the colour and repainted nothing. That list is gone; this registry is the
+-- only one, and it is the same one under either provider.
 --
 -- Reads W.Accent, not S.GetAccentColor. The provider's accent is only the
 -- default; using it here would have repainted in the host's colour and
