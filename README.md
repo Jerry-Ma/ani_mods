@@ -1074,3 +1074,72 @@ both toggleable in **General**.
   Blizzard C function that compares case-insensitively **without building a lowered
   copy**. The obvious `cvar:lower() == "..."` would allocate a string per unrelated cvar
   change just to discard it, and the payload's casing isn't worth relying on.
+- **Gear Sync** — equips the gear set matching the talent loadout you just applied. Both
+  are named by the same convention, so the name *is* the mapping; matching is by
+  **longest prefix**, meaning `HO` serves every `HO-*` loadout and a more specific set
+  name always wins. It acts on loadout changes only — equipping something else by hand
+  afterwards is a decision, not a mistake to undo.
+
+  A data bar widget shows the set you're wearing, amber when it isn't the one your
+  loadout names. **Left-click** syncs, **right-click** opens the equipment manager
+  (EllesmereUIBlizzardSkin's own Equipment button when its skin built one,
+  `PaperDollSidebarTab3` otherwise). The icon is the set's own, published through
+  LibDataBroker's `icon` field rather than packed into the text — that's what makes the
+  bar's own Show Icon setting work, and what carries the colour, since
+  EllesmereUIDataBars strips `|cff` codes out of broker text by default. A mismatch also
+  goes to whatever on-screen warning display you already have: NSRT's QoL text display
+  (held up while the gear is wrong), else BigWigs' message area (posted once), else
+  nothing. EllesmereUI isn't a channel — its combat alert draws the words *you*
+  configured and takes no message.
+
+  Two things `isEquipped` taught us. It isn't readable at the moment its own event fires,
+  so the redraw waits 0.3s — the same delay EllesmereUIBlizzardSkin uses for the same
+  read. And it means "every item in this set is on you", so two sets holding identical
+  gear are *both* equipped: asking **which** set is on is unanswerable, asking whether
+  the **target** set is on is not.
+- **Shift Focus** — modifier-click anything to set it as your focus, optionally marking
+  it. Two mechanisms, both needed: a hidden secure button with an override binding covers
+  the world and nameplates, and a `shift-type1`/`shift-macrotext1` attribute on each unit
+  frame covers frames that take their own clicks and would otherwise swallow it. Frames
+  are found through the `ClickCastFrames` registry **and** by name, because
+  EllesmereUI's unit frames and Blizzard's own never register. Stands down under NDui,
+  and under EllesmereUI_WindTools' Quick Focus when that setting is on.
+- **Auto Combat Log** — makes sure combat logging is on for the content worth logging, by
+  **resolving a backend rather than becoming a fourth logger**: EllesmereUIQoL's, then
+  MRT's, then a port of its own when neither is there. Exactly one may run, and that's
+  enforced — two owners both answering a zone change is a coin toss, since MRT stops any
+  log its own last decision says shouldn't be running and neither knows nor cares who
+  started it. Others are switched off and **put back** when this module is disabled.
+  *What* to log is AniMods' setting, written through to whichever backend is running.
+- **Plugin Buttons** — addon minimap buttons and your own slash commands as data bar
+  widgets, because text identifies addons and 32px minimap art doesn't. LibDBIcon buttons
+  already come from LDB objects, but those are type `launcher` — icon and OnClick, no
+  `text` — so a text bar renders nothing; this publishes a `data source` proxy alongside
+  and forwards every interaction to the original. One widget per entry, since no display
+  can tell which part of a string was clicked. **Nothing is published until you ask for
+  it**, and unpublishing blanks the text rather than removing the object, because LDB has
+  no unregister.
+- **Action Bar 7 Toggle** — a broker widget that shows and hides Action Bar 7 on click.
+  The bar is `MultiBar6`, *not* `MultiBar7` — Blizzard's frame names are offset by one,
+  and the obvious name silently toggles the wrong bar. Three backends resolved at click
+  time: NDui's saved setting, EllesmereUI's runtime `_visOverride` (the same path its own
+  keybind takes, so a reload restores the saved state), or a `RegisterStateDriver` on the
+  frame. None work in combat; that's the game's rule, not a shortcut taken here.
+- **Achievement Screenshot** — takes a screenshot when you earn an achievement. Ported
+  from NDui, with a one-shot `C_Timer.After` instead of its OnUpdate wait (the toast has
+  to animate in first, or you capture the moment without the thing worth capturing), and
+  the same account-earned filter — that flag is true for things already earned on another
+  character, which is most of what fires while levelling an alt. **Stands down under
+  NDui**: a duplicate here isn't overhead, it's two files for every achievement.
+- **Built-in Damage Meter** — retail ships a meter (`C_DamageMeter` plus the
+  `Blizzard_DamageMeter` LOD addon) that every meter addon switches off to avoid two
+  windows showing the same numbers. This switches it back on for a setup that has none.
+  Its three conditions are all *forbids* — EllesmereUI, NDui, Details — because the
+  module exists only when the field is empty.
+- **Talent Loadouts** — dumps every Talent Loadout Manager build into one string and
+  reads them back, which TLM itself can't do (its own import/export is one build at a
+  time). Everything goes through `TalentLoadoutManagerAPI`, never TLM's saved variables:
+  the API asserts its arguments, the saved table is private and reshapes between
+  releases. It exports Blizzard's own ~120-character build codes rather than TLM's
+  ~2,000-character internal blobs — the difference between a ~95 KB dump and a ~4 KB one,
+  and why this needs no compression library.
