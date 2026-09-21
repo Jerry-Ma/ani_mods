@@ -1102,8 +1102,7 @@ both toggleable in **General**.
   the world and nameplates, and a `shift-type1`/`shift-macrotext1` attribute on each unit
   frame covers frames that take their own clicks and would otherwise swallow it. Frames
   are found through the `ClickCastFrames` registry **and** by name, because
-  EllesmereUI's unit frames and Blizzard's own never register. Stands down under NDui,
-  and under EllesmereUI_WindTools' Quick Focus when that setting is on.
+  EllesmereUI's unit frames and Blizzard's own never register. Stands down under NDui.
 - **Auto Combat Log** — makes sure combat logging is on for the content worth logging, by
   **resolving a backend rather than becoming a fourth logger**: EllesmereUIQoL's, then
   MRT's, then a port of its own when neither is there. Exactly one may run, and that's

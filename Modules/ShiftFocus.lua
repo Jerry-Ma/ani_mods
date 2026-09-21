@@ -67,19 +67,12 @@ local ShiftFocus = {
               .. "FocusMarker), so this would be a second binding competing "
               .. "for the same click.",
           met = function() return not AniMods.IsAddOnLoaded("NDui") end },
-        { text = "WindTools' Quick Focus is off",
-          help = "EllesmereUI_WindTools ships this same feature, and two "
-              .. "owners of the same modifier-click on the same unit frame "
-              .. "means whichever wrote the attribute last wins. Its own "
-              .. "setting is read rather than its presence, so having "
-              .. "WindTools installed with Quick Focus off is fine.",
-          met = function()
-              local elv = _G.ElvUI
-              local E = elv and elv[1]
-              local wt = E and E.private and E.private.WT
-              local qf = wt and wt.unitFrames and wt.unitFrames.quickFocus
-              return not (qf and qf.enable)
-          end },
+        -- There was a second condition here, standing down while
+        -- EllesmereUI_WindTools' Quick Focus was switched on -- two owners of
+        -- the same modifier-click on the same unit frame means whichever wrote
+        -- the attribute last wins. WindTools is no longer part of this install,
+        -- so the check was work done on every panel draw to answer a question
+        -- about an addon that is not there.
     },
 }
 
