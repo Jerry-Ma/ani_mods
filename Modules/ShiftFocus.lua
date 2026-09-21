@@ -25,13 +25,18 @@
 -- runs. The only thing that answers a click on a unit frame is an attribute on
 -- that frame.
 --
--- Finding the frames: oUF-based unit frames (EllesmereUI's included),
--- DandersFrames, and any Clique-compatible addon all announce themselves
--- through the global ClickCastFrames registry, so watching it reaches them as
--- they spawn without walking the UI. If something already owns that table's
--- metatable -- DandersFrames does exactly this in its ClickCasting engine --
--- the registry is NOT taken over: its entries are walked instead, and re-walked
--- on the events that spawn frames.
+-- Finding the frames takes TWO routes, because one is not enough.
+--
+-- Most unit frames -- DandersFrames, Clique-compatible addons, EllesmereUI's
+-- RAID frames -- announce themselves through the global ClickCastFrames
+-- registry, so watching it reaches them as they spawn without walking the UI.
+-- If something already owns that table's metatable (DandersFrames does exactly
+-- this in its ClickCasting engine) the registry is NOT taken over: its entries
+-- are walked instead, and re-walked on the events that spawn frames.
+--
+-- But the registry is opt-in, and EllesmereUI's UNIT frames never opt in, nor
+-- do Blizzard's own. Those are reached by NAME instead -- see NAMED_FRAMES,
+-- which also records how that gap was found.
 --
 -- WindTools sets the attribute to "focus", which sets the focus and nothing
 -- else -- so its markers work from the binding and not from a unit frame.
@@ -271,6 +276,47 @@ local function ClearAllFrames()
     end
 end
 
+-- The frames that never announce themselves, reached by name.
+--
+-- ClickCastFrames only reaches frames whose author opts in, and two whole
+-- families do not:
+--
+--   * EllesmereUI's UNIT frames -- player, target, focus, pet, the two
+--     target-of-targets and the boss set. Its RAID frames do register, and even
+--     those only while EUI's own click-casting is switched off (its
+--     AddFrameToClickCast no-ops once its proxy owns the table), but the unit
+--     frames are spawned by EUI_UnitFrames_Engine's SpawnUnitFrame and never
+--     touch the registry at all. That is why shift-click did nothing on them
+--     while working perfectly on raid frames.
+--   * Blizzard's own, which predate the convention entirely -- so the module
+--     was quietly failing its own promise on a stock UI too.
+--
+-- Both families are GLOBALLY NAMED, which keeps this a fixed list of lookups
+-- rather than the walk of the UI this module set out to avoid: a name nothing
+-- defines is simply nil and costs a hash miss.
+local NAMED_FRAMES = {
+    -- EllesmereUI, exactly the names its SpawnUnitFrame calls pass.
+    "EllesmereUIUnitFrames_Player",
+    "EllesmereUIUnitFrames_Target",
+    "EllesmereUIUnitFrames_Focus",
+    "EllesmereUIUnitFrames_Pet",
+    "EllesmereUIUnitFrames_TargetTarget",
+    "EllesmereUIUnitFrames_FocusTarget",
+    -- Blizzard's.
+    "PlayerFrame",
+    "TargetFrame",
+    "FocusFrame",
+    "PetFrame",
+    "TargetFrameToT",
+    "FocusFrameToT",
+}
+-- Boss frames, both families. Counted past what either currently spawns
+-- because an absent name is free and a new one would otherwise be missed.
+for i = 1, 8 do
+    NAMED_FRAMES[#NAMED_FRAMES + 1] = "EllesmereUIUnitFrames_Boss" .. i
+    NAMED_FRAMES[#NAMED_FRAMES + 1] = "Boss" .. i .. "TargetFrame"
+end
+
 local function RefreshFrames()
     for frame in pairs(tracked) do SetupFrame(frame) end
     local registry = _G.ClickCastFrames
@@ -278,6 +324,13 @@ local function RefreshFrames()
         for frame, value in pairs(registry) do
             if value ~= nil and value ~= false then SetupFrame(frame) end
         end
+    end
+    -- After the registry, not instead of it: a frame reached both ways is set
+    -- up once, since SetupFrame returns immediately when the attribute it would
+    -- write is already there.
+    for _, name in ipairs(NAMED_FRAMES) do
+        local frame = _G[name]
+        if frame then SetupFrame(frame) end
     end
 end
 
@@ -432,8 +485,11 @@ function ShiftFocus:GetInfoRows()
         help  = "A mouse-button binding only fires when nothing under the "
              .. "cursor takes the click, and a unit frame takes its own -- so "
              .. "each one needs the macro as an attribute of its own. This "
-             .. "counts the frames carrying it. Zero outside a group is "
-             .. "normal: raid frames do not exist until there is a raid.",
+             .. "counts the frames carrying it, found two ways: the "
+             .. "click-cast registry below, and a list of known names for the "
+             .. "frames that never register -- EllesmereUI's unit frames and "
+             .. "Blizzard's. Raid frames do not exist until there is a raid, "
+             .. "so this number grows when you join one.",
     }
 
     rows[#rows + 1] = { section = "Raid marker" }
