@@ -647,6 +647,17 @@ both toggleable in **General**.
   when there are any. EllesmereUI's QoL Raid Tools panel has no composition display the
   way NDui's raid tool does, so this fills the gap.
 
+  **Who counts.** Offline members don't, and in a raid instance neither does anyone in a
+  subgroup past what the instance seats — groups 5 and up in a mythic raid. Both come
+  from NDui's `RaidTool_RoleCount`, which the module originally rejected as heuristics
+  in favour of asking `UnitGroupRolesAssigned` per unit; that was wrong about the
+  question, since the useful answer is "what am I pulling with", not "how many roles are
+  assigned". The seat count is derived from `GetInstanceInfo`'s `maxPlayers` rather than
+  NDui's hardcoded difficulty-ID table, so it needs no revisiting when Blizzard adds a
+  difficulty. **Dead members still count** — NDui drops them, which suits a live
+  "who's around" readout, but a composition doesn't change because someone died, and
+  dropping them would make the numbers churn during the pull they describe.
+
   **One condition: NDui not loaded** — its raid tool draws the same three counts
   (`Modules/Misc/RaidTool.lua`, `M:RaidTool_RoleCount`), so this stands down rather than
   showing them twice.

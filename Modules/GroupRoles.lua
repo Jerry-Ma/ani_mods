@@ -25,11 +25,26 @@
 -- even though EUI's own visibility changes run through a secure
 -- SecureHandlerStateTemplate "apply" attribute snippet, not plain Lua calls.
 --
--- Data source is deliberately NOT a port of NDui's logic (GetRaidRosterInfo +
--- online/dead/subgroup<=maxgroup filtering to work out "who's actually
--- around"). UnitGroupRolesAssigned() per group-unit token is the more direct,
--- native way to ask Blizzard what role each current member is assigned —
--- no manual roster-filtering heuristics needed.
+-- WHO COUNTS. This used to count every assigned role in the group, on the
+-- reasoning that UnitGroupRolesAssigned is the direct native question and
+-- NDui's roster filtering was a heuristic worth avoiding. That was wrong about
+-- what the question is: the useful answer is not "how many roles are assigned"
+-- but "what am I pulling with", and those differ.
+--
+-- So two of NDui's four filters are adopted (M:RaidTool_RoleCount):
+--
+--   OFFLINE members are out. A disconnected healer is not a healer you have.
+--   BENCHED members are out -- anyone in a subgroup past what the instance
+--   seats, which in a mythic raid is groups 5 and up. They cannot zone in.
+--
+-- The other two are not:
+--
+--   DEAD members stay counted. NDui drops them, which suits a live "who is
+--   around" readout; this is a composition badge, and a comp does not change
+--   because someone died. Dropping them would make the numbers churn during
+--   exactly the pull they describe.
+--   assignedRole ~= "NONE" needs no test here: only the three real roles have
+--   counters, so anything else fails the lookup already.
 --
 -- Only active when EllesmereUIQoL is loaded and NDui is not (NDui already
 -- has this).
@@ -85,12 +100,13 @@ local function ModuleDB()
     return AniModsDB.groupRoles
 end
 
--- Unit tokens built once at load rather than concatenated per walk. A roster
--- walk in a full raid did 40 `"raid" .. i` concatenations, each allocating a
--- string and hashing it into the intern table, every single time the counts
--- were recomputed -- pure garbage for a set of 40 strings that never change.
-local RAID_UNITS, PARTY_UNITS = {}, {}
-for i = 1, 40 do RAID_UNITS[i] = "raid" .. i end
+-- Unit tokens built once at load rather than concatenated per walk, so a walk
+-- does not allocate and intern a set of strings that never change.
+--
+-- Party only now. The raid walk used to need "raid1".."raid40" and was the
+-- reason this existed at all; it reads GetRaidRosterInfo by index instead,
+-- which is where the online state and subgroup come from and needs no token.
+local PARTY_UNITS = {}
 for i = 1, 4 do PARTY_UNITS[i] = "party" .. i end
 
 -- Reused across calls: CountRoles runs on roster/role events and previously
@@ -99,25 +115,71 @@ for i = 1, 4 do PARTY_UNITS[i] = "party" .. i end
 -- reads them out immediately, so a shared table is safe here.
 local roleCounts = { TANK = 0, HEALER = 0, DAMAGER = 0 }
 
+-- Connected, as far as we are allowed to know.
+--
+-- The client can hand back a SECRET for this in restricted content, and a
+-- secret must not be compared -- M33kAuras guards the same value the same way
+-- (its BuffTrigger2 `not issecretvalue(isConnected)`). A secret counts as
+-- present: we cannot tell, and silently dropping someone we cannot see is the
+-- worse error for a readout whose whole job is saying who you have.
+local function Connected(value)
+    if issecretvalue and issecretvalue(value) then return true end
+    return value and true or false
+end
+
+-- The highest subgroup that can actually zone in.
+--
+-- GetInstanceInfo's fifth return is maxPlayers -- 20 in a mythic raid, 30 in
+-- flex, 5 in a dungeon -- so the last usable group is that over five. NDui
+-- answers the same question with a hardcoded table of difficulty IDs (its
+-- GetRaidMaxGroup), which has to be revisited every time Blizzard adds a
+-- difficulty; the API maintains itself.
+--
+-- 8 means "no group is out of play", which is the honest answer outside a raid
+-- instance: a raid standing in a city has nobody benched yet.
+local function MaxSubgroup()
+    local _, instanceType, _, _, maxPlayers = GetInstanceInfo()
+    if instanceType ~= "raid" or type(maxPlayers) ~= "number" or maxPlayers <= 0 then
+        return 8
+    end
+    return math.ceil(maxPlayers / 5)
+end
+
 local function CountRoles()
     local counts = roleCounts
     counts.TANK, counts.HEALER, counts.DAMAGER = 0, 0, 0
 
     if IsInRaid() then
+        -- GetRaidRosterInfo rather than a unit token per member: online state
+        -- and subgroup come back in the same call as the role, so the filtered
+        -- walk costs no more than the unfiltered one did.
+        -- Returns: name, rank, subgroup, level, class, fileName, zone, online,
+        --          isDead, role, isML, combatRole -- combatRole (12th) is the
+        --          TANK/HEALER/DAMAGER one; `role` (10th) is MAINTANK/MAINASSIST.
+        local maxGroup = MaxSubgroup()
         local n = GetNumGroupMembers()
         if n > 40 then n = 40 end
         for i = 1, n do
-            local role = UnitGroupRolesAssigned(RAID_UNITS[i])
-            if counts[role] then counts[role] = counts[role] + 1 end
+            local name, _, subgroup, _, _, _, _, online, _, _, _, role = GetRaidRosterInfo(i)
+            if name and counts[role] and Connected(online)
+                and (type(subgroup) ~= "number" or subgroup <= maxGroup) then
+                counts[role] = counts[role] + 1
+            end
         end
     else
+        -- No roster API for a party, and no benched seats in a five-man either
+        -- -- so connection is the only filter that applies, and you are always
+        -- connected to yourself.
         local role = UnitGroupRolesAssigned("player")
         if counts[role] then counts[role] = counts[role] + 1 end
         local n = GetNumSubgroupMembers()
         if n > 4 then n = 4 end
         for i = 1, n do
-            role = UnitGroupRolesAssigned(PARTY_UNITS[i])
-            if counts[role] then counts[role] = counts[role] + 1 end
+            local unit = PARTY_UNITS[i]
+            role = UnitGroupRolesAssigned(unit)
+            if counts[role] and Connected(UnitIsConnected(unit)) then
+                counts[role] = counts[role] + 1
+            end
         end
     end
 
@@ -125,31 +187,44 @@ local function CountRoles()
 end
 
 -- Per-role list of class tokens for the broker tooltip's class-colored-square
--- breakdown (see InitLDB) -- same roster walk as CountRoles, but keeping the
--- class of each member instead of just a running total.
+-- breakdown (see InitLDB) -- the same walk as CountRoles, keeping the class of
+-- each member instead of just a running total.
+--
+-- THE SAME FILTERS, and that is not optional: the squares sit directly under
+-- the numbers they belong to, so one counting an offline member the other drops
+-- is a display that contradicts itself in a single tooltip.
 local function CollectRoleClasses()
     local byRole = { TANK = {}, HEALER = {}, DAMAGER = {} }
-
-    local function Add(unit)
-        local role = UnitGroupRolesAssigned(unit)
-        local list = byRole[role]
-        if not list then return end
-        local _, class = UnitClass(unit)
-        list[#list + 1] = class
-    end
 
     -- Allocates freely (unlike CountRoles): this only ever runs on a tooltip
     -- hover, never on an event.
     if IsInRaid() then
+        local maxGroup = MaxSubgroup()
         local n = math.min(GetNumGroupMembers(), 40)
         for i = 1, n do
-            Add(RAID_UNITS[i])
+            -- fileName (6th) is the locale-independent class token, which is
+            -- what RAID_CLASS_COLORS is keyed on -- `class` (5th) is the
+            -- translated name and would find no colour.
+            local name, _, subgroup, _, _, fileName, _, online, _, _, _, role =
+                GetRaidRosterInfo(i)
+            local list = name and byRole[role]
+            if list and Connected(online)
+                and (type(subgroup) ~= "number" or subgroup <= maxGroup) then
+                list[#list + 1] = fileName
+            end
         end
     else
-        Add("player")
+        local function Add(unit, checkConnection)
+            local list = byRole[UnitGroupRolesAssigned(unit)]
+            if not list then return end
+            if checkConnection and not Connected(UnitIsConnected(unit)) then return end
+            local _, class = UnitClass(unit)
+            list[#list + 1] = class
+        end
+        Add("player", false)
         local n = math.min(GetNumSubgroupMembers(), 4)
         for i = 1, n do
-            Add(PARTY_UNITS[i])
+            Add(PARTY_UNITS[i], true)
         end
     end
 
@@ -554,7 +629,15 @@ function GroupRoles:GetInfoRows()
     rows[#rows + 1] = { label = "In group", state = IsInGroup() }
     if IsInGroup() then
         local counts = CountRoles()
-        rows[#rows + 1] = { label = "Group type", value = IsInRaid() and "Raid" or "Party" }
+        rows[#rows + 1] = {
+            label = "Group type",
+            value = IsInRaid() and "Raid" or "Party",
+            help  = "Offline members are not counted, and in a raid instance "
+                 .. "neither is anyone in a subgroup past what the instance "
+                 .. "seats -- groups 5 and up in a mythic raid. Dead members "
+                 .. "still count: a composition does not change because "
+                 .. "someone died.",
+        }
         rows[#rows + 1] = { label = "Tanks",      value = tostring(counts.TANK) }
         rows[#rows + 1] = { label = "Healers",    value = tostring(counts.HEALER) }
         rows[#rows + 1] = { label = "DPS",        value = tostring(counts.DAMAGER) }
