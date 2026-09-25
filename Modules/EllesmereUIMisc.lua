@@ -384,10 +384,14 @@ local function EnsureStatsWatcher()
     -- Engine-filtered to the player: a plain RegisterEvent here would deliver
     -- every raid member's stat changes.
     statsWatcher:RegisterUnitEvent("UNIT_STATS", "player")
+    -- And the same for this one, which the PLAYER_ prefix hides: it carries a
+    -- unit too, and fires for party and raid members as their specs become
+    -- known. It sat in the plain list below until a filling raid was found to
+    -- be re-laying-out these rows once per arriving member.
+    statsWatcher:RegisterUnitEvent("PLAYER_SPECIALIZATION_CHANGED", "player")
     for _, ev in ipairs({
         "PLAYER_EQUIPMENT_CHANGED",
         "PLAYER_AVG_ITEM_LEVEL_UPDATE",
-        "PLAYER_SPECIALIZATION_CHANGED",
         "PLAYER_ENTERING_WORLD",
         -- Combat-scoped secrecy lifts here. The figures stay live through a
         -- fight because they render as arguments, but the rows cannot be

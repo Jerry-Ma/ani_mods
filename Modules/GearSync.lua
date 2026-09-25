@@ -743,7 +743,19 @@ local function EnsureWatcher()
     watcher:RegisterEvent("PLAYER_REGEN_ENABLED")
     -- A spec change swaps the active loadout without applying one, so the
     -- callback above never fires for it.
-    watcher:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
+    --
+    -- ENGINE-FILTERED TO THE PLAYER, and that is not a micro-optimisation.
+    -- Despite the name, PLAYER_SPECIALIZATION_CHANGED carries a unit and fires
+    -- for PARTY AND RAID MEMBERS -- every time someone's spec becomes known,
+    -- which is every time the group changes. Registered plainly, this module
+    -- re-equipped your gear a second after anyone joined or left: silent if you
+    -- were already in the right set, and if you had deliberately put on another
+    -- one, it pulled you straight back out of it.
+    --
+    -- RegisterUnitEvent rather than an `if unit ~= "player"` guard, so the
+    -- events are never delivered at all. BigWigs' LibSpecialization filters the
+    -- same event the same way.
+    watcher:RegisterUnitEvent("PLAYER_SPECIALIZATION_CHANGED", "player")
     -- The three that mean your gear or your sets moved. All display, none a
     -- sync: saving a set or changing clothes is your doing, and re-equipping
     -- over it would be the module arguing. All settled rather than immediate,

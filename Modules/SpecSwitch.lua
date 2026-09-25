@@ -558,7 +558,11 @@ function SpecSwitch:Enable()
     -- the events.
     local eventFrame = CreateFrame("Frame")
     eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
-    eventFrame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
+    -- Filtered to the player: despite the name, this event carries a unit and
+    -- fires for party and raid members as their specs become known -- so in a
+    -- filling raid a plain registration rebuilds the spec cache and repaints
+    -- the panel dozens of times to answer a question about someone else.
+    eventFrame:RegisterUnitEvent("PLAYER_SPECIALIZATION_CHANGED", "player")
     eventFrame:RegisterEvent("PLAYER_LOOT_SPEC_UPDATED")
     eventFrame:SetScript("OnEvent", function(_, event)
         -- The spec LIST changes when a character learns one, which arrives as a
