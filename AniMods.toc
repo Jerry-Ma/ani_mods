@@ -22,6 +22,7 @@ Modules\Bar.lua
 Modules\AchievementShot.lua
 Modules\AutoCombatLog.lua
 Modules\BarToggle.lua
+Modules\CDMSoundProbe.lua
 Modules\ChatContextSwitch.lua
 Modules\DamageMeter.lua
 Modules\EllesmereUIMisc.lua
