@@ -30,7 +30,6 @@ Modules\GearSync.lua
 Modules\GroupRoles.lua
 Modules\NSRTMisc.lua
 Modules\PluginButtons.lua
-Modules\SharedSounds.lua
 Modules\ShiftFocus.lua
 Modules\SoundSwitch.lua
 Modules\SpecSwitch.lua

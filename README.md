@@ -1146,26 +1146,6 @@ both toggleable in **General**.
   windows showing the same numbers. This switches it back on for a setup that has none.
   Its three conditions are all *forbids* — EllesmereUI, NDui, Details — because the
   module exists only when the field is empty.
-- **Shared Sounds** — publishes EllesmereUI's sixteen bundled alert sounds to
-  LibSharedMedia, so WeakAuras, BigWigs, Northern Sky and anything else can offer them.
-  EllesmereUI is a SharedMedia *consumer*, not a provider: it appends SharedMedia sounds
-  into its own dropdowns and registers its fonts and one statusbar texture, but not a
-  single sound — so the traffic was entirely one-way. Names are prefixed `EUI: `, which
-  also decides collisions the right way round, since LSM refuses a name already taken
-  rather than replacing it.
-
-  This began as "export the Cooldown Manager's sounds", and **the Cooldown Manager has
-  none** — Blizzard's is `C_CooldownViewer` plus four frames and a settings panel, with
-  no sound API, setting or bundled audio. The sound dropdown in a cooldown manager's
-  options is EllesmereUI's shared alert catalogue surfacing in one more place.
-
-  Not an EllesmereUI Misc entry, even though it is meaningless without EllesmereUI: LSM
-  has no unregister, so this is irreversible, and one irreversible entry would take the
-  live-toggle property away from every other entry in that bag. The same fact is why the
-  module defines no `SetEnabled` — its absence is what makes the panel offer a reload
-  instead of claiming a live toggle. `FrontalsGunshot.wav` is the one that doesn't make
-  it; LSM accepts only `.ogg` and `.mp3`, and the panel says so rather than dropping it
-  quietly.
 - **Talent Loadouts** — dumps every Talent Loadout Manager build into one string and
   reads them back, which TLM itself can't do (its own import/export is one build at a
   time). Everything goes through `TalentLoadoutManagerAPI`, never TLM's saved variables:
