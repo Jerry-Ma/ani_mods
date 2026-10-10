@@ -935,24 +935,74 @@ local PetCastBarEntry = {
         eui.RestoreBlizzCastBarEvents()
     end,
     GetInfoRows = function()
-        return {
+        -- EllesmereUI's own bookkeeping, read rather than guessed at. Rearm
+        -- refuses a bar it believes another addon claimed, and that refusal is
+        -- silent -- so when nothing appears, this is the row that says whether
+        -- the call did nothing or did something that did not help.
+        local bar
+        for _, candidate in ipairs(_G.EllesmereUI._blizzCastBarList or {}) do
+            if candidate.unit == "pet" then bar = candidate end
+        end
+
+        local frame = PetBar()
+        local rows = {
             {
-                label = "Blizzard's pet bar is armed",
+                label = "Listening for casts",
                 state = PetBarArmed(),
-                help  = "Whether PetCastingBarFrame is listening for cast "
-                     .. "events. It stays hidden until your pet actually casts "
-                     .. "something -- oUF hid the frame as well as silencing "
-                     .. "it, and it shows itself again on the next cast rather "
-                     .. "than being forced visible and empty.",
+                help  = "Whether PetCastingBarFrame has its cast events. This "
+                     .. "is what the entry actually changes; if it says no, "
+                     .. "the re-arm was refused rather than ineffective.",
+            },
+            {
+                label = "Claimed by another addon",
+                state = (bar and bar.foreign) and true or false,
+                help  = "EllesmereUI watches UnregisterAllEvents on this frame "
+                     .. "and marks it foreign when something outside its own "
+                     .. "windows silences it. RearmBlizzCastBars then leaves it "
+                     .. "alone on purpose, so it never puts Blizzard's bar back "
+                     .. "on top of a cast bar addon's. If this is yes, that is "
+                     .. "the reason nothing appeared.",
+            },
+            {
+                label = "Frame shown",
+                state = (frame and frame:IsShown()) and true or false,
+                help  = "oUF hides the frame as well as silencing it. Blizzard's "
+                     .. "bar shows itself again on the next cast, so this is "
+                     .. "normally no while the pet is idle -- it only means "
+                     .. "something is wrong if it stays no through a cast while "
+                     .. "the row above says it is listening.",
+            },
+            {
+                kind = "button", label = "Re-arm now", button = "Re-arm",
+                help = "Runs EllesmereUI's RearmBlizzCastBars again and reports "
+                    .. "what changed. Useful after switching an EllesmereUI "
+                    .. "cast bar setting, which re-silences this one.",
+                onClick = function()
+                    local before = PetBarArmed()
+                    _G.EllesmereUI.RearmBlizzCastBars()
+                    local after = PetBarArmed()
+                    if after and not before then
+                        AniMods.Print("pet cast bar re-armed.")
+                    elseif after then
+                        AniMods.Print("pet cast bar was already armed.")
+                    else
+                        AniMods.Print("pet cast bar is still silent"
+                            .. ((bar and bar.foreign)
+                                and " -- another addon has claimed it."
+                                or  " -- EllesmereUI refused the re-arm."))
+                    end
+                    if AniMods.RefreshUI then AniMods.RefreshUI() end
+                end,
             },
             {
                 label = "Position",
                 value = "Blizzard's",
                 help  = "This is Blizzard's own frame, so it sits where "
-                     .. "Blizzard puts it and moves with Edit Mode, not with "
-                     .. "EllesmereUI's unit frame settings.",
+                     .. "Blizzard puts it, not where EllesmereUI's unit frame "
+                     .. "settings would.",
             },
         }
+        return rows
     end,
 }
 
