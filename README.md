@@ -903,6 +903,29 @@ both toggleable in **General**.
     Popup" entry rather than sitting beside it: that one existed only to serve this
     widget, so two entries meant one silently depending on the other being switched on,
     and hovering with the wrong one off would have shown nothing.
+
+  - **Pet Cast Bar** — Blizzard ships one; oUF switches it off as *collateral*. When its
+    Castbar element enables on the **player** frame it unregisters and hides
+    `PlayerCastingBarFrame` **and** `PetCastingBarFrame` both. The player half is
+    intended, since EllesmereUI draws its own — the pet half isn't, because EllesmereUI
+    builds no pet cast bar at all: pet, target-of-target and focus-target go through
+    `StyleSimpleFrame`, which creates no `Castbar` (only the full, focus and boss
+    builders call `CreateCastBar`). So nothing replaces what oUF took.
+
+    This is not a new cast bar, it's Blizzard's with its events handed back, through
+    EllesmereUI's own `RearmBlizzCastBars` — used rather than a hand-rolled re-register
+    because it carries a `foreign` flag marking bars another addon silenced, so it can
+    never resurrect Blizzard's bar on top of a standalone cast bar addon's. It re-arms
+    *both* bars, which is safe: EllesmereUI suppresses the player bar by **re-parenting**
+    it, never by touching its events.
+
+    Re-armed after every one of EllesmereUI's castbar windows rather than once at login —
+    each toggle wraps itself in `Capture`/`RestoreBlizzCastBarEvents` and the enable
+    inside re-silences the pet bar, so a login-time re-arm would be undone the first time
+    any castbar setting was touched. Reverting wraps its own silence in the same pair:
+    EllesmereUI reads a bare `UnregisterAllEvents` as a foreign claim, which
+    `RearmBlizzCastBars` then refuses to touch, so the naive way would make the entry
+    un-re-enableable until a reload.
 - **NSRT Misc** — the bag for small Northern Sky Raid Tools tweaks: things its own UI
   can't do, either because they're batch edits it only offers one row at a time, or
   because it offers no setting at all.

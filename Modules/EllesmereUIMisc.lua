@@ -1,12 +1,14 @@
 -- EllesmereUI Misc
 -- The bag for things that are meaningless without EllesmereUI, each an
 -- independently switchable ENTRY (see ENTRIES below) rather than one bundled
--- all-or-nothing setting. Two so far:
+-- all-or-nothing setting. Three so far:
 --
 --   Missing Stats -- item level and your primary stat, added to
 --                    EllesmereUIQoL's stats block, which shows neither.
 --   Social Status -- EllesmereUIMinimap's friends button as a data bar widget:
 --                    our counts, its own popup on hover.
+--   Pet Cast Bar  -- gives Blizzard's pet cast bar its events back, after oUF
+--                    silenced it as collateral for the player's.
 --
 -- The bar for adding an entry: it touches EllesmereUI specifically, it cannot
 -- work without it, and it is REVERSIBLE. That last one is not decoration --
@@ -828,11 +830,137 @@ local SocialStatusEntry = {
     end,
 }
 
+-- ── Pet Cast Bar ────────────────────────────────────────────────────────────
+--
+-- Blizzard ships a pet cast bar. You cannot see it because oUF switches it off
+-- as COLLATERAL: when its Castbar element enables on the PLAYER frame it does
+--
+--     PlayerCastingBarFrame:UnregisterAllEvents() ... :Hide()
+--     PetCastingBarFrame:UnregisterAllEvents()    ... :Hide()
+--
+-- (oUF/Elements/castbar.lua). The player half is intended, because EllesmereUI
+-- draws its own. The pet half is not: EllesmereUI builds no pet cast bar at
+-- all. Pet, target-of-target and focus-target go through StyleSimpleFrame,
+-- which creates Health, Power and Portrait and no Castbar -- only the full,
+-- focus and boss builders call CreateCastBar. So nothing replaces what oUF
+-- took away, and the pet frame is simply left without one.
+--
+-- THIS IS NOT A NEW CAST BAR. It is Blizzard's, given its events back.
+-- EllesmereUI already has the call -- RearmBlizzCastBars, whose own comment
+-- says it "Covers the pet bar too" -- and it is used rather than a hand-rolled
+-- re-register because it carries a protection worth having: a `foreign` flag,
+-- set by hooks installed at EllesmereUI's file scope, marking a bar some OTHER
+-- addon silenced, so re-arming can never resurrect Blizzard's bar on top of a
+-- standalone cast bar addon's.
+--
+-- It re-arms BOTH bars, which is safe. EllesmereUI suppresses the player bar by
+-- RE-PARENTING it to a hidden frame (SetPlayerCastBarSuppressed), never by
+-- silencing its events -- its own header says so: "EUI hides Blizzard's bar by
+-- re-parenting it, so it never needs the event state changed". The player bar
+-- stays invisible whatever its event state is.
+--
+-- RE-ARMED AFTER EVERY ONE OF EUI'S CASTBAR WINDOWS, not once at login. Each
+-- EllesmereUI castbar toggle wraps itself in CaptureBlizzCastBarEvents /
+-- RestoreBlizzCastBarEvents, and the enable inside that window is what silences
+-- the pet bar again -- so a login-time re-arm alone would be undone the first
+-- time any castbar setting was touched. Hooking the Restore is what makes it
+-- hold.
+
+local petBarEnabled = false
+local petBarHooked = false
+
+local function PetBar()
+    return _G.PetCastingBarFrame
+end
+
+local function PetBarArmed()
+    local bar = PetBar()
+    return (bar and bar:IsEventRegistered("UNIT_SPELLCAST_START")) and true or false
+end
+
+local PetCastBarEntry = {
+    key = "petCastBar",
+    name = "Pet Cast Bar",
+    Available = function()
+        local eui = _G.EllesmereUI
+        if type(eui) ~= "table" or type(eui.RearmBlizzCastBars) ~= "function" then
+            return false, "This EllesmereUI build has no RearmBlizzCastBars, "
+                       .. "which is the call that hands Blizzard's cast bars "
+                       .. "their events back."
+        end
+        if not PetBar() then
+            return false, "Blizzard's PetCastingBarFrame does not exist on this "
+                       .. "client, so there is nothing to re-arm."
+        end
+        return true
+    end,
+    Apply = function()
+        petBarEnabled = true
+
+        if not petBarHooked then
+            petBarHooked = true
+            -- Post-hook: by the time this runs EllesmereUI has finished its own
+            -- ownership bookkeeping for that window, so re-arming here cannot
+            -- race it. Re-entry is impossible because Revert clears the flag
+            -- BEFORE it opens its own window.
+            _G.hooksecurefunc(_G.EllesmereUI, "RestoreBlizzCastBarEvents", function()
+                if petBarEnabled then _G.EllesmereUI.RearmBlizzCastBars() end
+            end)
+        end
+
+        -- Once now, for the ordering where EllesmereUI finished its castbar
+        -- setup before this module was enabled and no further window is coming.
+        _G.EllesmereUI.RearmBlizzCastBars()
+        return true
+    end,
+    Revert = function()
+        petBarEnabled = false
+
+        -- Put the bar back the way oUF left it, which is what makes this entry
+        -- reversible and so allowed in this bag at all.
+        --
+        -- WRAPPED IN CAPTURE/RESTORE, and that is not ceremony. EllesmereUI
+        -- hooks UnregisterAllEvents on these frames and, outside one of its own
+        -- windows, reads the call as another addon claiming the bar -- setting
+        -- `foreign`, which RearmBlizzCastBars then refuses to touch. Silencing
+        -- the naive way would therefore make this entry un-re-enableable until
+        -- a reload. Inside a window it reads as EllesmereUI's own write, which
+        -- is the truth: we are undoing something of theirs.
+        local bar = PetBar()
+        local eui = _G.EllesmereUI
+        if not (bar and eui and eui.CaptureBlizzCastBarEvents) then return end
+        eui.CaptureBlizzCastBarEvents()
+        bar:UnregisterAllEvents()
+        bar:Hide()
+        eui.RestoreBlizzCastBarEvents()
+    end,
+    GetInfoRows = function()
+        return {
+            {
+                label = "Blizzard's pet bar is armed",
+                state = PetBarArmed(),
+                help  = "Whether PetCastingBarFrame is listening for cast "
+                     .. "events. It stays hidden until your pet actually casts "
+                     .. "something -- oUF hid the frame as well as silencing "
+                     .. "it, and it shows itself again on the next cast rather "
+                     .. "than being forced visible and empty.",
+            },
+            {
+                label = "Position",
+                value = "Blizzard's",
+                help  = "This is Blizzard's own frame, so it sits where "
+                     .. "Blizzard puts it and moves with Edit Mode, not with "
+                     .. "EllesmereUI's unit frame settings.",
+            },
+        }
+    end,
+}
+
 -- ---------------------------------------------------------------------------
 -- Entry framework
 -- ---------------------------------------------------------------------------
 
-local ENTRIES = { MissingStatsEntry, SocialStatusEntry }
+local ENTRIES = { MissingStatsEntry, SocialStatusEntry, PetCastBarEntry }
 local entryApplied = {} -- key -> true once Apply() has actually succeeded
 
 local function PollEntry(entry)
