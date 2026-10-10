@@ -912,20 +912,44 @@ both toggleable in **General**.
     `StyleSimpleFrame`, which creates no `Castbar` (only the full, focus and boss
     builders call `CreateCastBar`). So nothing replaces what oUF took.
 
-    This is not a new cast bar, it's Blizzard's with its events handed back, through
-    EllesmereUI's own `RearmBlizzCastBars` — used rather than a hand-rolled re-register
-    because it carries a `foreign` flag marking bars another addon silenced, so it can
-    never resurrect Blizzard's bar on top of a standalone cast bar addon's. It re-arms
-    *both* bars, which is safe: EllesmereUI suppresses the player bar by **re-parenting**
-    it, never by touching its events.
+    **It exists for Mind Control.** A charmed unit is your `pet`, and what it's casting
+    is the entire reason you took it. (A Shadowfiend never casts, which is why an early
+    version looked broken when it wasn't.)
 
-    Re-armed after every one of EllesmereUI's castbar windows rather than once at login —
-    each toggle wraps itself in `Capture`/`RestoreBlizzCastBarEvents` and the enable
-    inside re-silences the pet bar, so a login-time re-arm would be undone the first time
-    any castbar setting was touched. Reverting wraps its own silence in the same pair:
-    EllesmereUI reads a bare `UnregisterAllEvents` as a foreign claim, which
-    `RearmBlizzCastBars` then refuses to touch, so the naive way would make the entry
-    un-re-enableable until a reload.
+    **Two routes were tried and rejected**, both recorded in the source so neither gets
+    attempted again. Blizzard's own `PetCastingBarFrame` can be revived — EllesmereUI even
+    publishes `RearmBlizzCastBars` for it — but arming it produced nothing visible. And
+    EllesmereUI's `CreateCastBar` is reachable, yet **ignores the settings table it's
+    handed** and re-reads `GetSettingsForUnit(unit)` itself; that lookup is a file-local
+    upvalue in their Castbar.lua, so it can't be swapped either. Using their builder for
+    the pet unit and writing cast keys into their saved profile are therefore the same
+    requirement — which settles it, since their profile isn't ours to write.
+
+    So the bar is **ours** — the same shape Missing Stats uses: a frame that reads as part
+    of EllesmereUI by copying its look off the live article rather than being built from
+    their parts. That one survived 9.2.1 → 9.4 untouched, which is the argument.
+
+    The **look is read** from their focus cast bar settings (colours, alpha, font sizes);
+    reading isn't writing, and it tracks their restyling. Width is the one thing
+    deliberately not inherited — the pet frame is narrower, so the focus width would hang
+    off both ends — and defaults to the pet frame's own width.
+
+    **Position and size go through `MakeUnlockElement`/`RegisterUnlockElements`**, whose
+    design is that the *caller* owns storage: `getSize`, `setWidth`, `setHeight`,
+    `savePos`, `loadPos`, `clearPos`, `applyPos` are all callbacks into us. The mover,
+    nudge keys, anchor links and size-matching are EllesmereUI's; every value they produce
+    lands in `AniModsDB`. That's what makes it neither an injection nor a second
+    positioning system. It appears in unlock mode as "Pet Cast Bar" under an AniMods group.
+
+    **No taint**, structurally rather than carefully: parented to `UIParent` and only
+    `SetPoint`-anchored to the pet frame, which reads a rect rather than executing
+    anything of theirs — the same argument GroupRoles' docked badge makes. No protected
+    call, no secure frame, so nothing for combat lockdown to block; cast events are
+    ordinary unit events, `RegisterUnitEvent`-filtered to `pet`.
+
+    Not inherited, because they live inside EllesmereUI's castbar implementation: the
+    interrupt tick, the important-cast glow, and the gamepad hide. A **Preview** button
+    fakes a three-second cast, since the real trigger can't be arranged on demand.
 - **NSRT Misc** — the bag for small Northern Sky Raid Tools tweaks: things its own UI
   can't do, either because they're batch edits it only offers one row at a time, or
   because it offers no setting at all.
