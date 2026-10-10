@@ -832,177 +832,409 @@ local SocialStatusEntry = {
 
 -- ── Pet Cast Bar ────────────────────────────────────────────────────────────
 --
--- Blizzard ships a pet cast bar. You cannot see it because oUF switches it off
--- as COLLATERAL: when its Castbar element enables on the PLAYER frame it does
+-- EllesmereUI gives the focus frame a cast bar and the pet frame none. Pet,
+-- target-of-target and focus-target all go through StyleSimpleFrame, which
+-- builds Health, Power and Portrait and stops; only the full, focus and boss
+-- builders call CreateCastBar.
 --
---     PlayerCastingBarFrame:UnregisterAllEvents() ... :Hide()
---     PetCastingBarFrame:UnregisterAllEvents()    ... :Hide()
+-- WHAT IT IS FOR: Mind Control. A charmed unit is your `pet`, and what it is
+-- casting is the entire reason you took it. (The Shadowfiend sort of pet never
+-- casts, which is why an earlier attempt looked broken when it was not.)
 --
--- (oUF/Elements/castbar.lua). The player half is intended, because EllesmereUI
--- draws its own. The pet half is not: EllesmereUI builds no pet cast bar at
--- all. Pet, target-of-target and focus-target go through StyleSimpleFrame,
--- which creates Health, Power and Portrait and no Castbar -- only the full,
--- focus and boss builders call CreateCastBar. So nothing replaces what oUF
--- took away, and the pet frame is simply left without one.
+-- ── Two routes tried and rejected, so neither gets tried again ──────────────
 --
--- THIS IS NOT A NEW CAST BAR. It is Blizzard's, given its events back.
--- EllesmereUI already has the call -- RearmBlizzCastBars, whose own comment
--- says it "Covers the pet bar too" -- and it is used rather than a hand-rolled
--- re-register because it carries a protection worth having: a `foreign` flag,
--- set by hooks installed at EllesmereUI's file scope, marking a bar some OTHER
--- addon silenced, so re-arming can never resurrect Blizzard's bar on top of a
--- standalone cast bar addon's.
+-- BLIZZARD'S OWN BAR. PetCastingBarFrame exists, and oUF silences it as
+-- collateral when its Castbar element enables on the PLAYER frame
+-- (PetCastingBarFrame:UnregisterAllEvents() ... :Hide(), oUF/Elements/castbar.lua).
+-- EllesmereUI even publishes RearmBlizzCastBars to hand both bars back. Armed
+-- it and nothing appeared.
 --
--- It re-arms BOTH bars, which is safe. EllesmereUI suppresses the player bar by
--- RE-PARENTING it to a hidden frame (SetPlayerCastBarSuppressed), never by
--- silencing its events -- its own header says so: "EUI hides Blizzard's bar by
--- re-parenting it, so it never needs the event state changed". The player bar
--- stays invisible whatever its event state is.
+-- ELLESMEREUI'S BUILDER. CreateCastBar is reachable (ns._internals), but it
+-- IGNORES the settings table it is handed and re-reads GetSettingsForUnit(unit)
+-- itself -- and db.profile.pet has no cast keys, because EllesmereUI never
+-- meant it to have a cast bar. That function is a file-local upvalue in their
+-- Castbar.lua, so it cannot be swapped either. Driving their builder for the
+-- pet unit therefore REQUIRES writing cast settings into their saved profile,
+-- which is not ours to write.
 --
--- RE-ARMED AFTER EVERY ONE OF EUI'S CASTBAR WINDOWS, not once at login. Each
--- EllesmereUI castbar toggle wraps itself in CaptureBlizzCastBarEvents /
--- RestoreBlizzCastBarEvents, and the enable inside that window is what silences
--- the pet bar again -- so a login-time re-arm alone would be undone the first
--- time any castbar setting was touched. Hooking the Restore is what makes it
--- hold.
+-- ── So: our frame, our settings, their mover ────────────────────────────────
+--
+-- The bar is ours, which is the same shape Missing Stats above already uses --
+-- a frame of our own that reads as part of EllesmereUI by copying its look off
+-- the live article rather than by being built out of their parts. It survived
+-- their 9.2.1 -> 9.4 restructure untouched, which is the argument.
+--
+-- The LOOK is read from EllesmereUI's focus cast bar settings at build time.
+-- Reading is not writing: nothing is stored anywhere of theirs, and the bar
+-- tracks their styling if it changes.
+--
+-- The POSITION AND SIZE are registered with EllesmereUI's unlock mode through
+-- MakeUnlockElement / RegisterUnlockElements -- a published extension point
+-- whose whole design is that the CALLER owns storage: getSize, setWidth,
+-- setHeight, savePos, loadPos, clearPos and applyPos are all callbacks into
+-- us. So the mover, the nudge keys, the anchor links and the size-matching are
+-- EllesmereUI's, and every value they produce is written into AniModsDB. That
+-- is what makes this neither an injection nor a second positioning system.
+--
+-- ── Taint ───────────────────────────────────────────────────────────────────
+--
+-- There is none to worry about, and the reason is structural rather than
+-- careful. The bar is parented to UIParent, never to the pet frame: it only
+-- SetPoint-anchors to it, and anchoring reads a rect rather than executing
+-- anything of theirs -- the same argument GroupRoles' docked badge makes. It
+-- calls no protected function and touches no secure frame, so there is nothing
+-- for combat lockdown to block and nothing to taint. Cast events are ordinary
+-- unit events; UnitCastingInfo and UnitChannelInfo are unrestricted and their
+-- values are not secret.
 
-local petBarEnabled = false
-local petBarHooked = false
+local PET_UNLOCK_KEY = "AniMods_PetCastBar"
 
-local function PetBar()
-    return _G.PetCastingBarFrame
+local petCastEnabled = false
+local petCastBar          -- our frame, built on first use
+local petCastRegistered = false
+
+local function PetCastDB()
+    local db = MiscDB()
+    db.petCastBar = db.petCastBar or {}
+    return db.petCastBar
 end
 
-local function PetBarArmed()
-    local bar = PetBar()
-    return (bar and bar:IsEventRegistered("UNIT_SPELLCAST_START")) and true or false
+-- EllesmereUI's unit-frame namespace, published at their file scope as
+-- EllesmereUI._ModuleNS[addonName] with the comment that other files read it.
+local function UFInternals()
+    local eui = _G.EllesmereUI
+    local reg = eui and eui._ModuleNS
+    local ns = reg and reg["EllesmereUIUnitFrames"]
+    local I = ns and ns._internals
+    return (type(I) == "table") and I or nil
+end
+
+local function EUIPetFrame()
+    local I = UFInternals()
+    local frames = I and I.frames
+    return frames and frames.pet or nil
+end
+
+-- Their focus cast bar's settings, read only, as the source of our look. Falls
+-- back to nothing rather than to invented numbers: every read below carries its
+-- own default, so an EllesmereUI without a focus table simply yields our
+-- defaults instead of a half-styled bar.
+local function FocusCastSettings()
+    local I = UFInternals()
+    if not I then return nil end
+    local s = I.GetSettingsForUnit("focus")
+    return (type(s) == "table") and s or nil
+end
+
+local DEFAULT_WIDTH, DEFAULT_HEIGHT = 101, 14
+
+-- Width defaults to the PET FRAME's width, not the focus bar's. Inheriting the
+-- focus look is the point; inheriting its width is the one part that must not
+-- be, since the pet frame is narrower and the bar would hang off both ends.
+local function BarSize()
+    local own = PetCastDB()
+    local focus = FocusCastSettings()
+    local pet = EUIPetFrame()
+    local w = own.width or (pet and pet:GetWidth()) or DEFAULT_WIDTH
+    local h = own.height or (focus and focus.castbarHeight) or DEFAULT_HEIGHT
+    return math.floor(w + 0.5), math.floor(h + 0.5)
+end
+
+local function ApplyBarLook()
+    if not petCastBar then return end
+    local focus = FocusCastSettings()
+    local w, h = BarSize()
+    petCastBar:SetSize(w, h)
+
+    local bg = focus and focus.castBgColor
+    petCastBar.bg:SetColorTexture(bg and bg.r or 0, bg and bg.g or 0, bg and bg.b or 0,
+        (focus and focus.castBgAlpha) or 0.5)
+
+    local fill = focus and focus.castbarFillColor
+    petCastBar.fill:SetStatusBarColor(fill and fill.r or 0.863,
+        fill and fill.g or 0.820, fill and fill.b or 0.639)
+
+    AniMods.W.SetFont(petCastBar.name, (focus and focus.castSpellNameSize) or 11)
+    AniMods.W.SetFont(petCastBar.time, (focus and focus.castDurationSize) or 11)
+end
+
+local function ApplyBarPosition()
+    if not petCastBar then return end
+    petCastBar:ClearAllPoints()
+
+    local pos = PetCastDB().pos
+    if pos then
+        -- Unlock mode hands back CENTER/CENTER screen coordinates.
+        petCastBar:SetPoint("CENTER", _G.UIParent, "CENTER", pos.x or 0, pos.y or 0)
+        return
+    end
+
+    -- Default: under EllesmereUI's pet frame. ANCHORED, never parented -- see
+    -- the taint note in this entry's header.
+    local pet = EUIPetFrame()
+    if pet then
+        petCastBar:SetPoint("TOP", pet, "BOTTOM", 0, -2)
+    else
+        petCastBar:SetPoint("CENTER", _G.UIParent, "CENTER", 0, -160)
+    end
+end
+
+-- Cast state. Milliseconds, as Blizzard reports them.
+local castStart, castEnd, castChannel = 0, 0, false
+
+local function OnBarUpdate(self)
+    local now = _G.GetTime() * 1000
+    local span = castEnd - castStart
+    if span <= 0 or now >= castEnd then
+        self:SetScript("OnUpdate", nil)
+        self:Hide()
+        return
+    end
+    local pct = (now - castStart) / span
+    -- A channel drains rather than fills: the bar shows what is LEFT.
+    self.fill:SetValue(castChannel and (1 - pct) or pct)
+    self.time:SetFormattedText("%.1f", (castEnd - now) / 1000)
+end
+
+local function BuildBar()
+    if petCastBar then return petCastBar end
+
+    -- Parented to UIParent on purpose. Anchoring to the pet frame reads its
+    -- rect; parenting to it would make us a child of a secure unit button and
+    -- put our Show/Hide inside their frame's world.
+    local f = _G.CreateFrame("Frame", "AniModsPetCastBar", _G.UIParent)
+    f:SetFrameStrata("MEDIUM")
+    f:Hide()
+
+    f.bg = f:CreateTexture(nil, "BACKGROUND")
+    f.bg:SetAllPoints()
+
+    f.fill = _G.CreateFrame("StatusBar", nil, f)
+    f.fill:SetAllPoints()
+    f.fill:SetStatusBarTexture("Interface\\Buttons\\WHITE8X8")
+    f.fill:SetMinMaxValues(0, 1)
+    f.fill:SetValue(0)
+
+    f.name = f.fill:CreateFontString(nil, "OVERLAY")
+    f.name:SetPoint("LEFT", f, "LEFT", 3, 0)
+    f.name:SetJustifyH("LEFT")
+
+    f.time = f.fill:CreateFontString(nil, "OVERLAY")
+    f.time:SetPoint("RIGHT", f, "RIGHT", -3, 0)
+    f.time:SetJustifyH("RIGHT")
+
+    petCastBar = f
+    ApplyBarLook()
+    ApplyBarPosition()
+    return f
+end
+
+local function ShowCast(channel)
+    local bar = BuildBar()
+    -- Declared local, not left implicit: `_` in a plain multiple ASSIGNMENT is
+    -- a global write, which is how the same idiom that is fine in a `local`
+    -- statement leaks seven globals here.
+    local _
+    local name, startMS, endMS, notInterruptible
+    if channel then
+        name, _, _, startMS, endMS, _, notInterruptible = _G.UnitChannelInfo("pet")
+    else
+        name, _, _, startMS, endMS, _, _, notInterruptible = _G.UnitCastingInfo("pet")
+    end
+    if not (name and startMS and endMS) then
+        bar:SetScript("OnUpdate", nil)
+        bar:Hide()
+        return
+    end
+
+    castStart, castEnd, castChannel = startMS, endMS, channel and true or false
+    bar.name:SetText(name)
+
+    local focus = FocusCastSettings()
+    local c = notInterruptible
+        and (focus and focus.castbarUninterruptibleColor)
+        or  (focus and focus.castbarFillColor)
+    if notInterruptible then
+        bar.fill:SetStatusBarColor(c and c.r or 0.5, c and c.g or 0.5, c and c.b or 0.5)
+    else
+        bar.fill:SetStatusBarColor(c and c.r or 0.863, c and c.g or 0.820, c and c.b or 0.639)
+    end
+
+    bar:SetScript("OnUpdate", OnBarUpdate)
+    bar:Show()
+end
+
+local function HideCast()
+    if not petCastBar then return end
+    petCastBar:SetScript("OnUpdate", nil)
+    petCastBar:Hide()
+end
+
+local petCastWatcher
+
+local function EnsurePetCastWatcher()
+    if petCastWatcher then return end
+    petCastWatcher = _G.CreateFrame("Frame")
+    -- RegisterUnitEvent, so a raid full of casters never reaches this handler
+    -- at all. These fire for every unit otherwise.
+    for _, ev in ipairs({
+        "UNIT_SPELLCAST_START", "UNIT_SPELLCAST_DELAYED",
+        "UNIT_SPELLCAST_CHANNEL_START", "UNIT_SPELLCAST_CHANNEL_UPDATE",
+        "UNIT_SPELLCAST_INTERRUPTIBLE", "UNIT_SPELLCAST_NOT_INTERRUPTIBLE",
+        "UNIT_SPELLCAST_STOP", "UNIT_SPELLCAST_CHANNEL_STOP",
+        "UNIT_SPELLCAST_INTERRUPTED", "UNIT_SPELLCAST_FAILED",
+    }) do
+        petCastWatcher:RegisterUnitEvent(ev, "pet")
+    end
+    petCastWatcher:SetScript("OnEvent", function(_, event)
+        if not petCastEnabled then return end
+        if event == "UNIT_SPELLCAST_START" or event == "UNIT_SPELLCAST_DELAYED" then
+            ShowCast(false)
+        elseif event == "UNIT_SPELLCAST_CHANNEL_START"
+            or event == "UNIT_SPELLCAST_CHANNEL_UPDATE" then
+            ShowCast(true)
+        elseif event == "UNIT_SPELLCAST_INTERRUPTIBLE"
+            or event == "UNIT_SPELLCAST_NOT_INTERRUPTIBLE" then
+            -- Re-read rather than recolour in place: the same path that chose
+            -- the colour at the start gets it right for a channel too.
+            ShowCast(castChannel)
+        else
+            HideCast()
+        end
+    end)
+end
+
+-- EllesmereUI's unlock mode, through its published extension point. Every
+-- callback here reads and writes AniModsDB: the mover is theirs, the values
+-- are ours. That is the whole reason this is not an injection.
+local function RegisterPetCastUnlock()
+    if petCastRegistered then return end
+    local eui = _G.EllesmereUI
+    if not (eui and eui.RegisterUnlockElements and eui.MakeUnlockElement) then return end
+    petCastRegistered = true
+
+    local MK = eui.MakeUnlockElement
+    eui:RegisterUnlockElements({
+        MK({
+            key   = PET_UNLOCK_KEY,
+            label = "Pet Cast Bar",
+            group = "AniMods",
+            order = 100,
+            isHidden = function() return not petCastEnabled end,
+            getFrame = function() return BuildBar() end,
+            getSize  = function() return BarSize() end,
+            setWidth = function(_, w)
+                PetCastDB().width = math.max(40, math.floor(w + 0.5))
+                ApplyBarLook()
+            end,
+            setHeight = function(_, h)
+                PetCastDB().height = math.max(6, math.floor(h + 0.5))
+                ApplyBarLook()
+            end,
+            -- Never read the live position here: on Cancel the frame is still
+            -- sitting where it was dragged, which is the note their own
+            -- Battle Res element leaves about this exact callback.
+            savePos = function(_, _, _, x, y)
+                PetCastDB().pos = { x = x, y = y }
+            end,
+            loadPos = function()
+                local pos = PetCastDB().pos
+                if not pos then return nil end
+                return "CENTER", "CENTER", pos.x, pos.y
+            end,
+            clearPos = function()
+                PetCastDB().pos = nil
+                ApplyBarPosition()
+            end,
+            applyPos = function() ApplyBarPosition() end,
+        }),
+    })
 end
 
 local PetCastBarEntry = {
     key = "petCastBar",
     name = "Pet Cast Bar",
     Available = function()
-        local eui = _G.EllesmereUI
-        if type(eui) ~= "table" or type(eui.RearmBlizzCastBars) ~= "function" then
-            return false, "This EllesmereUI build has no RearmBlizzCastBars, "
-                       .. "which is the call that hands Blizzard's cast bars "
-                       .. "their events back."
+        if not AniMods.IsAddOnLoaded("EllesmereUIUnitFrames") then
+            return false, "EllesmereUIUnitFrames is not loaded, so there is no "
+                       .. "pet frame to sit under and no cast bar styling to "
+                       .. "read."
         end
-        if not PetBar() then
-            return false, "Blizzard's PetCastingBarFrame does not exist on this "
-                       .. "client, so there is nothing to re-arm."
+        if not EUIPetFrame() then
+            return false, "EllesmereUI is not drawing the pet frame -- its Pet "
+                       .. "frame source is set to Blizzard or Hidden, so there "
+                       .. "is nothing to anchor to."
         end
         return true
     end,
     Apply = function()
-        petBarEnabled = true
-
-        if not petBarHooked then
-            petBarHooked = true
-            -- Post-hook: by the time this runs EllesmereUI has finished its own
-            -- ownership bookkeeping for that window, so re-arming here cannot
-            -- race it. Re-entry is impossible because Revert clears the flag
-            -- BEFORE it opens its own window.
-            _G.hooksecurefunc(_G.EllesmereUI, "RestoreBlizzCastBarEvents", function()
-                if petBarEnabled then _G.EllesmereUI.RearmBlizzCastBars() end
-            end)
-        end
-
-        -- Once now, for the ordering where EllesmereUI finished its castbar
-        -- setup before this module was enabled and no further window is coming.
-        _G.EllesmereUI.RearmBlizzCastBars()
+        petCastEnabled = true
+        BuildBar()
+        ApplyBarLook()
+        ApplyBarPosition()
+        EnsurePetCastWatcher()
+        RegisterPetCastUnlock()
         return true
     end,
     Revert = function()
-        petBarEnabled = false
-
-        -- Put the bar back the way oUF left it, which is what makes this entry
-        -- reversible and so allowed in this bag at all.
-        --
-        -- WRAPPED IN CAPTURE/RESTORE, and that is not ceremony. EllesmereUI
-        -- hooks UnregisterAllEvents on these frames and, outside one of its own
-        -- windows, reads the call as another addon claiming the bar -- setting
-        -- `foreign`, which RearmBlizzCastBars then refuses to touch. Silencing
-        -- the naive way would therefore make this entry un-re-enableable until
-        -- a reload. Inside a window it reads as EllesmereUI's own write, which
-        -- is the truth: we are undoing something of theirs.
-        local bar = PetBar()
-        local eui = _G.EllesmereUI
-        if not (bar and eui and eui.CaptureBlizzCastBarEvents) then return end
-        eui.CaptureBlizzCastBarEvents()
-        bar:UnregisterAllEvents()
-        bar:Hide()
-        eui.RestoreBlizzCastBarEvents()
+        petCastEnabled = false
+        HideCast()
+        -- The watcher stays registered and the unlock element stays declared;
+        -- both are inert while the flag is false (the handler returns at once,
+        -- isHidden() takes the mover away), and neither can be undone -- a
+        -- RegisterUnitEvent could be, but tearing it down to rebuild it on the
+        -- next toggle buys nothing.
     end,
     GetInfoRows = function()
-        -- EllesmereUI's own bookkeeping, read rather than guessed at. Rearm
-        -- refuses a bar it believes another addon claimed, and that refusal is
-        -- silent -- so when nothing appears, this is the row that says whether
-        -- the call did nothing or did something that did not help.
-        local bar
-        for _, candidate in ipairs(_G.EllesmereUI._blizzCastBarList or {}) do
-            if candidate.unit == "pet" then bar = candidate end
-        end
-
-        local frame = PetBar()
-        local rows = {
+        local own = PetCastDB()
+        return {
             {
-                label = "Listening for casts",
-                state = PetBarArmed(),
-                help  = "Whether PetCastingBarFrame has its cast events. This "
-                     .. "is what the entry actually changes; if it says no, "
-                     .. "the re-arm was refused rather than ineffective.",
+                label = "Width", min = 40, max = 400, step = 1,
+                get   = function() local w = BarSize(); return w end,
+                set   = function(v) own.width = v; ApplyBarLook() end,
+                help  = "Defaults to the pet frame's own width. The focus cast "
+                     .. "bar's width is deliberately not inherited: the pet "
+                     .. "frame is narrower, and the bar would hang off it.",
             },
             {
-                label = "Claimed by another addon",
-                state = (bar and bar.foreign) and true or false,
-                help  = "EllesmereUI watches UnregisterAllEvents on this frame "
-                     .. "and marks it foreign when something outside its own "
-                     .. "windows silences it. RearmBlizzCastBars then leaves it "
-                     .. "alone on purpose, so it never puts Blizzard's bar back "
-                     .. "on top of a cast bar addon's. If this is yes, that is "
-                     .. "the reason nothing appeared.",
+                label = "Height", min = 6, max = 40, step = 1,
+                get   = function() local _, h = BarSize(); return h end,
+                set   = function(v) own.height = v; ApplyBarLook() end,
             },
             {
-                label = "Frame shown",
-                state = (frame and frame:IsShown()) and true or false,
-                help  = "oUF hides the frame as well as silencing it. Blizzard's "
-                     .. "bar shows itself again on the next cast, so this is "
-                     .. "normally no while the pet is idle -- it only means "
-                     .. "something is wrong if it stays no through a cast while "
-                     .. "the row above says it is listening.",
+                label = "Position",
+                value = own.pos and "moved" or "under the pet frame",
+                help  = "Registered with EllesmereUI's unlock mode as \"Pet Cast "
+                     .. "Bar\" under the AniMods group, so it drags, nudges and "
+                     .. "size-matches like any of its own elements -- but every "
+                     .. "value it produces is stored here rather than in "
+                     .. "EllesmereUI's settings.",
             },
             {
-                kind = "button", label = "Re-arm now", button = "Re-arm",
-                help = "Runs EllesmereUI's RearmBlizzCastBars again and reports "
-                    .. "what changed. Useful after switching an EllesmereUI "
-                    .. "cast bar setting, which re-silences this one.",
+                kind = "button", label = "Reset position", button = "Reset",
+                help = "Puts it back under the pet frame.",
                 onClick = function()
-                    local before = PetBarArmed()
-                    _G.EllesmereUI.RearmBlizzCastBars()
-                    local after = PetBarArmed()
-                    if after and not before then
-                        AniMods.Print("pet cast bar re-armed.")
-                    elseif after then
-                        AniMods.Print("pet cast bar was already armed.")
-                    else
-                        AniMods.Print("pet cast bar is still silent"
-                            .. ((bar and bar.foreign)
-                                and " -- another addon has claimed it."
-                                or  " -- EllesmereUI refused the re-arm."))
-                    end
+                    own.pos = nil
+                    ApplyBarPosition()
                     if AniMods.RefreshUI then AniMods.RefreshUI() end
                 end,
             },
             {
-                label = "Position",
-                value = "Blizzard's",
-                help  = "This is Blizzard's own frame, so it sits where "
-                     .. "Blizzard puts it, not where EllesmereUI's unit frame "
-                     .. "settings would.",
+                kind = "button", label = "Preview", button = "Show",
+                help = "Runs a three second fake cast. Worth having: the real "
+                    .. "trigger is a Mind Controlled caster, which is not "
+                    .. "something you can arrange while fiddling with sizes.",
+                onClick = function()
+                    local bar = BuildBar()
+                    castStart = _G.GetTime() * 1000
+                    castEnd, castChannel = castStart + 3000, false
+                    bar.name:SetText("Preview")
+                    bar.fill:SetValue(0)
+                    bar:SetScript("OnUpdate", OnBarUpdate)
+                    bar:Show()
+                end,
             },
         }
-        return rows
     end,
 }
 
