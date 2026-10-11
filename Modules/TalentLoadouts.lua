@@ -253,6 +253,195 @@ local function BuildGroupReport()
 end
 
 -- ---------------------------------------------------------------------------
+-- Bases -- the Blizzard loadouts that variants hang off
+-- ---------------------------------------------------------------------------
+--
+-- A VIEWER AND AN ACTION LAYER, and nothing else. Everything below runs from a
+-- button in this tab: nothing is hooked, scheduled or applied at login, so
+-- having this module installed never changes what Blizzard's talent UI or
+-- TLM's own panel do while you are using them.
+--
+-- The shape being managed: a BASE is a Blizzard loadout named exactly
+-- {Prefix}-{Case}, and its variants are the TLM custom loadouts whose names
+-- share that base. TLM already draws that tree -- it indents a custom loadout
+-- under a Blizzard one when the variant's parentMapping points at the base's
+-- configID. Aligning that pointer with the name is the whole job.
+--
+-- The NAME stays the source of truth, as the convention note at the top says.
+-- parentMapping is still never read as taxonomy; it is WRITTEN from it. A
+-- variant sitting in the wrong slot is something to correct, not a fact to
+-- honour.
+--
+-- ── What is scoped to one spec, and what is not ─────────────────────────────
+--
+-- THE VIEW IS NOT. TLM's GetAllLoadouts returns Blizzard loadouts as well as
+-- custom ones, for every spec it has cached, each carrying its own specID, so
+-- every spec can be listed without asking Blizzard anything at all.
+--
+-- PARENTING IS NOT. TLM:SetParentLoadout writes parentMapping and checks no
+-- spec. Its only requirement is that the parent is a Blizzard loadout TLM has
+-- seen, because DetectDeletedParents clears a parent it cannot find.
+--
+-- THE SHARED ACTION BARS FLAG IS BLIZZARD'S, and is the one place a spec may
+-- matter: usesSharedActionBars comes from C_Traits.GetConfigInfo and is written
+-- through C_ClassTalents.SetUsesSharedActionBars. Whether either answers for a
+-- config belonging to a spec you are not currently in cannot be settled from
+-- here, so it is DETECTED rather than assumed -- a config whose info does not
+-- come back reads as "unknown", never as compliant, and the fix button reports
+-- what it could not reach instead of quietly counting it as done.
+
+local function AllLoadouts()
+    local api = API()
+    if not api then return {} end
+    local ok, all = pcall(api.GetAllLoadouts, api)
+    if not ok or type(all) ~= "table" then return {} end
+    return all
+end
+
+local function SpecName(specID)
+    local si = _G.C_SpecializationInfo
+    if si and si.GetSpecializationInfoByID then
+        local ok, _, name = pcall(si.GetSpecializationInfoByID, specID)
+        if ok and name and name ~= "" then return name end
+    end
+    return "Spec " .. tostring(specID)
+end
+
+--- The Blizzard loadout TLM currently files a build under, or nil.
+--- Index 0 is this character's own entry: the table is keyed per character,
+--- because one build can occupy a different slot on each of them.
+local function ParentConfigID(info)
+    local mapping = info.parentMapping
+    return mapping and mapping[0] or nil
+end
+
+--- true, false, or nil meaning Blizzard did not answer for this config.
+--- The three are kept apart on purpose -- see the scope note above.
+local function UsesSharedBars(configID)
+    local traits = _G.C_Traits
+    if not (traits and traits.GetConfigInfo) then return nil end
+    local ok, cfg = pcall(traits.GetConfigInfo, configID)
+    if not ok or type(cfg) ~= "table" or cfg.usesSharedActionBars == nil then return nil end
+    return cfg.usesSharedActionBars and true or false
+end
+
+--- Everything the view and both buttons need, gathered in one pass.
+--- @return table specs  specID -> { bases = name -> entry, baseOrder, orphans }
+--- @return table order  specIDs, sorted
+local function Survey()
+    local all = AllLoadouts()
+    local specs, order = {}, {}
+
+    local function Spec(specID)
+        local s = specs[specID]
+        if not s then
+            s = { bases = {}, baseOrder = {}, orphans = {} }
+            specs[specID] = s
+            order[#order + 1] = specID
+        end
+        return s
+    end
+
+    -- Blizzard loadouts first. A variant can only be adopted by a base that
+    -- already exists, so the bases have to be known before the walk that files
+    -- variants under them.
+    for _, info in ipairs(all) do
+        if info.isBlizzardLoadout and info.name and info.specID then
+            local s = Spec(info.specID)
+            if not s.bases[info.name] then
+                s.bases[info.name] = { name = info.name, configID = info.id, variants = {} }
+                s.baseOrder[#s.baseOrder + 1] = info.name
+            end
+        end
+    end
+
+    for _, info in ipairs(all) do
+        if not info.isBlizzardLoadout and info.name and info.specID then
+            local s = Spec(info.specID)
+            local base = BaseOf(info.name)
+            local entry = s.bases[base]
+            if entry then
+                entry.variants[#entry.variants + 1] = info
+            else
+                -- No Blizzard loadout of that name: nothing to hang it off.
+                -- Reported rather than guessed at -- creating the base is a
+                -- decision with a loadout slot attached, so it stays yours.
+                s.orphans[#s.orphans + 1] = { info = info, base = base }
+            end
+        end
+    end
+
+    table.sort(order)
+    for _, specID in ipairs(order) do table.sort(specs[specID].baseOrder) end
+    return specs, order
+end
+
+--- Point every variant at the Blizzard loadout its NAME says it belongs to.
+local function AdoptAll()
+    local tlm = _G.TalentLoadoutManagerAPI
+    local charAPI = tlm and tlm.CharacterAPI
+    if not (charAPI and charAPI.SetParentLoadout) then
+        return false, "TalentLoadoutManager has no SetParentLoadout."
+    end
+
+    local specs, order = Survey()
+    local moved, already, failed = 0, 0, 0
+    for _, specID in ipairs(order) do
+        for _, baseName in ipairs(specs[specID].baseOrder) do
+            local base = specs[specID].bases[baseName]
+            for _, variant in ipairs(base.variants) do
+                if ParentConfigID(variant) == base.configID then
+                    already = already + 1
+                elseif pcall(charAPI.SetParentLoadout, charAPI, variant.id, base.configID) then
+                    moved = moved + 1
+                else
+                    failed = failed + 1
+                end
+            end
+        end
+    end
+
+    if moved == 0 and failed == 0 then
+        return true, ("All %d already filed correctly."):format(already)
+    end
+    return true, ("Re-filed %d, %d already correct%s."):format(
+        moved, already, failed > 0 and (", " .. failed .. " failed") or "")
+end
+
+--- Put every Blizzard loadout on shared action bars.
+local function ShareAll()
+    local talents = _G.C_ClassTalents
+    if not (talents and talents.SetUsesSharedActionBars) then
+        return false, "This client has no SetUsesSharedActionBars."
+    end
+
+    local specs, order = Survey()
+    local fixed, already, unknown, failed = 0, 0, 0, 0
+    for _, specID in ipairs(order) do
+        for _, baseName in ipairs(specs[specID].baseOrder) do
+            local configID = specs[specID].bases[baseName].configID
+            local state = UsesSharedBars(configID)
+            if state == true then
+                already = already + 1
+            elseif state == nil then
+                -- Blizzard would not say. Counted apart rather than attempted
+                -- blind: a write we cannot verify is not a fix.
+                unknown = unknown + 1
+            elseif pcall(talents.SetUsesSharedActionBars, configID, true) then
+                fixed = fixed + 1
+            else
+                failed = failed + 1
+            end
+        end
+    end
+
+    local parts = { ("%d set"):format(fixed), ("%d already shared"):format(already) }
+    if unknown > 0 then parts[#parts + 1] = ("%d unreadable"):format(unknown) end
+    if failed > 0 then parts[#parts + 1] = ("%d failed"):format(failed) end
+    return true, table.concat(parts, ", ") .. "."
+end
+
+-- ---------------------------------------------------------------------------
 -- Module
 -- ---------------------------------------------------------------------------
 
@@ -279,6 +468,25 @@ function TalentLoadouts:GetInfoRows()
         if base == UNCATEGORISED then bagged = bagged + 1 end
     end
 
+    -- The convention first, before any count that assumes it. It is the same
+    -- one Gear Sync matches equipment sets against, and stating it in both
+    -- places is deliberate: it is one rule, and a reader who meets it in only
+    -- one module would think it belonged to that module.
+    rows[#rows + 1] = { section = "Convention" }
+    rows[#rows + 1] = {
+        label = "Name",
+        value = "{Prefix}-{Case}{Variant}",
+        help  = "Prefix is spec plus hero talent (\"SA\" = Shadow Archon) and "
+             .. "may be left off. Case is one of " .. table.concat(CASE_TOKENS, ", ")
+             .. ". Variant is anything after it.\n\nThe BASE is "
+             .. "{Prefix}-{Case}: every name sharing one is a variant of it, so "
+             .. "\"SA-Raid-MT\" and \"SA-Raid-B1\" are siblings under "
+             .. "\"SA-Raid\" rather than one being the other's parent.\n\n"
+             .. "Gear Sync reads the same convention to pick an equipment set, "
+             .. "matching the longest set name that is a prefix of the loadout "
+             .. "name. One rule, two modules.",
+    }
+
     rows[#rows + 1] = { section = "Collection" }
     rows[#rows + 1] = { label = "Custom loadouts", value = tostring(#loadouts) }
     rows[#rows + 1] = {
@@ -292,6 +500,106 @@ function TalentLoadouts:GetInfoRows()
         value = tostring(bagged),
         help  = "Names with no recognised case token. They keep their spelling "
              .. "and are dumped as-is.",
+    }
+
+    -- ── Bases, every spec ───────────────────────────────────────────────────
+    --
+    -- All specs, not just the one you are in: these come from TLM's cache,
+    -- which carries a specID per loadout, so nothing here has to ask Blizzard
+    -- which spec is active.
+    local specs, specOrder = Survey()
+    local notShared, unreadable, unparented, orphanCount = 0, 0, 0, 0
+
+    for _, specID in ipairs(specOrder) do
+        local spec = specs[specID]
+        rows[#rows + 1] = { section = SpecName(specID) }
+
+        for _, baseName in ipairs(spec.baseOrder) do
+            local base = spec.bases[baseName]
+            local shared = UsesSharedBars(base.configID)
+            if shared == false then notShared = notShared + 1
+            elseif shared == nil then unreadable = unreadable + 1 end
+
+            local filed = 0
+            for _, variant in ipairs(base.variants) do
+                if ParentConfigID(variant) == base.configID then
+                    filed = filed + 1
+                else
+                    unparented = unparented + 1
+                end
+            end
+
+            -- One row per base: how many variants it holds, how many are
+            -- actually filed under it, and whether it is on shared bars. The
+            -- three facts that decide whether either button has work to do.
+            local state = (shared == true and "shared")
+                or (shared == false and "|cffff8800not shared|r")
+                or "|cff999999bars unknown|r"
+            rows[#rows + 1] = {
+                label = base.name,
+                value = ("%d/%d filed, %s"):format(filed, #base.variants, state),
+                help  = (shared == nil)
+                    and "Blizzard did not report this loadout's action bar "
+                     .. "setting, which usually means it belongs to a spec you "
+                     .. "are not in. It is left alone rather than assumed to be "
+                     .. "correct."
+                    or nil,
+            }
+        end
+
+        for _, orphan in ipairs(spec.orphans) do
+            orphanCount = orphanCount + 1
+            rows[#rows + 1] = {
+                label = "   " .. orphan.info.name,
+                value = ("no \"%s\" loadout"):format(orphan.base),
+                help  = "There is no Blizzard loadout named \"" .. orphan.base
+                     .. "\" on this spec, so nothing can hold this one. Make "
+                     .. "one in Blizzard's talent UI and press File, or leave "
+                     .. "it loose -- creating a loadout spends a slot, so that "
+                     .. "stays your call rather than a button here.",
+            }
+        end
+    end
+
+    rows[#rows + 1] = { section = "Housekeeping" }
+    rows[#rows + 1] = {
+        label = "Variants filed under the wrong base",
+        value = tostring(unparented),
+        help  = "A variant is filed correctly when TLM points it at the "
+             .. "Blizzard loadout its NAME says it belongs to. The name is the "
+             .. "source of truth; this reads the pointer and reports the "
+             .. "difference.",
+    }
+    rows[#rows + 1] = {
+        kind = "button", label = "File variants under their base", button = "File",
+        help = "Points every variant at the Blizzard loadout matching its base "
+            .. "name, across all specs. Safe to press twice -- one already in "
+            .. "the right place is left alone.",
+        onClick = function()
+            local ok, msg = AdoptAll()
+            AniMods.Print(msg or (ok and "done." or "nothing to do."))
+            if AniMods.RefreshUI then AniMods.RefreshUI() end
+        end,
+    }
+    rows[#rows + 1] = {
+        label = "Loadouts not on shared action bars",
+        value = unreadable > 0
+            and ("%d (%d unreadable)"):format(notShared, unreadable)
+            or tostring(notShared),
+        help  = "With shared action bars off, a loadout carries its own bar "
+             .. "layout and keybindings and swapping builds rearranges them. "
+             .. "Unreadable ones belong to specs you are not in; they are "
+             .. "counted apart rather than assumed correct.",
+    }
+    rows[#rows + 1] = {
+        kind = "button", label = "Put all on shared action bars", button = "Share",
+        help = "Sets the shared flag on every Blizzard loadout this can read, "
+            .. "and says how many it could not.",
+        onClick = function()
+            local ok, msg = ShareAll()
+            AniMods.Print(msg or (ok and "done." or "nothing to do."))
+            if AniMods.RefreshUI then AniMods.RefreshUI() end
+        end,
     }
 
     rows[#rows + 1] = { section = "Transfer" }
