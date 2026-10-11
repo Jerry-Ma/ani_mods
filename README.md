@@ -1200,3 +1200,31 @@ both toggleable in **General**.
   releases. It exports Blizzard's own ~120-character build codes rather than TLM's
   ~2,000-character internal blobs — the difference between a ~95 KB dump and a ~4 KB one,
   and why this needs no compression library.
+
+  It is also where the naming convention lives. A loadout is
+  `{Prefix}-{Case}{Variant}` — spec plus hero talent, then one of `M+`/`Raid`/`Delve`/
+  `PVP`, then free text — and `{Prefix}-{Case}` is the *base*, the Blizzard loadout every
+  name sharing it is a variant of. Gear Sync matches equipment sets against the same
+  rule, which is why both modules state it: it is one rule, and a reader who met it in
+  only one of them would think it belonged there.
+
+  The view is a grid per spec, every spec: rows are prefixes, columns are the four cases,
+  so a cell is one base. Green is there and on shared action bars, amber is there with
+  bars of its own, red is expected and absent, empty means no name ever implied it — and
+  the *gaps* are the point, since a list of what exists cannot say "no Delve build for
+  this hero talent". Clicking an amber cell runs Blizzard's own path: their
+  `LOADOUT_CONFIRM_SHARED_ACTION_BARS` popup, pointed at that `configID` through their
+  `ClassTalentLoadoutEditDialog`, so it is their wording and their call rather than a
+  copy. The bulk button is deliberately *not* that dialog shown N times — a chain of
+  identical popups is something to click through, so it asks once and names every loadout
+  it is about to change. Only the current spec's rows are clickable, because creating a
+  loadout snapshots the talents you have on and Blizzard only reports a config's bar
+  setting for the spec you are in; the rest are drawn, bordered rows mark the editable
+  ones, and nothing pretends to a button that would fail invisibly.
+
+  What *should* exist is ours, not TLM's. `GetAllLoadouts` is a cache of what TLM has
+  seen — the right answer to "what exists" and the wrong one to "what should", since on a
+  fresh character it is empty at exactly the moment a checklist is worth having. So the
+  plan is derived from loadout names (every name implies its base, so it can never
+  disagree with them), persisted, and refreshed on every walk — restoring a dump records
+  it as it goes, and the fresh character it lands on starts with the grid already drawn.

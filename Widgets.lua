@@ -765,6 +765,144 @@ function W.Badge(parent)
     return o
 end
 
+-- ── Status grid ─────────────────────────────────────────────────────────────
+--
+-- A small table of coloured cells: one row per subject, one column per aspect,
+-- each cell a state you can see at a glance and click to act on.
+--
+-- Why a grid rather than a list of rows. The thing being shown is a PRODUCT --
+-- every prefix against every case -- and a list flattens that into N x M lines
+-- where the reader has to rebuild the shape in their head. The gaps are the
+-- information here: an empty cell says "you have no M+ build for this hero
+-- talent", which a list of what exists cannot say at all.
+--
+-- Cells carry a state key rather than a colour, so the palette lives in one
+-- place and a caller cannot invent a fifth meaning by passing a new colour.
+W.GRID_STATE = {
+    ok      = { 0.18, 0.78, 0.35 },   -- exists and correct
+    warn    = { 1.00, 0.65, 0.25 },   -- exists, needs a change (W.BADGE_WARN)
+    missing = { 0.85, 0.25, 0.25 },   -- expected and absent
+    none    = { 1.00, 1.00, 1.00 },   -- not expected; drawn as a faint well
+}
+
+--- rows: { { label =, active = bool, cells = { [colIndex] = cell } }, ... }
+--- cell: { state = "ok"|"warn"|"missing"|"none", tip = string, onClick = fn }
+--- `active` marks the rows the player can actually act on right now; they get
+--- a border, because a grid where only some cells do anything has to say which.
+function W.Grid(parent)
+    local CELL_W, CELL_H, GAP, LABEL_W, HEAD_H = 54, 20, 4, 48, 16
+
+    local f = CreateFrame("Frame", nil, parent)
+    local o = { frame = f, heads = {}, rows = {} }
+
+    local function PaintCell(btn)
+        local c = W.GRID_STATE[btn.state] or W.GRID_STATE.none
+        local a = (btn.state == "none") and 0.06 or (btn:IsMouseOver() and 1 or 0.82)
+        btn.fill:SetColorTexture(c[1], c[2], c[3], a)
+    end
+
+    function o:SetData(cols, rows)
+        -- Column headings, pooled like everything else here: the case list is
+        -- fixed, so this runs once and then only repaints.
+        for i, name in ipairs(cols) do
+            local fs = o.heads[i]
+            if not fs then
+                fs = W.Font(f, 11, nil, W.TEXT_DIM_A)
+                fs:SetPoint("TOPLEFT", f, "TOPLEFT",
+                    LABEL_W + (i - 1) * (CELL_W + GAP), 0)
+                fs:SetWidth(CELL_W)
+                fs:SetJustifyH("CENTER")
+                o.heads[i] = fs
+            end
+            fs:SetText(name)
+            fs:Show()
+        end
+        for i = #cols + 1, #o.heads do o.heads[i]:Hide() end
+
+        for r, data in ipairs(rows) do
+            local row = o.rows[r]
+            if not row then
+                row = { cells = {} }
+                row.frame = CreateFrame("Frame", nil, f)
+                row.frame:SetHeight(CELL_H)
+                row.frame:SetPoint("LEFT", f, "LEFT", 0, 0)
+                row.frame:SetPoint("RIGHT", f, "RIGHT", 0, 0)
+                row.label = W.Font(row.frame, 12)
+                row.label:SetPoint("LEFT", row.frame, "LEFT", 2, 0)
+                row.label:SetWidth(LABEL_W - 4)
+                row.label:SetJustifyH("LEFT")
+                -- The active border is four edges on the row itself rather than
+                -- a backdrop: same reason Compat.lua draws borders that way, a
+                -- backdrop goes blurry at fractional UI scale and leaves an
+                -- object later SetBackdrop calls fight over.
+                row.edges = {}
+                for e = 1, 4 do
+                    row.edges[e] = W.Tex(row.frame, "OVERLAY", 1, 1, 1, 0.22)
+                end
+                row.edges[1]:SetPoint("TOPLEFT");    row.edges[1]:SetPoint("TOPRIGHT");    row.edges[1]:SetHeight(1)
+                row.edges[2]:SetPoint("BOTTOMLEFT"); row.edges[2]:SetPoint("BOTTOMRIGHT"); row.edges[2]:SetHeight(1)
+                row.edges[3]:SetPoint("TOPLEFT");    row.edges[3]:SetPoint("BOTTOMLEFT");  row.edges[3]:SetWidth(1)
+                row.edges[4]:SetPoint("TOPRIGHT");   row.edges[4]:SetPoint("BOTTOMRIGHT"); row.edges[4]:SetWidth(1)
+                o.rows[r] = row
+            end
+
+            row.frame:SetPoint("TOPLEFT", f, "TOPLEFT", 0, -HEAD_H - (r - 1) * (CELL_H + GAP))
+            row.label:SetText(data.label or "")
+            for _, edge in ipairs(row.edges) do edge:SetShown(data.active and true or false) end
+            row.frame:Show()
+
+            for c = 1, #cols do
+                local cell = data.cells and data.cells[c]
+                local btn = row.cells[c]
+                if not btn then
+                    btn = CreateFrame("Button", nil, row.frame)
+                    btn:SetSize(CELL_W, CELL_H - 2)
+                    btn:SetPoint("LEFT", row.frame, "LEFT",
+                        LABEL_W + (c - 1) * (CELL_W + GAP), 0)
+                    btn.fill = W.Tex(btn, "BACKGROUND", 1, 1, 1, 1)
+                    btn.fill:SetAllPoints()
+                    btn.text = W.Font(btn, 10)
+                    btn.text:SetAllPoints()
+                    btn.text:SetJustifyH("CENTER")
+                    btn:SetScript("OnEnter", function(b)
+                        PaintCell(b)
+                        if not b.tip then return end
+                        o.tip = o.tip or W.Tooltip()
+                        o.tip:Clear()
+                        o.tip:AddLine(b.tip, 1, 1, 1)
+                        o.tip:Show(b)
+                    end)
+                    btn:SetScript("OnLeave", function(b)
+                        PaintCell(b)
+                        if o.tip then o.tip:Hide() end
+                    end)
+                    btn:SetScript("OnClick", function(b)
+                        if b.onClick then b.onClick() end
+                    end)
+                    row.cells[c] = btn
+                end
+
+                btn.state = cell and cell.state or "none"
+                btn.tip = cell and cell.tip or nil
+                -- Only a cell with something to do is clickable. An inert
+                -- button that highlights on hover promises an action it does
+                -- not have.
+                btn.onClick = cell and cell.onClick or nil
+                btn:SetEnabled(btn.onClick ~= nil)
+                btn.text:SetText(cell and cell.text or "")
+                PaintCell(btn)
+                btn:Show()
+            end
+            for c = #cols + 1, #row.cells do row.cells[c]:Hide() end
+        end
+        for r = #rows + 1, #o.rows do o.rows[r].frame:Hide() end
+
+        f:SetHeight(HEAD_H + math.max(#rows, 1) * (CELL_H + GAP))
+    end
+
+    return o
+end
+
 -- ── Colour swatches ─────────────────────────────────────────────────────────
 -- A row of clickable colour squares, the current one ringed.
 --

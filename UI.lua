@@ -337,6 +337,7 @@ end
 local function RowKind(descriptor)
     if descriptor.kind then return descriptor.kind end
     if descriptor.section then return "section" end
+    if descriptor.grid then return "grid" end
     if descriptor.strip then return "strip" end
     if descriptor.picker then return "picker" end
     if descriptor.button then return "button" end
@@ -660,6 +661,18 @@ local function BuildRow(parent, descriptor, sectionIndex, stripeIndex)
         AttachHelp(row, descriptor, slider.labelFS)
         return { kind = kind, widget = slider }, row, ROW_GAP
 
+    elseif kind == "grid" then
+        local row = CreateFrame("Frame", nil, parent)
+
+        local grid = W.Grid(row)
+        grid.frame:SetPoint("TOPLEFT", row, "TOPLEFT", 8, 0)
+        grid.frame:SetPoint("TOPRIGHT", row, "TOPRIGHT", -8, 0)
+        grid:SetData(descriptor.grid.cols, descriptor.grid.rows)
+        -- The grid sizes itself from its row count; the containing row has to
+        -- follow, or the stacker lays the next row on top of it.
+        row:SetHeight(grid.frame:GetHeight())
+        return { kind = kind, widget = grid, row = row }, row, ROW_GAP
+
     elseif kind == "strip" then
         local row = CreateFrame("Frame", nil, parent)
         row:SetHeight(24)
@@ -923,6 +936,13 @@ local function RefreshRowsInPlace(rows, cache)
             -- Follows the theme until the user picks something, so it has to be
             -- re-read: the resolved colour can change without this row acting.
             c.widget:SetColor(descriptor.get())
+        elseif c and c.kind == "grid" then
+            -- Rebuilt from the descriptor rather than patched cell by cell: a
+            -- cell's state, its tooltip and whether it does anything at all
+            -- are one answer, and recomputing them together is what stops a
+            -- green cell keeping a stale "click to fix" handler.
+            c.widget:SetData(descriptor.grid.cols, descriptor.grid.rows)
+            if c.row then c.row:SetHeight(c.widget.frame:GetHeight()) end
         elseif c and c.kind == "strip" then
             -- Cells carry the widgets' LIVE text, so this is what keeps the
             -- preview matching the bar as the numbers on it change.
