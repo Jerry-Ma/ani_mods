@@ -769,52 +769,134 @@ end
 -- A small table of coloured cells: one row per subject, one column per aspect,
 -- each cell a state you can see at a glance and click to act on.
 --
--- Why a grid rather than a list of rows. The thing being shown is a PRODUCT --
--- every prefix against every case -- and a list flattens that into N x M lines
--- where the reader has to rebuild the shape in their head. The gaps are the
--- information here: an empty cell says "you have no M+ build for this hero
--- talent", which a list of what exists cannot say at all.
+-- Why a grid rather than a list of rows. What it shows is a PRODUCT -- every
+-- row against every column -- and a list flattens that into N x M lines where
+-- the reader has to rebuild the shape in their head. The gaps are information
+-- too, and a list of what exists cannot show a gap at all.
+--
+-- This knows nothing about what it is tabulating. Labels, tooltips, states and
+-- click handlers all arrive from the caller; the widget owns layout, the
+-- palette and the pooling, and nothing else.
 --
 -- Cells carry a state key rather than a colour, so the palette lives in one
--- place and a caller cannot invent a fifth meaning by passing a new colour.
+-- place and a caller cannot invent a fourth meaning by passing a new colour.
+-- The three are about PRESENCE, which is what a wall of coloured cells can
+-- actually say at a glance. What a cell needs attention FOR is a detail, and
+-- details belong in the tooltip -- there can be several kinds of attention and
+-- there is only ever one colour for them.
+--
+-- Absence is NOT red. The grid is the full set of things that COULD exist, so
+-- most of it is empty on any normal character, and a card of red would be
+-- shouting about builds nobody wants. An empty well is what absence looks
+-- like: visible, countable and quiet. Only a thing that exists gets a colour.
 W.GRID_STATE = {
-    ok      = { 0.18, 0.78, 0.35 },   -- exists and correct
-    warn    = { 1.00, 0.65, 0.25 },   -- exists, needs a change (W.BADGE_WARN)
-    missing = { 0.85, 0.25, 0.25 },   -- expected and absent
-    none    = { 1.00, 1.00, 1.00 },   -- not expected; drawn as a faint well
+    ok      = { 0.18, 0.78, 0.35 },   -- exists
+    warn    = { 1.00, 0.65, 0.25 },   -- exists, needs attention (W.BADGE_WARN)
+    missing = { 1.00, 1.00, 1.00 },   -- not there yet; drawn as a faint well
 }
 
---- rows: { { label =, active = bool, cells = { [colIndex] = cell } }, ... }
---- cell: { state = "ok"|"warn"|"missing"|"none", tip = string, onClick = fn }
---- `active` marks the rows the player can actually act on right now; they get
---- a border, because a grid where only some cells do anything has to say which.
+--- cols: { { label =, tip =, active = bool, rule = bool }, ... }
+--- rows: { { label =, tip =, cells = { [colIndex] = cell } }, ... }
+--- cell: { state = "ok"|"warn"|"missing", text =, tip =, onClick = }
+---
+--- `rule` draws a hairline to the LEFT of that column, marking a group inside
+--- one table rather than splitting it into several. A heading per group turns
+--- a product back into a list of products, which is the shape a grid exists to
+--- avoid.
+---
+--- `active` marks the columns that can be acted on right now. The run of them
+--- gets ONE border rather than a box per column -- adjacent boxes in a table
+--- this tight read as gridlines, not as a selection. The run is assumed
+--- contiguous; a caller that marks two separate groups gets one border around
+--- both, which is why ordering columns by group is the caller's job.
+---
+--- Which axis is which is also the caller's: the long axis goes across, since
+--- a short wide table fits a panel and a tall narrow one does not.
 function W.Grid(parent)
-    local CELL_W, CELL_H, GAP, LABEL_W, HEAD_H = 54, 20, 4, 48, 16
+    local CELL_W, CELL_H, GAP, LABEL_W, HEAD_H = 34, 18, 2, 46, 15
+    -- What a group rule costs horizontally: space, the hairline, space.
+    local RULE_W = 7
 
     local f = CreateFrame("Frame", nil, parent)
-    local o = { frame = f, heads = {}, rows = {} }
+    local o = { frame = f, heads = {}, rows = {}, rules = {} }
+
+    -- Four textures rather than a backdrop: same reason Compat.lua draws
+    -- borders that way, a backdrop goes blurry at fractional UI scale and
+    -- leaves an object later SetBackdrop calls fight over.
+    local border = {}
+    for e = 1, 4 do border[e] = W.Tex(f, "OVERLAY", 1, 1, 1, 0.22) end
 
     local function PaintCell(btn)
-        local c = W.GRID_STATE[btn.state] or W.GRID_STATE.none
-        local a = (btn.state == "none") and 0.06 or (btn:IsMouseOver() and 1 or 0.82)
+        local c = W.GRID_STATE[btn.state] or W.GRID_STATE.missing
+        local a = (btn.state == "missing") and 0.06
+            or (btn:IsMouseOver() and 1 or 0.82)
         btn.fill:SetColorTexture(c[1], c[2], c[3], a)
     end
 
+    -- Cells, column headers and row labels all want a tooltip and none of
+    -- them owns the one tooltip object.
+    local function ShowTip(region, text)
+        if not text then return end
+        o.tip = o.tip or W.Tooltip()
+        o.tip:Clear()
+        o.tip:AddLine(text, 1, 1, 1)
+        o.tip:Show(region)
+    end
+    local function HideTip() if o.tip then o.tip:Hide() end end
+
     function o:SetData(cols, rows)
-        -- Column headings, pooled like everything else here: the case list is
-        -- fixed, so this runs once and then only repaints.
-        for i, name in ipairs(cols) do
-            local fs = o.heads[i]
-            if not fs then
-                fs = W.Font(f, 11, nil, W.TEXT_DIM_A)
-                fs:SetPoint("TOPLEFT", f, "TOPLEFT",
-                    LABEL_W + (i - 1) * (CELL_W + GAP), 0)
-                fs:SetWidth(CELL_W)
-                fs:SetJustifyH("CENTER")
-                o.heads[i] = fs
+        -- Column x positions, worked out up front: the header, the rule and
+        -- every cell in a column read the same number, so a group rule cannot
+        -- shift the heading and the cells by different amounts.
+        local x, nRules = LABEL_W, 0
+        local colX, firstActive, lastActive = {}, nil, nil
+
+        for i, col in ipairs(cols) do
+            if col.rule and i > 1 then
+                nRules = nRules + 1
+                local rule = o.rules[nRules]
+                if not rule then
+                    rule = W.Tex(f, "ARTWORK", 1, 1, 1, 0.10)
+                    rule:SetWidth(1)
+                    o.rules[nRules] = rule
+                end
+                x = x + math.floor(RULE_W / 2)
+                rule:ClearAllPoints()
+                rule:SetPoint("TOPLEFT", f, "TOPLEFT", x, 0)
+                rule:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", x, 0)
+                rule:Show()
+                x = x + RULE_W - math.floor(RULE_W / 2)
             end
-            fs:SetText(name)
-            fs:Show()
+            colX[i] = x
+            if col.active then
+                firstActive = firstActive or i
+                lastActive = i
+            end
+            x = x + CELL_W + GAP
+        end
+        for i = nRules + 1, #o.rules do o.rules[i]:Hide() end
+
+        -- Headers are frames, not bare FontStrings: a column label this
+        -- narrow is usually an abbreviation, and an abbreviation needs
+        -- somewhere to say what it stands for.
+        for i, col in ipairs(cols) do
+            local head = o.heads[i]
+            if not head then
+                head = CreateFrame("Frame", nil, f)
+                head:SetSize(CELL_W, HEAD_H)
+                head.text = W.Font(head, 11, nil, W.TEXT_DIM_A)
+                head.text:SetAllPoints()
+                head.text:SetJustifyH("CENTER")
+                head:SetScript("OnEnter", function(h) ShowTip(h, h.tip) end)
+                head:SetScript("OnLeave", HideTip)
+                o.heads[i] = head
+            end
+            head:ClearAllPoints()
+            head:SetPoint("TOPLEFT", f, "TOPLEFT", colX[i], 0)
+            head.text:SetText(col.label or "")
+            head.tip = col.tip
+            head:EnableMouse(col.tip ~= nil)
+            head:Show()
         end
         for i = #cols + 1, #o.heads do o.heads[i]:Hide() end
 
@@ -824,22 +906,15 @@ function W.Grid(parent)
                 row = { cells = {} }
                 row.frame = CreateFrame("Frame", nil, f)
                 row.frame:SetHeight(CELL_H)
-                row.label = W.Font(row.frame, 12)
-                row.label:SetPoint("LEFT", row.frame, "LEFT", 2, 0)
-                row.label:SetWidth(LABEL_W - 4)
+                row.labelHit = CreateFrame("Frame", nil, row.frame)
+                row.labelHit:SetPoint("LEFT", row.frame, "LEFT", 0, 0)
+                row.labelHit:SetSize(LABEL_W - 4, CELL_H)
+                row.labelHit:SetScript("OnEnter", function(h) ShowTip(h, h.tip) end)
+                row.labelHit:SetScript("OnLeave", HideTip)
+                row.label = W.Font(row.labelHit, 11, nil, W.TEXT_DIM_A)
+                row.label:SetPoint("LEFT", row.labelHit, "LEFT", 2, 0)
+                row.label:SetWidth(LABEL_W - 8)
                 row.label:SetJustifyH("LEFT")
-                -- The active border is four edges on the row itself rather than
-                -- a backdrop: same reason Compat.lua draws borders that way, a
-                -- backdrop goes blurry at fractional UI scale and leaves an
-                -- object later SetBackdrop calls fight over.
-                row.edges = {}
-                for e = 1, 4 do
-                    row.edges[e] = W.Tex(row.frame, "OVERLAY", 1, 1, 1, 0.22)
-                end
-                row.edges[1]:SetPoint("TOPLEFT");    row.edges[1]:SetPoint("TOPRIGHT");    row.edges[1]:SetHeight(1)
-                row.edges[2]:SetPoint("BOTTOMLEFT"); row.edges[2]:SetPoint("BOTTOMRIGHT"); row.edges[2]:SetHeight(1)
-                row.edges[3]:SetPoint("TOPLEFT");    row.edges[3]:SetPoint("BOTTOMLEFT");  row.edges[3]:SetWidth(1)
-                row.edges[4]:SetPoint("TOPRIGHT");   row.edges[4]:SetPoint("BOTTOMRIGHT"); row.edges[4]:SetWidth(1)
                 o.rows[r] = row
             end
 
@@ -852,7 +927,8 @@ function W.Grid(parent)
             row.frame:SetPoint("TOPLEFT", f, "TOPLEFT", 0, y)
             row.frame:SetPoint("TOPRIGHT", f, "TOPRIGHT", 0, y)
             row.label:SetText(data.label or "")
-            for _, edge in ipairs(row.edges) do edge:SetShown(data.active and true or false) end
+            row.labelHit.tip = data.tip
+            row.labelHit:EnableMouse(data.tip ~= nil)
             row.frame:Show()
 
             for c = 1, #cols do
@@ -860,9 +936,7 @@ function W.Grid(parent)
                 local btn = row.cells[c]
                 if not btn then
                     btn = CreateFrame("Button", nil, row.frame)
-                    btn:SetSize(CELL_W, CELL_H - 2)
-                    btn:SetPoint("LEFT", row.frame, "LEFT",
-                        LABEL_W + (c - 1) * (CELL_W + GAP), 0)
+                    btn:SetSize(CELL_W, CELL_H)
                     btn.fill = W.Tex(btn, "BACKGROUND", 1, 1, 1, 1)
                     btn.fill:SetAllPoints()
                     btn.text = W.Font(btn, 10)
@@ -870,15 +944,11 @@ function W.Grid(parent)
                     btn.text:SetJustifyH("CENTER")
                     btn:SetScript("OnEnter", function(b)
                         PaintCell(b)
-                        if not b.tip then return end
-                        o.tip = o.tip or W.Tooltip()
-                        o.tip:Clear()
-                        o.tip:AddLine(b.tip, 1, 1, 1)
-                        o.tip:Show(b)
+                        ShowTip(b, b.tip)
                     end)
                     btn:SetScript("OnLeave", function(b)
                         PaintCell(b)
-                        if o.tip then o.tip:Hide() end
+                        HideTip()
                     end)
                     btn:SetScript("OnClick", function(b)
                         if b.onClick then b.onClick() end
@@ -886,13 +956,19 @@ function W.Grid(parent)
                     row.cells[c] = btn
                 end
 
-                btn.state = cell and cell.state or "none"
+                btn:ClearAllPoints()
+                btn:SetPoint("LEFT", row.frame, "LEFT", colX[c], 0)
+                btn.state = cell and cell.state or "missing"
                 btn.tip = cell and cell.tip or nil
                 -- Only a cell with something to do is clickable. An inert
                 -- button that highlights on hover promises an action it does
                 -- not have.
                 btn.onClick = cell and cell.onClick or nil
                 btn:SetEnabled(btn.onClick ~= nil)
+                -- A cell still wants its tooltip when there is nothing to
+                -- click, and a disabled Button stops receiving OnEnter -- so
+                -- mouse input is set apart from the click.
+                btn:EnableMouse(btn.onClick ~= nil or btn.tip ~= nil)
                 btn.text:SetText(cell and cell.text or "")
                 PaintCell(btn)
                 btn:Show()
@@ -901,7 +977,33 @@ function W.Grid(parent)
         end
         for r = #rows + 1, #o.rows do o.rows[r].frame:Hide() end
 
-        f:SetHeight(HEAD_H + math.max(#rows, 1) * (CELL_H + GAP))
+        local height = HEAD_H + math.max(#rows, 1) * (CELL_H + GAP) - GAP
+
+        -- Offset by 2 so the border sits just outside the cells rather than
+        -- on their edge pixels.
+        if firstActive then
+            local l, rr = colX[firstActive] - 2, colX[lastActive] + CELL_W + 2
+            local top, bot = -HEAD_H + 2, -height - 2
+            border[1]:ClearAllPoints()
+            border[1]:SetPoint("TOPLEFT", f, "TOPLEFT", l, top)
+            border[1]:SetPoint("TOPRIGHT", f, "TOPLEFT", rr, top)
+            border[1]:SetHeight(1)
+            border[2]:ClearAllPoints()
+            border[2]:SetPoint("TOPLEFT", f, "TOPLEFT", l, bot)
+            border[2]:SetPoint("TOPRIGHT", f, "TOPLEFT", rr, bot)
+            border[2]:SetHeight(1)
+            border[3]:ClearAllPoints()
+            border[3]:SetPoint("TOPLEFT", f, "TOPLEFT", l, top)
+            border[3]:SetPoint("BOTTOMLEFT", f, "TOPLEFT", l, bot)
+            border[3]:SetWidth(1)
+            border[4]:ClearAllPoints()
+            border[4]:SetPoint("TOPLEFT", f, "TOPLEFT", rr, top)
+            border[4]:SetPoint("BOTTOMLEFT", f, "TOPLEFT", rr, bot)
+            border[4]:SetWidth(1)
+        end
+        for _, edge in ipairs(border) do edge:SetShown(firstActive ~= nil) end
+
+        f:SetHeight(height + 3)
     end
 
     return o
@@ -1390,6 +1492,23 @@ function W.Card(parent, titleText)
     local o = { frame = f, body = body, header = header }
 
     function o:SetTitle(t) header:SetText(string.upper(t or "")) end
+
+    --- A "?" beside the title, for what applies to the whole card rather than
+    --- to one row in it. Built on demand and then only retargeted: a card that
+    --- never needs one never makes one.
+    function o:SetHelp(text)
+        if not text then
+            if o.help then o.help.frame:Hide() end
+            return
+        end
+        if not o.help then
+            o.help = W.Help(inner, text)
+            o.help.frame:SetPoint("LEFT", header, "RIGHT", 5, 0)
+        else
+            o.help:SetText(text)
+            o.help.frame:Show()
+        end
+    end
     function o:Finish()
         f:SetHeight((body:GetHeight() or 0) + CARD_HEADER_H + CARD_PAD * 2)
     end
@@ -2323,6 +2442,13 @@ function W.Button(parent, width, height)
 
     function o:SetText(text) fs:SetText(text or "") end
     function o:SetOnClick(fn) o._onClick = fn end
+
+    --- Width from the label, for a button whose text IS the description of
+    --- what it does. The fixed-width form needs a label beside it to say that;
+    --- this one cannot be sized until the text is known.
+    function o:Fit(pad)
+        f:SetWidth((fs:GetStringWidth() or 60) + (pad or 26))
+    end
 
     return o
 end

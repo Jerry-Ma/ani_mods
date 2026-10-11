@@ -744,20 +744,28 @@ local function BuildRow(parent, descriptor, sectionIndex, stripeIndex)
         local row = CreateFrame("Frame", nil, parent)
         row:SetHeight(26)
 
-        local label = W.Font(row, 12, nil, W.TEXT_DIM_A)
-        label:SetPoint("LEFT", row, "LEFT", LABEL_X, 0)
-        label:SetText(descriptor.label or "")
-        ClampLabel(label, descriptor.help)
+        -- With no label, the button's own text says what it does, so it sits
+        -- in the label column and sizes to fit. "Share" in the control column
+        -- with "Put all on shared action bars" beside it was two halves of one
+        -- sentence placed a column apart.
+        local label
+        if descriptor.label then
+            label = W.Font(row, 12, nil, W.TEXT_DIM_A)
+            label:SetPoint("LEFT", row, "LEFT", LABEL_X, 0)
+            label:SetText(descriptor.label)
+            ClampLabel(label, descriptor.help)
+        end
 
         local btn = W.Button(row, 130, 22)
-        btn.frame:SetPoint("LEFT", row, "LEFT", CONTROL_X, 0)
+        btn.frame:SetPoint("LEFT", row, "LEFT", label and CONTROL_X or LABEL_X, 0)
         btn:SetText(descriptor.button)
+        if not label then btn:Fit() end
         btn:SetOnClick(function()
             if descriptor.onClick then descriptor.onClick() end
             if AniMods.RefreshUI then AniMods.RefreshUI() end
         end)
 
-        AttachHelp(row, descriptor, label)
+        AttachHelp(row, descriptor, label or btn.frame)
         return { kind = kind, widget = btn }, row, ROW_GAP
 
     elseif kind == "widget" then
@@ -1013,7 +1021,13 @@ local function FillSection(section, slice, sectionIndex)
     for i, descriptor in ipairs(slice) do
         local kind = RowKind(descriptor)
         if kind == "value" then stripe = stripe + 1 end
-        if kind == "section" then card:SetTitle(descriptor.section) end
+        -- A section's help belongs to the CARD, not to a row in it: what it
+        -- explains is the card as a whole, and a "?" on the first row would
+        -- claim to be about that row.
+        if kind == "section" then
+            card:SetTitle(descriptor.section)
+            card:SetHelp(descriptor.help)
+        end
 
         local entry = pool[i]
         if entry and entry.kind == kind then

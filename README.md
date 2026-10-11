@@ -1244,23 +1244,43 @@ both toggleable in **General**.
   rule, which is why both modules state it: it is one rule, and a reader who met it in
   only one of them would think it belonged there.
 
-  The view is a grid per spec, every spec: rows are prefixes, columns are the four cases,
-  so a cell is one base. Green is there and on shared action bars, amber is there with
-  bars of its own, red is expected and absent, empty means no name ever implied it — and
-  the *gaps* are the point, since a list of what exists cannot say "no Delve build for
-  this hero talent". Clicking an amber cell runs Blizzard's own path: their
+  **The view is a map of every base that could exist, not a list of the ones that do.**
+  Its shape comes from the game — each spec of the class crossed with each hero talent it
+  offers (`GetNumSpecializationsForClassID` → `GetHeroTalentSpecsForClassSpec` →
+  `C_Traits.GetSubTreeInfo`), crossed with the four cases — so a brand-new character
+  draws exactly the same table as a full one and only the colours differ. That is the
+  point: a view built from what exists cannot show you a combination you have never made,
+  which is the one thing a checklist is for. It replaced a *persisted* plan derived from
+  the names already present, and asking the game removed the saved state, the bookkeeping
+  to keep it current, and the chance of it disagreeing with reality.
+
+  Cases go down, spec-and-hero pairs go across: four of one against eight or so of the
+  other, and only the short-and-wide orientation fits a card. Column headings are the
+  convention's own `{Prefix}` — the two initials, `SA` for Shadow Archon — *derived* the
+  same way, so a column exists for a pair nothing has ever been named after; hover one
+  for the full names.
+
+  Three states, all about **presence**: green exists, amber exists and needs attention,
+  empty isn't there yet. Absence is deliberately not red — most of the table is empty on
+  any normal character, and a card of red would be shouting about builds nobody wants.
+  "Attention" is open-ended and today has exactly one check, the shared-action-bars flag;
+  a second kind would reuse the same amber rather than invent a colour, which is why the
+  legend names presence and the tooltip names the fault.
+
+  Clicking an amber cell runs Blizzard's own path: their
   `LOADOUT_CONFIRM_SHARED_ACTION_BARS` popup, pointed at that `configID` through their
   `ClassTalentLoadoutEditDialog`, so it is their wording and their call rather than a
   copy. The bulk button is deliberately *not* that dialog shown N times — a chain of
   identical popups is something to click through, so it asks once and names every loadout
-  it is about to change. Only the current spec's rows are clickable, because creating a
-  loadout snapshots the talents you have on and Blizzard only reports a config's bar
-  setting for the spec you are in; the rest are drawn, bordered rows mark the editable
-  ones, and nothing pretends to a button that would fail invisibly.
+  it will change. Only the current spec's columns are clickable, because creating a
+  loadout snapshots the talents you have on and Blizzard reports a config's bar setting
+  only for the spec you are in; the rest are drawn, one border marks the editable run,
+  and nothing pretends to a button that would fail invisibly. A loadout Blizzard won't
+  describe is shown present and unjudged — green with a `?` — rather than guessed into
+  amber.
 
-  What *should* exist is ours, not TLM's. `GetAllLoadouts` is a cache of what TLM has
-  seen — the right answer to "what exists" and the wrong one to "what should", since on a
-  fresh character it is empty at exactly the moment a checklist is worth having. So the
-  plan is derived from loadout names (every name implies its base, so it can never
-  disagree with them), persisted, and refreshed on every walk — restoring a dump records
-  it as it goes, and the fresh character it lands on starts with the grid already drawn.
+  A Blizzard loadout whose name isn't `{Prefix}-{Case}` for a pair this class has gets no
+  cell, so it is listed by name underneath with the reason. Out of the table is not out
+  of the addon: the bulk button still acts on it, and nothing is ever renamed for you,
+  because the name is the source of truth and rewriting it would move whatever is filed
+  under it.

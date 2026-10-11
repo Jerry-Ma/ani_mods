@@ -46,11 +46,11 @@ local W = AniMods.W
 -- magic character and would silently misbehave in a Lua pattern.
 local CASE_TOKENS = { "Delve", "Raid", "PVP", "M+" }
 
--- The same four cases in reading order, for the grid's columns. A separate
--- list because the order above exists to make the parse unambiguous and this
--- one exists to be looked at; tying them together would mean one of the two
--- jobs losing.
-local CASE_COLUMNS = { "M+", "Raid", "Delve", "PVP" }
+-- The same four cases in reading order, for the table's rows. A separate list
+-- because the order above exists to make the parse unambiguous and this one
+-- exists to be looked at; tying them together would mean one of the two jobs
+-- losing.
+local CASE_ROWS = { "M+", "Raid", "Delve", "PVP" }
 
 local UNCATEGORISED = "Uncategorised"
 
@@ -304,11 +304,11 @@ end
 --
 -- ── What is scoped to one spec, and what is not ─────────────────────────────
 --
--- THE VIEW IS NOT. TLM's GetAllLoadouts returns Blizzard loadouts as well as
--- custom ones, for every spec it has cached, each carrying its own specID, so
--- every spec can be drawn without asking Blizzard anything at all. Which specs
--- to draw does come from Blizzard, because the answer is "the ones this
--- character has" and neither the cache nor the account-wide plan knows that.
+-- THE VIEW IS NOT. Its shape comes from Blizzard -- every spec of this class
+-- crossed with every hero talent it offers -- and TLM's cache only fills it
+-- in. GetAllLoadouts returns Blizzard loadouts as well as custom ones, each
+-- carrying its own specID, so the contents of an off-spec cell need no spec
+-- change to read either.
 --
 -- PARENTING IS NOT. TLM:SetParentLoadout writes parentMapping and checks no
 -- spec. Its only requirement is that the parent is a Blizzard loadout TLM has
@@ -330,37 +330,6 @@ local function AllLoadouts()
     return all
 end
 
--- ── The plan: which bases the collection EXPECTS to exist ───────────────────
---
--- TLM's GetAllLoadouts is a CACHE of what it has seen. That is the right
--- answer to "what exists" and the wrong one to "what should exist": on a fresh
--- character it is empty, so a view built only on it has nothing to say at
--- exactly the moment you most want a checklist.
---
--- So the expected set is ours, and TLM is matched against it rather than
--- consulted for it. It is DERIVED, never curated: every custom loadout name
--- implies its base, so the plan is a fact about the collection rather than a
--- second list to keep in step with it. Curating one by hand would just add
--- something that can disagree with the names.
---
--- Persisted because derivation needs the collection present, and the fresh
--- character has the opposite problem. Restoring a dump records the plan as it
--- goes, so the checklist survives into a session where TLM knows nothing yet.
-local function PlanDB()
-    AniModsDB.talentLoadouts = AniModsDB.talentLoadouts or {}
-    local db = AniModsDB.talentLoadouts
-    db.plan = db.plan or {}
-    return db.plan
-end
-
---- Records that `specID` is expected to carry a Blizzard loadout called `base`.
-local function RememberBase(specID, base)
-    if not specID or not base or base == UNCATEGORISED then return end
-    local plan = PlanDB()
-    plan[specID] = plan[specID] or {}
-    plan[specID][base] = true
-end
-
 --- specID -> baseName -> configID, for the Blizzard loadouts TLM can see.
 BlizzardBases = function()
     local bases = {}
@@ -375,13 +344,10 @@ end
 
 --- Files one variant under the base its name asks for, if that base exists.
 --- Returns true when the pointer ends up right, false when there is no base.
---- Records the expectation either way -- a base that does not exist yet is
---- exactly what the plan is for.
 FileVariant = function(info, bases)
     if not (info and info.name and info.specID) then return false end
     local base = BaseOf(info.name)
     if base == UNCATEGORISED then return false end
-    RememberBase(info.specID, base)
 
     local configID = bases[info.specID] and bases[info.specID][base]
     if not configID then return false end
@@ -458,11 +424,6 @@ local function Survey()
         if not info.isBlizzardLoadout and info.name and info.specID then
             local s = Spec(info.specID)
             local base = BaseOf(info.name)
-            -- Every walk refreshes the plan, so simply opening this tab on a
-            -- populated character records what that collection expects -- and
-            -- the fresh character it is later restored onto starts with the
-            -- checklist already written.
-            RememberBase(info.specID, base)
             local entry = s.bases[base]
             if entry then
                 entry.variants[#entry.variants + 1] = info
@@ -651,27 +612,28 @@ local function ShareAll()
     })
 end
 
--- ── The grid ────────────────────────────────────────────────────────────────
+-- ── The map ─────────────────────────────────────────────────────────────────
 --
--- Rows are prefixes -- spec plus hero talent -- and columns are the four
--- cases, so a cell is one base: exactly the thing the convention names. The
--- grid is drawn per spec, every spec, because the plan spans all of them; only
--- the spec you are in gets clickable cells, since both actions behind them
--- (create a loadout, change its action bar setting) are things Blizzard only
--- allows against the active spec.
+-- THE TABLE IS A MAP OF EVERY BASE THAT COULD EXIST, not a list of the ones
+-- that do. Its shape comes from the game -- every spec of this class crossed
+-- with every hero talent it offers, crossed with the four cases -- so a fresh
+-- character draws the same table as a full one, and the cells are what differ.
+--
+-- That is the whole reason it replaced a persisted "plan" derived from the
+-- names already in the collection. A plan built from what exists cannot show
+-- you a combination you have never made, which is exactly the thing a
+-- checklist is for. Asking the game removes the saved state, the bookkeeping
+-- that kept it current, and the chance of it disagreeing with reality.
+--
+-- Cases go down and spec-and-hero pairs go across. Four of one and eight or so
+-- of the other: the long axis has to be the horizontal one or the card is a
+-- column of colour nobody can scan.
 
 --- This character's specIDs, in the game's own order, plus the active one.
 ---
---- The view is driven from this rather than from what the plan or TLM's cache
---- happen to hold. Both are account-wide: the plan is saved per account on
---- purpose, so restoring a dump onto a fresh character of the same class
---- arrives with its checklist already written -- which also means it carries
---- entries for every other character's specs. Those belong to those
---- characters; drawing a Warlock grid on a Priest would be reading the saved
---- table as if it were about whoever is logged in.
 --- Called straight, with no "does this function exist" guard. One was here,
 --- around a GetNumSpecializations that is not in the namespace at all, and it
---- turned a wrong name into an empty list -- so the view drew no grids and
+--- turned a wrong name into an empty list -- so the view drew nothing and
 --- every count read zero, which looks exactly like a character with nothing to
 --- show. A missing API should be an error, not a blank page.
 local function PlayerSpecs()
@@ -690,17 +652,73 @@ local function PlayerSpecs()
     return order, active
 end
 
+--- The hero talent specs a spec offers, as { id, name }, in Blizzard's order.
+---
+--- Works for a spec you are not in, which is the point: the table covers all
+--- of them. GetSubTreeInfo needs a configID belonging to that spec's tree
+--- rather than the active one, so the tree is looked up per spec.
+local function HeroSpecs(specID)
+    local treeID = _G.C_ClassTalents.GetTraitTreeForSpec(specID)
+    local configID = treeID and _G.C_Traits.GetConfigIDByTreeID(treeID)
+    local subTreeIDs = _G.C_ClassTalents.GetHeroTalentSpecsForClassSpec(configID, specID)
+    if not (configID and subTreeIDs) then return {} end
+
+    local out = {}
+    for _, subTreeID in ipairs(subTreeIDs) do
+        local info = _G.C_Traits.GetSubTreeInfo(configID, subTreeID)
+        if info and info.name then
+            out[#out + 1] = { id = subTreeID, name = info.name }
+        end
+    end
+    return out
+end
+
+--- The convention's prefix for one spec-and-hero pair: their initials.
+---
+--- DERIVED, not stored. "SA" is Shadow + Archon and "HO" is Holy + Oracle, so
+--- the rule the names already follow is a rule the game can be asked for --
+--- which means the table can label a row for a combination that has never been
+--- written down anywhere. A pair whose initials collide with another's would
+--- show two columns under one heading; no class currently does that, and the
+--- heading's tooltip spells both out in full either way.
+local function HeroPrefix(specName, heroName)
+    return (specName:sub(1, 1) .. heroName:sub(1, 1)):upper()
+end
+
+--- Every column the table can have: one per spec-and-hero pair, grouped by
+--- spec in the game's order, with a rule starting each group after the first.
+local function ColumnPlan()
+    local specOrder, currentSpecID = PlayerSpecs()
+    local cols = {}
+    for i, specID in ipairs(specOrder) do
+        local specName = SpecName(specID)
+        for j, hero in ipairs(HeroSpecs(specID)) do
+            cols[#cols + 1] = {
+                label  = HeroPrefix(specName, hero.name),
+                tip    = specName .. " / " .. hero.name,
+                active = (specID == currentSpecID),
+                rule   = (i > 1 and j == 1),
+                specID = specID,
+                specName = specName,
+                heroName = hero.name,
+            }
+        end
+    end
+    return cols
+end
+
 --- A cell's tooltip: what it is, and what a click does or why it cannot.
 local function CellTip(cell, editable)
+    local what = ("%s -- %s, %s."):format(cell.name, cell.specName, cell.case)
+
     if cell.state == "missing" then
-        return ("No Blizzard loadout called \"%s\".\n\n%s\n\n%s"):format(
-            cell.name,
+        return ("%s\n\nNo Blizzard loadout of that name yet.%s\n\n%s"):format(
+            what,
             (cell.waiting > 0)
-                and ("%d variant%s named for it, with nothing to be filed "
-                  .. "under."):format(cell.waiting,
+                and ("\n\n%d loadout%s named for it already, with nothing to "
+                  .. "be filed under."):format(cell.waiting,
                         cell.waiting == 1 and " is" or "s are")
-                or "The collection expects it, because a loadout name "
-                .. "somewhere says so.",
+                or "",
             editable
                 and "Click to create one from the talents you have on right now."
                 or "Creatable only while you are in this spec: a new loadout is "
@@ -708,20 +726,21 @@ local function CellTip(cell, editable)
                 .. "make one for a spec you are not in.")
     end
 
-    local head = ("\"%s\" -- %d of %d variants filed under it."):format(
-        cell.name, cell.filed, cell.total)
+    local head = ("%s\n\nExists, with %d of %d loadouts filed under it."):format(
+        what, cell.filed, cell.total)
     if cell.shared == true then
         return head .. "\n\nOn shared action bars, which is what the collection "
             .. "expects: swapping builds leaves your bars and keybindings alone."
     elseif cell.shared == false then
-        return head .. "\n\nKeeps an action bar layout of its own, so applying "
-            .. "it rearranges your bars.\n\n" .. (editable
+        return head .. "\n\nNEEDS ATTENTION: it keeps an action bar layout of "
+            .. "its own, so applying it rearranges your bars.\n\n" .. (editable
                 and "Click to put it on shared bars, through Blizzard's own "
                 .. "confirmation dialog."
                 or "Changeable only while you are in this spec.")
     end
     return head .. "\n\nBlizzard did not report its action bar setting; it only "
-        .. "answers for the spec you are in."
+        .. "answers for the spec you are in, so this one is shown as present "
+        .. "and left unjudged."
 end
 
 --- What a click on this cell does, or nil when there is nothing to do.
@@ -761,41 +780,150 @@ function TalentLoadouts:GetInfoRows()
         if base == UNCATEGORISED then bagged = bagged + 1 end
     end
 
-    -- The convention first, before any count that assumes it. It is the same
-    -- one Gear Sync matches equipment sets against, and stating it in both
-    -- places is deliberate: it is one rule, and a reader who meets it in only
-    -- one module would think it belonged to that module.
-    rows[#rows + 1] = { section = "Convention" }
+    -- ── The table ───────────────────────────────────────────────────────────
+    --
+    -- First, before any count, because it is the thing you came to look at.
+    -- The convention and the colours live in the card's "?" rather than in
+    -- rows above it: both are read once and then never again, and a reference
+    -- you have already internalised is just something between you and the
+    -- table.
+    local specs = Survey()
+    local cols = ColumnPlan()
+    local notShared, unreadable, unparented = 0, 0, 0
+    -- Named rather than counted: a count tells you something is off the
+    -- convention, which is the one fact you cannot act on. The name is what
+    -- you would rename, and seeing it is usually enough to recognise it.
+    local offConvention = {}
+
+    -- Which column a base name belongs in, by its prefix. Built from the
+    -- columns rather than by parsing, so a name whose prefix is not one the
+    -- game implies has nowhere to go -- and gets said out loud below instead
+    -- of landing in an invented column.
+    local colOfPrefix = {}
+    for i, col in ipairs(cols) do colOfPrefix[col.specID .. "/" .. col.label] = i end
+
+    -- case -> colIndex -> cell, filled from what exists; everything not filled
+    -- in stays nil and draws as an empty well, which is the "not there yet"
+    -- state. The table's SHAPE never depends on the contents.
+    local cellAt = {}
+    for _, case in ipairs(CASE_ROWS) do cellAt[case] = {} end
+
+    for ci, col in ipairs(cols) do
+        local spec = specs[col.specID] or { bases = {}, baseOrder = {}, waiting = {} }
+        for _, case in ipairs(CASE_ROWS) do
+            local baseName = col.label .. "-" .. case
+            local base = spec.bases[baseName]
+            local cell = {
+                name = baseName, case = case,
+                specName = col.specName, heroName = col.heroName,
+            }
+
+            if base then
+                local shared = UsesSharedBars(base.configID)
+                if shared == false then notShared = notShared + 1
+                elseif shared == nil then unreadable = unreadable + 1 end
+
+                local filed = 0
+                for _, variant in ipairs(base.variants) do
+                    if ParentConfigID(variant) == base.configID then
+                        filed = filed + 1
+                    else
+                        unparented = unparented + 1
+                    end
+                end
+
+                -- Green is PRESENCE and nothing more. Amber is reserved for a
+                -- fault actually observed -- today that is one check, the
+                -- action bar flag, and there is room for more without a new
+                -- colour. A loadout Blizzard will not describe is present and
+                -- unjudged, so it stays green with a mark rather than being
+                -- guessed into amber.
+                cell.state  = (shared == false) and "warn" or "ok"
+                cell.text   = (shared == false and "!") or (shared == nil and "?") or ""
+                cell.configID = base.configID
+                cell.shared = shared
+                cell.filed  = filed
+                cell.total  = #base.variants
+            else
+                cell.state   = "missing"
+                cell.waiting = spec.waiting[baseName] or 0
+            end
+
+            cellAt[case][ci] = cell
+        end
+    end
+
+    -- Anything that exists but has no column: a Blizzard loadout whose name
+    -- carries no case token, or whose prefix is not a spec-and-hero pair this
+    -- class has. Out of the table is not out of the addon -- Share still acts
+    -- on these -- so they are named below.
+    for specID, spec in pairs(specs) do
+        for _, baseName in ipairs(spec.baseOrder) do
+            local prefix, case = ParseName(baseName)
+            local placed = case and prefix
+                and colOfPrefix[specID .. "/" .. prefix] ~= nil
+            if not placed then
+                offConvention[#offConvention + 1] = {
+                    name = baseName, specID = specID,
+                    shared = UsesSharedBars(spec.bases[baseName].configID),
+                    variants = #spec.bases[baseName].variants,
+                    why = (not case) and "no case token" or "no such spec and hero talent",
+                }
+            end
+        end
+    end
+
+    local gridRows = {}
+    for _, case in ipairs(CASE_ROWS) do
+        local cells = {}
+        for ci, col in ipairs(cols) do
+            local cell = cellAt[case][ci]
+            cells[ci] = {
+                state   = cell.state,
+                text    = cell.text,
+                tip     = CellTip(cell, col.active),
+                onClick = col.active and CellClick(cell) or nil,
+            }
+        end
+        gridRows[#gridRows + 1] = { label = case, cells = cells }
+    end
+
     rows[#rows + 1] = {
-        label = "Name",
-        value = "{Prefix}-{Case}{Variant}",
-        help  = "Prefix is spec plus hero talent (\"SA\" = Shadow Archon) and "
-             .. "may be left off. Case is one of " .. table.concat(CASE_TOKENS, ", ")
-             .. ". Variant is anything after it.\n\nThe BASE is "
-             .. "{Prefix}-{Case}: every name sharing one is a variant of it, so "
-             .. "\"SA-Raid-MT\" and \"SA-Raid-B1\" are siblings under "
-             .. "\"SA-Raid\" rather than one being the other's parent.\n\n"
-             .. "Gear Sync reads the same convention to pick an equipment set, "
-             .. "matching the longest set name that is a prefix of the loadout "
-             .. "name. One rule, two modules.",
+        section = "Loadouts",
+        help = "Every Blizzard loadout this class COULD have, not the ones it "
+            .. "does: each spec crossed with each of its hero talents, crossed "
+            .. "with " .. table.concat(CASE_ROWS, ", ") .. ". The shape comes "
+            .. "from the game, so a brand new character shows the same table "
+            .. "and only the colours differ.\n\n"
+            .. "|cff2ec759Green|r -- it exists.\n"
+            .. "|cffffa640Amber|r -- it exists and needs attention. Today that "
+            .. "means one thing: it is not on shared action bars, so applying "
+            .. "it rearranges your bars. Click it for Blizzard's own "
+            .. "confirmation to fix that one, or use the button below for all "
+            .. "of them.\n"
+            .. "Empty -- not there yet. Click to create it from your current "
+            .. "talents.\n\n"
+            .. "Columns are {Prefix}: the initials of the spec and the hero "
+            .. "talent, so SA is Shadow Archon. Hover a heading for the full "
+            .. "names. Only the spec you are in -- the bordered columns -- can "
+            .. "be clicked, because creating a loadout snapshots the talents "
+            .. "you have on and Blizzard reports a loadout's bar setting only "
+            .. "for the active spec.\n\n"
+            .. "A full loadout name is {Prefix}-{Case}{Variant}: a cell is the "
+            .. "{Prefix}-{Case} part, the BASE, and every name sharing one is "
+            .. "a variant of it -- \"SA-Raid-MT\" and \"SA-Raid-B1\" are "
+            .. "siblings under \"SA-Raid\" rather than one being the other's "
+            .. "parent.\n\nGear Sync reads the same convention to pick an "
+            .. "equipment set, matching the longest set name that is a prefix "
+            .. "of the loadout name. One rule, two modules.",
     }
-    -- The legend lives here rather than above each grid: it is one explanation
-    -- of one colour scheme, and repeating it per spec would be noise in the
-    -- place the grids are meant to be read at a glance.
+    rows[#rows + 1] = { grid = { cols = cols, rows = gridRows } }
     rows[#rows + 1] = {
-        label = "Grid",
-        value = "|cff2ec759shared|r / |cffffa640own bars|r / |cffd94040missing|r",
-        help  = "A grid per spec below, one cell per {Prefix}-{Case} base: rows "
-             .. "are prefixes, columns are cases.\n\nGreen means the Blizzard "
-             .. "loadout exists and is on shared action bars, which is what "
-             .. "the collection expects. Amber means it exists but keeps bars "
-             .. "of its own; clicking it offers Blizzard's own confirmation to "
-             .. "share them. Red means the collection expects it and this "
-             .. "character has no such loadout; clicking it creates one from "
-             .. "your current talents. Empty means no loadout name ever "
-             .. "implied that combination.\n\nOnly the spec you are in has "
-             .. "clickable cells -- the bordered rows -- because both actions "
-             .. "need the spec active. Every other spec is still shown.",
+        kind = "button", button = "Make all loadouts shared",
+        help = "Every amber cell at once, behind one confirmation that names "
+            .. "them, rather than Blizzard's per-loadout dialog shown over and "
+            .. "over. Ones Blizzard will not report are left alone.",
+        onClick = ShareAll,
     }
 
     rows[#rows + 1] = { section = "Collection" }
@@ -812,138 +940,6 @@ function TalentLoadouts:GetInfoRows()
         help  = "Names with no recognised case token. They keep their spelling "
              .. "and are dumped as-is.",
     }
-
-    -- ── Bases, every spec ───────────────────────────────────────────────────
-    --
-    -- All specs, not just the one you are in: these come from TLM's cache,
-    -- which carries a specID per loadout, so nothing here has to ask Blizzard
-    -- which spec is active.
-    local specs = Survey()
-    local notShared, unreadable, unparented = 0, 0, 0
-    -- Named rather than counted: a count tells you something is off the
-    -- convention, which is the one fact you cannot act on. The name is what
-    -- you would rename, and seeing it is usually enough to recognise it.
-    local offConvention = {}
-
-    local plan = PlanDB()
-
-    -- One grid per spec this character has, in the game's order -- not one per
-    -- spec TLM has cached. A spec with nothing cached still gets its grid, red
-    -- cells and all, because a fresh character is the one time a checklist is
-    -- worth having and the only time the cache is empty.
-    local specOrder, currentSpecID = PlayerSpecs()
-
-    for _, specID in ipairs(specOrder) do
-        local spec = specs[specID] or { bases = {}, baseOrder = {}, waiting = {} }
-        -- Whether this spec's cells do anything. Not a permission we grant:
-        -- both actions a cell offers only work against the spec you are in.
-        local editable = (specID == currentSpecID)
-
-        -- prefix -> case -> cell. A base is a {Prefix}-{Case} pair, which is
-        -- the row and column of exactly one cell, so the grid is the
-        -- convention drawn out rather than a layout chosen for it.
-        local cellOf, prefixOrder = {}, {}
-        --- Puts `cell` where `base` names, making the row if it is not there
-        --- yet. A name the convention cannot parse has neither a row nor a
-        --- column and so nowhere to go: that returns false, and the caller
-        --- counts it rather than losing it silently.
-        local function Place(base, cell)
-            local prefix, case = ParseName(base)
-            if not case then return false end
-            local key = prefix or ""
-            local cells = cellOf[key]
-            if not cells then
-                cells = {}
-                cellOf[key] = cells
-                prefixOrder[#prefixOrder + 1] = key
-            end
-            cells[case] = cell
-            return true
-        end
-
-        -- Planned first, so what exists overwrites it: the plan says which
-        -- cells should be there at all, and on a fresh character it is the
-        -- only thing with anything to say.
-        for base in pairs(plan[specID] or {}) do
-            Place(base, {
-                state = "missing", text = "missing", name = base,
-                waiting = spec.waiting[base] or 0,
-            })
-        end
-
-        for _, baseName in ipairs(spec.baseOrder) do
-            local base = spec.bases[baseName]
-            local shared = UsesSharedBars(base.configID)
-            if shared == false then notShared = notShared + 1
-            elseif shared == nil then unreadable = unreadable + 1 end
-
-            local filed = 0
-            for _, variant in ipairs(base.variants) do
-                if ParentConfigID(variant) == base.configID then
-                    filed = filed + 1
-                else
-                    unparented = unparented + 1
-                end
-            end
-
-            local placed = Place(baseName, {
-                -- Three visible states from a tri-state: shared is green, not
-                -- shared is amber and clickable, and unreadable gets its own
-                -- mark rather than being guessed into one of the other two.
-                -- Unreadable only happens off-spec, where nothing is
-                -- clickable anyway.
-                state = (shared == true) and "ok" or "warn",
-                text  = (shared == true and "shared")
-                    or (shared == false and "own bars")
-                    or "?",
-                name = baseName, configID = base.configID,
-                shared = shared, filed = filed, total = #base.variants,
-            })
-            -- A Blizzard loadout whose name the convention cannot parse. It
-            -- has no cell to live in, so it is listed below instead -- left
-            -- out of the grid is not the same as left out of the addon, and
-            -- Share still acts on it.
-            if not placed then
-                offConvention[#offConvention + 1] = {
-                    name = baseName, specID = specID,
-                    shared = shared, variants = #base.variants,
-                }
-            end
-        end
-
-        table.sort(prefixOrder)
-
-        local gridRows = {}
-        for _, key in ipairs(prefixOrder) do
-            local cells = {}
-            for c, case in ipairs(CASE_COLUMNS) do
-                local cell = cellOf[key][case]
-                -- Absent on purpose: a case this prefix never had is left nil
-                -- and drawn as a faint well. The gaps are the information --
-                -- "no Delve build for this hero talent" is a thing a list of
-                -- what exists cannot say.
-                if cell then
-                    cells[c] = {
-                        state   = cell.state,
-                        text    = cell.text,
-                        tip     = CellTip(cell, editable),
-                        onClick = editable and CellClick(cell) or nil,
-                    }
-                end
-            end
-            gridRows[#gridRows + 1] = {
-                label  = (key ~= "" and key or "--"),
-                active = editable,
-                cells  = cells,
-            }
-        end
-
-        rows[#rows + 1] = {
-            section = SpecName(specID)
-                .. (editable and "  (current)" or ""),
-        }
-        rows[#rows + 1] = { grid = { cols = CASE_COLUMNS, rows = gridRows } }
-    end
 
     rows[#rows + 1] = { section = "Housekeeping" }
     rows[#rows + 1] = {
@@ -970,36 +966,30 @@ function TalentLoadouts:GetInfoRows()
         value = unreadable > 0
             and ("%d (%d unreadable)"):format(notShared, unreadable)
             or tostring(notShared),
-        help  = "With shared action bars off, a loadout carries its own bar "
-             .. "layout and keybindings and swapping builds rearranges them. "
-             .. "Unreadable ones belong to specs you are not in; they are "
-             .. "counted apart rather than assumed correct.",
+        help  = "The amber cells, counted. Unreadable ones belong to specs you "
+             .. "are not in: Blizzard will not report their setting, so they "
+             .. "are shown as present and left unjudged rather than guessed "
+             .. "into a colour.",
     }
-    rows[#rows + 1] = {
-        kind = "button", label = "Put all on shared action bars", button = "Share",
-        help = "Every amber cell at once, behind one confirmation that names "
-            .. "them, rather than Blizzard's per-loadout dialog shown over and "
-            .. "over. Ones Blizzard would not report are left alone.",
-        onClick = ShareAll,
-    }
-    -- ── Off the convention ──────────────────────────────────────────────────
+
+    -- ── Off the table ───────────────────────────────────────────────────────
     --
     -- Only when there are some. An empty section headed "Outside the
-    -- convention" reads as a warning about nothing, and the grid above
-    -- already says everything is accounted for.
+    -- convention" reads as a warning about nothing, and the table above
+    -- already accounts for everything else.
     if #offConvention > 0 then
         rows[#rows + 1] = { section = "Outside the convention" }
         rows[#rows + 1] = {
-            label = "Blizzard loadouts the grid cannot place",
+            label = "Loadouts the table cannot place",
             value = tostring(#offConvention),
-            help  = "A name with no recognised case token (" ..
-                 table.concat(CASE_TOKENS, ", ") .. ") has no column, so there "
-                 .. "is no cell to draw it in. Nothing is renamed for you: the "
-                 .. "name is the source of truth here, and rewriting it would "
-                 .. "move whatever is already filed under it.\n\nRename one in "
-                 .. "Blizzard's talent UI to {Prefix}-{Case} and it joins the "
-                 .. "grid on the next refresh. Share still acts on these -- a "
-                 .. "loadout is a loadout whether or not it is named like one.",
+            help  = "A Blizzard loadout whose name is not {Prefix}-{Case} for a "
+                 .. "spec and hero talent this class has, so no cell stands for "
+                 .. "it. Nothing is renamed for you: the name is the source of "
+                 .. "truth here, and rewriting it would move whatever is "
+                 .. "already filed under it.\n\nRename one in Blizzard's talent "
+                 .. "UI and it joins the table on the next refresh. Making all "
+                 .. "loadouts shared still acts on these -- a loadout is a "
+                 .. "loadout whether or not it is named like one.",
         }
         for _, entry in ipairs(offConvention) do
             rows[#rows + 1] = {
@@ -1007,10 +997,10 @@ function TalentLoadouts:GetInfoRows()
                 value = (entry.shared == true and "shared")
                     or (entry.shared == false and "|cffffa640own bars|r")
                     or "|cff999999bars unknown|r",
-                help  = ("%s, on %s. %d loadout%s filed under it.\n\nIt is not "
-                      .. "in the grid because \"%s\" carries no case token.")
-                    :format(entry.name, SpecName(entry.specID), entry.variants,
-                        entry.variants == 1 and " is" or "s are", entry.name),
+                help  = ("%s, on %s. %d loadout%s filed under it.\n\nNot in the "
+                      .. "table: %s."):format(
+                        entry.name, SpecName(entry.specID), entry.variants,
+                        entry.variants == 1 and " is" or "s are", entry.why),
             }
         end
     end
@@ -1056,7 +1046,14 @@ function TalentLoadouts:GetInfoRows()
 end
 
 -- Nothing is installed, hooked or scheduled: every action runs from a button.
-function TalentLoadouts:Enable() end
+--
+-- The one thing here is a cleanup. An earlier version persisted a "plan" of
+-- the bases the collection implied, which the game is now asked for instead.
+-- Dropped rather than left to sit: saved data nothing reads is a thing the
+-- next reader has to work out the meaning of.
+function TalentLoadouts:Enable()
+    if AniModsDB.talentLoadouts then AniModsDB.talentLoadouts.plan = nil end
+end
 
 function TalentLoadouts:SetEnabled()
     return true
