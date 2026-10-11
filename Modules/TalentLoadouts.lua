@@ -171,6 +171,24 @@ local function ApplyDump(text)
     if not api then return false, "Talent Loadout Manager is not loaded." end
     if type(text) ~= "string" or text == "" then return false, "Nothing pasted." end
 
+    -- UNESCAPE THE PIPES FIRST. An EditBox hands text back ESCAPED: a literal
+    -- "|" comes out as "||", because that is what SetText would need to render
+    -- it again. The dump leaves through an edit box and returns through one, so
+    -- every separator arrives doubled -- the split below then cut at the first
+    -- of the pair and left the second on the front of the name, which is where
+    -- the stray "|" in every restored name came from.
+    --
+    -- Collapsing is the exact inverse, including for a name that really does
+    -- contain pipes: a doubled run halves back to what it was. Details does the
+    -- same thing to text out of its own edit boxes (window_rowtexteditor.lua),
+    -- which is the usual treatment rather than a trick.
+    --
+    -- Done here rather than in W.TextBox: the doubling is WoW's escaping and is
+    -- correct for text in general. This is the one format that gives "|" a
+    -- meaning, so this is where the meaning is restored -- and it repairs dumps
+    -- already saved by the broken version, which a fix at the widget would not.
+    text = text:gsub("||", "|")
+
     local added, failed, seen = 0, 0, 0
     for line in text:gmatch("[^\r\n]+") do
         if line:sub(1, #DUMP_HEADER) ~= DUMP_HEADER and line:match("%S") then
