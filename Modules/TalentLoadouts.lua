@@ -135,6 +135,14 @@ end
 -- Dump / restore
 -- ---------------------------------------------------------------------------
 
+-- Forward-declared, defined with the Bases section further down. Restore files
+-- each loadout as it arrives and needs the lookup here, but the lookup belongs
+-- with the rest of the base handling rather than being hoisted or duplicated.
+-- Declared rather than left to resolve later: a local defined below this point
+-- reads as a nil GLOBAL from inside these functions, and says nothing about it
+-- until the line runs.
+local BlizzardBases, FileVariant
+
 --- One loadout per line: export string, then the name exactly as TLM holds it.
 ---
 --- The export string comes first on purpose. Blizzard's codes are base64 and
@@ -173,6 +181,11 @@ local function ApplyDump(text)
 
     local added, failed, seen = 0, 0, 0
     local firstParsed, firstStored
+    -- Filed as they arrive, rather than left for a second pass. The import
+    -- already hands back each loadout's id and specID, so the base lookup is
+    -- free at that moment -- and a restore that leaves everything loose until
+    -- you remember to press File is a restore that half worked.
+    local bases, filed, loose = BlizzardBases(), 0, 0
     for line in text:gmatch("[^\r\n]+") do
         if line:sub(1, #DUMP_HEADER) ~= DUMP_HEADER and line:match("%S") then
             seen = seen + 1
@@ -183,6 +196,16 @@ local function ApplyDump(text)
                 local ok, result = pcall(api.ImportCustomLoadout, api, str, name)
                 if ok and result then
                     added = added + 1
+                    -- Filed now, while the loadout's id and spec are in hand.
+                    -- A base that does not exist yet is not a failure: the
+                    -- expectation is recorded either way, so the Bases view
+                    -- can list it as missing on a character that has never
+                    -- had one.
+                    if FileVariant(result, bases) then
+                        filed = filed + 1
+                    else
+                        loose = loose + 1
+                    end
                     -- Both sides of the call for the first one: what we PARSED
                     -- out of the line, and what TLM says it STORED. Kept after
                     -- it caught the stray "|" this module used to restore,
@@ -215,8 +238,9 @@ local function ApplyDump(text)
             firstParsed, firstStored))
     end
 
-    return true, ("Imported %d loadout%s%s."):format(
-        added, added == 1 and "" or "s",
+    return true, ("Imported %d loadout%s, %d filed%s%s."):format(
+        added, added == 1 and "" or "s", filed,
+        loose > 0 and (", " .. loose .. " with no base yet") or "",
         failed > 0 and (", " .. failed .. " failed") or "")
 end
 
@@ -298,6 +322,73 @@ local function AllLoadouts()
     return all
 end
 
+-- ── The plan: which bases the collection EXPECTS to exist ───────────────────
+--
+-- TLM's GetAllLoadouts is a CACHE of what it has seen. That is the right
+-- answer to "what exists" and the wrong one to "what should exist": on a fresh
+-- character it is empty, so a view built only on it has nothing to say at
+-- exactly the moment you most want a checklist.
+--
+-- So the expected set is ours, and TLM is matched against it rather than
+-- consulted for it. It is DERIVED, never curated: every custom loadout name
+-- implies its base, so the plan is a fact about the collection rather than a
+-- second list to keep in step with it. Curating one by hand would just add
+-- something that can disagree with the names.
+--
+-- Persisted because derivation needs the collection present, and the fresh
+-- character has the opposite problem. Restoring a dump records the plan as it
+-- goes, so the checklist survives into a session where TLM knows nothing yet.
+local function PlanDB()
+    AniModsDB.talentLoadouts = AniModsDB.talentLoadouts or {}
+    local db = AniModsDB.talentLoadouts
+    db.plan = db.plan or {}
+    return db.plan
+end
+
+--- Records that `specID` is expected to carry a Blizzard loadout called `base`.
+local function RememberBase(specID, base)
+    if not specID or not base or base == UNCATEGORISED then return end
+    local plan = PlanDB()
+    plan[specID] = plan[specID] or {}
+    plan[specID][base] = true
+end
+
+--- specID -> baseName -> configID, for the Blizzard loadouts TLM can see.
+BlizzardBases = function()
+    local bases = {}
+    for _, info in ipairs(AllLoadouts()) do
+        if info.isBlizzardLoadout and info.name and info.specID then
+            bases[info.specID] = bases[info.specID] or {}
+            bases[info.specID][info.name] = info.id
+        end
+    end
+    return bases
+end
+
+--- Files one variant under the base its name asks for, if that base exists.
+--- Returns true when the pointer ends up right, false when there is no base.
+--- Records the expectation either way -- a base that does not exist yet is
+--- exactly what the plan is for.
+FileVariant = function(info, bases)
+    if not (info and info.name and info.specID) then return false end
+    local base = BaseOf(info.name)
+    if base == UNCATEGORISED then return false end
+    RememberBase(info.specID, base)
+
+    local configID = bases[info.specID] and bases[info.specID][base]
+    if not configID then return false end
+    -- Read inline rather than through the helper below it: a local declared
+    -- further down this file would resolve to a nil global from here, which
+    -- Lua reports as nothing at all until the line actually runs.
+    local mapping = info.parentMapping
+    if mapping and mapping[0] == configID then return true end
+
+    local tlm = _G.TalentLoadoutManagerAPI
+    local charAPI = tlm and tlm.CharacterAPI
+    if not (charAPI and charAPI.SetParentLoadout) then return false end
+    return pcall(charAPI.SetParentLoadout, charAPI, info.id, configID) and true or false
+end
+
 local function SpecName(specID)
     local si = _G.C_SpecializationInfo
     if si and si.GetSpecializationInfoByID then
@@ -359,6 +450,11 @@ local function Survey()
         if not info.isBlizzardLoadout and info.name and info.specID then
             local s = Spec(info.specID)
             local base = BaseOf(info.name)
+            -- Every walk refreshes the plan, so simply opening this tab on a
+            -- populated character records what that collection expects -- and
+            -- the fresh character it is later restored onto starts with the
+            -- checklist already written.
+            RememberBase(info.specID, base)
             local entry = s.bases[base]
             if entry then
                 entry.variants[#entry.variants + 1] = info
@@ -510,9 +606,40 @@ function TalentLoadouts:GetInfoRows()
     local specs, specOrder = Survey()
     local notShared, unreadable, unparented, orphanCount = 0, 0, 0, 0
 
+    -- Every base the collection has ever implied, so a spec TLM has not cached
+    -- still gets a section. Without this a fresh character shows nothing at
+    -- all, which is the one time a checklist is worth having.
+    local plan = PlanDB()
+    local seenSpec = {}
+    for _, specID in ipairs(specOrder) do seenSpec[specID] = true end
+    for specID in pairs(plan) do
+        if not seenSpec[specID] then
+            specOrder[#specOrder + 1] = specID
+            specs[specID] = { bases = {}, baseOrder = {}, orphans = {} }
+        end
+    end
+    table.sort(specOrder)
+
     for _, specID in ipairs(specOrder) do
         local spec = specs[specID]
         rows[#rows + 1] = { section = SpecName(specID) }
+
+        -- Planned but absent, listed before what exists: this is the part you
+        -- act on, and on a fresh character it is the whole section.
+        for base in pairs(plan[specID] or {}) do
+            if not spec.bases[base] then
+                rows[#rows + 1] = {
+                    label = base,
+                    value = "|cffff8800missing|r",
+                    help  = "The collection expects a Blizzard loadout called \""
+                         .. base .. "\" on this spec, because loadout names say "
+                         .. "so. Make one in Blizzard's talent UI and the "
+                         .. "variants file themselves on the next restore or "
+                         .. "File. Creating it is not a button here: it spends "
+                         .. "a loadout slot.",
+                }
+            end
+        end
 
         for _, baseName in ipairs(spec.baseOrder) do
             local base = spec.bases[baseName]
