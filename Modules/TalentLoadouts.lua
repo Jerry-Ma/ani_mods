@@ -673,6 +673,67 @@ local function HeroSpecs(specID)
     return out
 end
 
+--- TEMPORARY. Which argument combination actually answers for a spec you are
+--- not in, reported rather than reasoned about: the table came up with no
+--- columns at all and there are three calls in the chain that could be the
+--- one returning nothing. Delete this and its button once it has been read.
+local function HeroProbe()
+    local out = {}
+    local function Say(...) out[#out + 1] = table.concat({ ... }, "") end
+    local function Try(fn, ...)
+        local ok, a = pcall(fn, ...)
+        if not ok then return "ERROR " .. tostring(a) end
+        return tostring(a)
+    end
+
+    local ct, traits = _G.C_ClassTalents, _G.C_Traits
+    local active = Try(ct.GetActiveConfigID)
+    Say("GetActiveConfigID -> ", active)
+
+    local specOrder = PlayerSpecs()
+    Say("PlayerSpecs -> ", tostring(#specOrder), " specs")
+
+    for _, specID in ipairs(specOrder) do
+        Say("")
+        Say("spec ", tostring(specID), "  ", SpecName(specID))
+
+        local treeID = Try(ct.GetTraitTreeForSpec, specID)
+        Say("  GetTraitTreeForSpec     -> ", treeID)
+        local byTree = Try(traits.GetConfigIDByTreeID, tonumber(treeID) or 0)
+        Say("  GetConfigIDByTreeID     -> ", byTree)
+
+        -- Every configID worth trying, including none at all.
+        local configs = {
+            { "byTree", tonumber(byTree) },
+            { "active", tonumber(active) },
+            { "nil",    nil },
+        }
+        for _, c in ipairs(configs) do
+            local okCall, ids = pcall(ct.GetHeroTalentSpecsForClassSpec, c[2], specID)
+            if not okCall then
+                Say("  heroSpecs(", c[1], ") -> ERROR ", tostring(ids))
+            elseif type(ids) ~= "table" then
+                Say("  heroSpecs(", c[1], ") -> ", tostring(ids))
+            else
+                Say("  heroSpecs(", c[1], ") -> ", tostring(#ids), " ids")
+                for _, subTreeID in ipairs(ids) do
+                    local names = {}
+                    for _, c2 in ipairs(configs) do
+                        local okInfo, info = pcall(traits.GetSubTreeInfo, c2[2], subTreeID)
+                        names[#names + 1] = c2[1] .. "=" ..
+                            ((okInfo and type(info) == "table" and tostring(info.name))
+                             or (okInfo and "nil-info") or "ERROR")
+                    end
+                    Say("      subTree ", tostring(subTreeID), "  ",
+                        table.concat(names, "  "))
+                end
+            end
+        end
+    end
+
+    return table.concat(out, "\n")
+end
+
 --- The convention's prefix for one spec-and-hero pair: their initials.
 ---
 --- DERIVED, not stored. "SA" is Shadow + Archon and "HO" is Holy + Oracle, so
@@ -708,39 +769,35 @@ local function ColumnPlan()
 end
 
 --- A cell's tooltip: what it is, and what a click does or why it cannot.
+--- User-facing text, so it says what and what-to-do and nothing about why it
+--- is built this way.
 local function CellTip(cell, editable)
-    local what = ("%s -- %s, %s."):format(cell.name, cell.specName, cell.case)
+    local what = ("%s\n%s %s / %s"):format(
+        cell.name, cell.specName, cell.heroName, cell.case)
 
     if cell.state == "missing" then
-        return ("%s\n\nNo Blizzard loadout of that name yet.%s\n\n%s"):format(
+        return ("%s\n\nNot created yet.%s\n\n%s"):format(
             what,
             (cell.waiting > 0)
-                and ("\n\n%d loadout%s named for it already, with nothing to "
-                  .. "be filed under."):format(cell.waiting,
-                        cell.waiting == 1 and " is" or "s are")
+                and ("\n%d loadout%s named for it with nowhere to sit.")
+                    :format(cell.waiting, cell.waiting == 1 and " is" or "s are")
                 or "",
             editable
-                and "Click to create one from the talents you have on right now."
-                or "Creatable only while you are in this spec: a new loadout is "
-                .. "a snapshot of your current talents, so there is no way to "
-                .. "make one for a spec you are not in.")
+                and "Click to create it from your current talents."
+                or "Switch to this spec to create it.")
     end
 
-    local head = ("%s\n\nExists, with %d of %d loadouts filed under it."):format(
+    local head = ("%s\n\nExists. %d of %d loadouts filed under it."):format(
         what, cell.filed, cell.total)
     if cell.shared == true then
-        return head .. "\n\nOn shared action bars, which is what the collection "
-            .. "expects: swapping builds leaves your bars and keybindings alone."
+        return head .. "\n\nOn shared action bars."
     elseif cell.shared == false then
-        return head .. "\n\nNEEDS ATTENTION: it keeps an action bar layout of "
-            .. "its own, so applying it rearranges your bars.\n\n" .. (editable
-                and "Click to put it on shared bars, through Blizzard's own "
-                .. "confirmation dialog."
-                or "Changeable only while you are in this spec.")
+        return head .. "\n\nNot on shared action bars, so applying it "
+            .. "rearranges your bars.\n\n" .. (editable
+                and "Click to put it on shared bars."
+                or "Switch to this spec to change that.")
     end
-    return head .. "\n\nBlizzard did not report its action bar setting; it only "
-        .. "answers for the spec you are in, so this one is shown as present "
-        .. "and left unjudged."
+    return head .. "\n\nAction bar setting unavailable off-spec."
 end
 
 --- What a click on this cell does, or nil when there is nothing to do.
@@ -890,39 +947,23 @@ function TalentLoadouts:GetInfoRows()
 
     rows[#rows + 1] = {
         section = "Loadouts",
-        help = "Every Blizzard loadout this class COULD have, not the ones it "
-            .. "does: each spec crossed with each of its hero talents, crossed "
-            .. "with " .. table.concat(CASE_ROWS, ", ") .. ". The shape comes "
-            .. "from the game, so a brand new character shows the same table "
-            .. "and only the colours differ.\n\n"
-            .. "|cff2ec759Green|r -- it exists.\n"
-            .. "|cffffa640Amber|r -- it exists and needs attention. Today that "
-            .. "means one thing: it is not on shared action bars, so applying "
-            .. "it rearranges your bars. Click it for Blizzard's own "
-            .. "confirmation to fix that one, or use the button below for all "
-            .. "of them.\n"
-            .. "Empty -- not there yet. Click to create it from your current "
-            .. "talents.\n\n"
-            .. "Columns are {Prefix}: the initials of the spec and the hero "
-            .. "talent, so SA is Shadow Archon. Hover a heading for the full "
-            .. "names. Only the spec you are in -- the bordered columns -- can "
-            .. "be clicked, because creating a loadout snapshots the talents "
-            .. "you have on and Blizzard reports a loadout's bar setting only "
-            .. "for the active spec.\n\n"
-            .. "A full loadout name is {Prefix}-{Case}{Variant}: a cell is the "
-            .. "{Prefix}-{Case} part, the BASE, and every name sharing one is "
-            .. "a variant of it -- \"SA-Raid-MT\" and \"SA-Raid-B1\" are "
-            .. "siblings under \"SA-Raid\" rather than one being the other's "
-            .. "parent.\n\nGear Sync reads the same convention to pick an "
-            .. "equipment set, matching the longest set name that is a prefix "
-            .. "of the loadout name. One rule, two modules.",
+        -- A tooltip, so: what it shows and what to do with it. Why it is
+        -- built this way belongs in the comments above, not here.
+        help = "Every base this class can have. Columns are spec and hero "
+            .. "talent initials -- hover one for the full names.\n\n"
+            .. "|cff2ec759Green|r exists. |cffffa640Amber|r needs attention: "
+            .. "not on shared action bars. Empty is not there yet.\n\n"
+            .. "Click a cell to create or share it. Current spec only, the "
+            .. "bordered columns.\n\n"
+            .. "Loadout names are {Prefix}-{Case}{Variant}; a cell is the "
+            .. "{Prefix}-{Case} part.",
     }
     rows[#rows + 1] = { grid = { cols = cols, rows = gridRows } }
     rows[#rows + 1] = {
         kind = "button", button = "Make all loadouts shared",
-        help = "Every amber cell at once, behind one confirmation that names "
-            .. "them, rather than Blizzard's per-loadout dialog shown over and "
-            .. "over. Ones Blizzard will not report are left alone.",
+        help = "Puts every amber loadout on shared action bars, after one "
+            .. "confirmation listing them. Loadouts on specs you are not in "
+            .. "are left alone.",
         onClick = ShareAll,
     }
 
@@ -945,16 +986,13 @@ function TalentLoadouts:GetInfoRows()
     rows[#rows + 1] = {
         label = "Variants filed under the wrong base",
         value = tostring(unparented),
-        help  = "A variant is filed correctly when TLM points it at the "
-             .. "Blizzard loadout its NAME says it belongs to. The name is the "
-             .. "source of truth; this reads the pointer and reports the "
-             .. "difference.",
+        help  = "Loadouts TLM points at a different Blizzard loadout than "
+             .. "their name says they belong to.",
     }
     rows[#rows + 1] = {
         kind = "button", label = "File variants under their base", button = "File",
-        help = "Points every variant at the Blizzard loadout matching its base "
-            .. "name, across all specs. Safe to press twice -- one already in "
-            .. "the right place is left alone.",
+        help = "Points every loadout at the Blizzard loadout matching its "
+            .. "name, across all specs. Safe to press twice.",
         onClick = function()
             local ok, msg = AdoptAll()
             AniMods.Print(msg or (ok and "done." or "nothing to do."))
@@ -966,10 +1004,8 @@ function TalentLoadouts:GetInfoRows()
         value = unreadable > 0
             and ("%d (%d unreadable)"):format(notShared, unreadable)
             or tostring(notShared),
-        help  = "The amber cells, counted. Unreadable ones belong to specs you "
-             .. "are not in: Blizzard will not report their setting, so they "
-             .. "are shown as present and left unjudged rather than guessed "
-             .. "into a colour.",
+        help  = "The amber cells, counted. Unreadable ones are on specs you "
+             .. "are not in, where the game will not report the setting.",
     }
 
     -- ── Off the table ───────────────────────────────────────────────────────
@@ -982,14 +1018,11 @@ function TalentLoadouts:GetInfoRows()
         rows[#rows + 1] = {
             label = "Loadouts the table cannot place",
             value = tostring(#offConvention),
-            help  = "A Blizzard loadout whose name is not {Prefix}-{Case} for a "
-                 .. "spec and hero talent this class has, so no cell stands for "
-                 .. "it. Nothing is renamed for you: the name is the source of "
-                 .. "truth here, and rewriting it would move whatever is "
-                 .. "already filed under it.\n\nRename one in Blizzard's talent "
-                 .. "UI and it joins the table on the next refresh. Making all "
-                 .. "loadouts shared still acts on these -- a loadout is a "
-                 .. "loadout whether or not it is named like one.",
+            help  = "Blizzard loadouts whose names are not {Prefix}-{Case} for "
+                 .. "a spec and hero talent this class has, so the table has "
+                 .. "no cell for them.\n\nRename one in Blizzard's talent UI "
+                 .. "and it joins the table. Make all loadouts shared still "
+                 .. "acts on these.",
         }
         for _, entry in ipairs(offConvention) do
             rows[#rows + 1] = {
@@ -1004,6 +1037,15 @@ function TalentLoadouts:GetInfoRows()
             }
         end
     end
+
+    -- TEMPORARY, alongside HeroProbe. Goes when the column chain is settled.
+    rows[#rows + 1] = {
+        kind = "button", label = "Hero talent probe", button = "Probe",
+        help = "Reports what the game answers about this class's hero talents.",
+        onClick = function()
+            W.TextBox({ title = "Hero talent probe", text = HeroProbe() })
+        end,
+    }
 
     rows[#rows + 1] = { section = "Transfer" }
     rows[#rows + 1] = {
