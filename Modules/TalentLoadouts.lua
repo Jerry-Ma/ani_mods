@@ -183,14 +183,13 @@ local function ApplyDump(text)
                 local ok, result = pcall(api.ImportCustomLoadout, api, str, name)
                 if ok and result then
                     added = added + 1
-                    -- The first one, both sides of the call: what we PARSED out
-                    -- of the line, and what TLM says it STORED. A name that
-                    -- differs between those two was changed by TLM; one that is
-                    -- already wrong on the left was mangled before it got there.
-                    -- Reported rather than inferred, because this module has
-                    -- had a stray "|" in restored names and the two halves need
-                    -- opposite fixes. Only the first: twelve of these would be
-                    -- a wall of text rather than an answer.
+                    -- Both sides of the call for the first one: what we PARSED
+                    -- out of the line, and what TLM says it STORED. Kept after
+                    -- it caught the stray "|" this module used to restore,
+                    -- because the two halves have opposite causes -- a name
+                    -- already wrong on the left was mangled in transport, one
+                    -- that only differs on the right was changed by TLM -- and
+                    -- nothing else distinguishes them from the outside.
                     if not firstParsed then
                         firstParsed = name
                         firstStored = (type(result) == "table") and result.name or nil
@@ -207,11 +206,13 @@ local function ApplyDump(text)
     if seen == 0 then return false, "No loadout lines found." end
     if added == 0 then return false, ("All %d failed to import."):format(failed) end
 
-    if firstParsed then
-        AniMods.Print(("restore read the first name as [%s]"):format(firstParsed))
-        if firstStored and firstStored ~= firstParsed then
-            AniMods.Print(("...and TalentLoadoutManager stored it as [%s]"):format(firstStored))
-        end
+    -- Silent when the round trip is clean, which is the normal case. It speaks
+    -- only when TalentLoadoutManager stored something other than what it was
+    -- handed, because that is the one failure the status line below cannot
+    -- show: every loadout imports successfully and every name is wrong.
+    if firstParsed and firstStored and firstStored ~= firstParsed then
+        AniMods.Print(("restore sent the name [%s] and TalentLoadoutManager stored [%s]."):format(
+            firstParsed, firstStored))
     end
 
     return true, ("Imported %d loadout%s%s."):format(

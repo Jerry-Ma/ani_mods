@@ -2286,7 +2286,23 @@ function W.TextBox(opts)
             act:SetText(o.action)
             act:SetOnClick(function()
                 if not o.onAction then return end
-                local ok, msg = o.onAction(edit:GetText() or "")
+                -- UNESCAPED HERE, at the boundary that escaped it.
+                --
+                -- A WoW EditBox hands text back ESCAPED: every literal "|"
+                -- comes out as "||", because that is what SetText would need
+                -- to render it again. The caller never typed those, so giving
+                -- them the doubled form makes every consumer re-learn this.
+                --
+                -- Collapsing is the exact inverse and is safe for text whose
+                -- pipes MEAN something: a format using "||" as a delimiter
+                -- (TalentLoadoutManager's sort prefix, say) arrives as "||||"
+                -- and halves back to "||". Single and double both survive,
+                -- because the escaping doubled them both on the way out.
+                --
+                -- Details does the same to text out of its own edit boxes
+                -- (window_rowtexteditor.lua), so this is the usual treatment.
+                local raw = edit:GetText() or ""
+                local ok, msg = o.onAction((raw:gsub("||", "|")))
                 status:SetText(msg or "")
                 status:SetTextColor(ok and 0.45 or 1, ok and 0.9 or 0.35, ok and 0.45 or 0.35, 1)
             end)
