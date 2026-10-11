@@ -416,10 +416,11 @@ end
 
 --- true, false, or nil meaning Blizzard did not answer for this config.
 --- The three are kept apart on purpose -- see the scope note above.
+--- pcall'd, not guarded: GetConfigInfo is expected to be there and a rename
+--- should be an error, but it genuinely refuses a config belonging to a spec
+--- you are not in, and that refusal is the nil this returns.
 local function UsesSharedBars(configID)
-    local traits = _G.C_Traits
-    if not (traits and traits.GetConfigInfo) then return nil end
-    local ok, cfg = pcall(traits.GetConfigInfo, configID)
+    local ok, cfg = pcall(_G.C_Traits.GetConfigInfo, configID)
     if not ok or type(cfg) ~= "table" or cfg.usesSharedActionBars == nil then return nil end
     return cfg.usesSharedActionBars and true or false
 end
@@ -564,10 +565,9 @@ end
 --- the alternative is a button that fails for a reason the player cannot see.
 local function CreateBase(name)
     local talents = _G.C_ClassTalents
-    if not (talents and talents.RequestNewConfig) then
-        return AniMods.Print("this client cannot create loadouts from an addon.")
-    end
-    if talents.CanCreateNewConfig and not talents.CanCreateNewConfig() then
+    -- A real refusal from the game, not a check that the function is there:
+    -- loadout slots run out, and talents do not change everywhere.
+    if not talents.CanCreateNewConfig() then
         return AniMods.Print("no loadout slots left, or talents cannot change here.")
     end
 
@@ -599,11 +599,6 @@ end
 --- costs is the one already seen in the talent UI rather than a paraphrase.
 local function ShareAll()
     local talents = _G.C_ClassTalents
-    if not (talents and talents.SetUsesSharedActionBars) then
-        AniMods.Print("this client has no SetUsesSharedActionBars.")
-        return
-    end
-
     local specs, order = Survey()
     local targets, unknown = {}, 0
     for _, specID in ipairs(order) do
@@ -675,13 +670,18 @@ end
 --- entries for every other character's specs. Those belong to those
 --- characters; drawing a Warlock grid on a Priest would be reading the saved
 --- table as if it were about whoever is logged in.
+--- Called straight, with no "does this function exist" guard. One was here,
+--- around a GetNumSpecializations that is not in the namespace at all, and it
+--- turned a wrong name into an empty list -- so the view drew no grids and
+--- every count read zero, which looks exactly like a character with nothing to
+--- show. A missing API should be an error, not a blank page.
 local function PlayerSpecs()
     local si = _G.C_SpecializationInfo
-    if not (si and si.GetNumSpecializations) then return {}, nil end
+    local _, _, classID = _G.UnitClass("player")
 
-    local order, activeIndex = {}, si.GetSpecialization and si.GetSpecialization()
-    local active
-    for i = 1, si.GetNumSpecializations() do
+    local activeIndex = si.GetSpecialization()
+    local order, active = {}, nil
+    for i = 1, si.GetNumSpecializationsForClassID(classID) do
         local specID = si.GetSpecializationInfo(i)
         if specID then
             order[#order + 1] = specID
@@ -820,7 +820,11 @@ function TalentLoadouts:GetInfoRows()
     -- which carries a specID per loadout, so nothing here has to ask Blizzard
     -- which spec is active.
     local specs = Survey()
-    local notShared, unreadable, unparented, offPlan = 0, 0, 0, 0
+    local notShared, unreadable, unparented = 0, 0, 0
+    -- Named rather than counted: a count tells you something is off the
+    -- convention, which is the one fact you cannot act on. The name is what
+    -- you would rename, and seeing it is usually enough to recognise it.
+    local offConvention = {}
 
     local plan = PlanDB()
 
@@ -896,10 +900,16 @@ function TalentLoadouts:GetInfoRows()
                 name = baseName, configID = base.configID,
                 shared = shared, filed = filed, total = #base.variants,
             })
-            -- A Blizzard loadout whose name the convention cannot parse.
-            -- Counted, because the Share button still acts on it, but it has
-            -- no cell to live in.
-            if not placed then offPlan = offPlan + 1 end
+            -- A Blizzard loadout whose name the convention cannot parse. It
+            -- has no cell to live in, so it is listed below instead -- left
+            -- out of the grid is not the same as left out of the addon, and
+            -- Share still acts on it.
+            if not placed then
+                offConvention[#offConvention + 1] = {
+                    name = baseName, specID = specID,
+                    shared = shared, variants = #base.variants,
+                }
+            end
         end
 
         table.sort(prefixOrder)
@@ -973,14 +983,38 @@ function TalentLoadouts:GetInfoRows()
             .. "over. Ones Blizzard would not report are left alone.",
         onClick = ShareAll,
     }
-    rows[#rows + 1] = {
-        label = "Bases outside the convention",
-        value = tostring(offPlan),
-        help  = "Blizzard loadouts whose names carry no case token, so the grid "
-             .. "has no cell to draw them in. They are left exactly as they "
-             .. "are, except that Share counts them in -- a loadout is a "
-             .. "loadout whether or not it is named like one.",
-    }
+    -- ── Off the convention ──────────────────────────────────────────────────
+    --
+    -- Only when there are some. An empty section headed "Outside the
+    -- convention" reads as a warning about nothing, and the grid above
+    -- already says everything is accounted for.
+    if #offConvention > 0 then
+        rows[#rows + 1] = { section = "Outside the convention" }
+        rows[#rows + 1] = {
+            label = "Blizzard loadouts the grid cannot place",
+            value = tostring(#offConvention),
+            help  = "A name with no recognised case token (" ..
+                 table.concat(CASE_TOKENS, ", ") .. ") has no column, so there "
+                 .. "is no cell to draw it in. Nothing is renamed for you: the "
+                 .. "name is the source of truth here, and rewriting it would "
+                 .. "move whatever is already filed under it.\n\nRename one in "
+                 .. "Blizzard's talent UI to {Prefix}-{Case} and it joins the "
+                 .. "grid on the next refresh. Share still acts on these -- a "
+                 .. "loadout is a loadout whether or not it is named like one.",
+        }
+        for _, entry in ipairs(offConvention) do
+            rows[#rows + 1] = {
+                label = entry.name,
+                value = (entry.shared == true and "shared")
+                    or (entry.shared == false and "|cffffa640own bars|r")
+                    or "|cff999999bars unknown|r",
+                help  = ("%s, on %s. %d loadout%s filed under it.\n\nIt is not "
+                      .. "in the grid because \"%s\" carries no case token.")
+                    :format(entry.name, SpecName(entry.specID), entry.variants,
+                        entry.variants == 1 and " is" or "s are", entry.name),
+            }
+        end
+    end
 
     rows[#rows + 1] = { section = "Transfer" }
     rows[#rows + 1] = {

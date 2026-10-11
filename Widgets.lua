@@ -825,8 +825,6 @@ function W.Grid(parent)
                 row = { cells = {} }
                 row.frame = CreateFrame("Frame", nil, f)
                 row.frame:SetHeight(CELL_H)
-                row.frame:SetPoint("LEFT", f, "LEFT", 0, 0)
-                row.frame:SetPoint("RIGHT", f, "RIGHT", 0, 0)
                 row.label = W.Font(row.frame, 12)
                 row.label:SetPoint("LEFT", row.frame, "LEFT", 2, 0)
                 row.label:SetWidth(LABEL_W - 4)
@@ -846,7 +844,14 @@ function W.Grid(parent)
                 o.rows[r] = row
             end
 
-            row.frame:SetPoint("TOPLEFT", f, "TOPLEFT", 0, -HEAD_H - (r - 1) * (CELL_H + GAP))
+            -- Both points anchored to the TOP edge, never LEFT or RIGHT: a
+            -- row has an explicit height, and a side anchor would also pin its
+            -- vertical centre, which with a top anchor is two answers to the
+            -- same question.
+            local y = -HEAD_H - (r - 1) * (CELL_H + GAP)
+            row.frame:ClearAllPoints()
+            row.frame:SetPoint("TOPLEFT", f, "TOPLEFT", 0, y)
+            row.frame:SetPoint("TOPRIGHT", f, "TOPRIGHT", 0, y)
             row.label:SetText(data.label or "")
             for _, edge in ipairs(row.edges) do edge:SetShown(data.active and true or false) end
             row.frame:Show()
