@@ -2242,6 +2242,17 @@ function W.TextBox(opts)
     -- wraps and a 4 KB export string becomes one unreadable line.
     scroll:SetScript("OnSizeChanged", function(_, w) edit:SetWidth(w) end)
 
+    -- The whole field surface focuses the edit box, not just the text itself.
+    --
+    -- A multiline EditBox in a ScrollFrame is only as TALL AS ITS CONTENT, so
+    -- an empty one is a single line at the top of a 300px box: every click
+    -- below that first line lands on nothing, the caret never appears, and the
+    -- box reads as "not ready yet" when it was only ever a few pixels tall.
+    -- Making its backdrop take the click turns the whole visible rectangle
+    -- into what it already looks like.
+    box:EnableMouse(true)
+    box:SetScript("OnMouseDown", function() edit:SetFocus() end)
+
     scroll:EnableMouseWheel(true)
     scroll:SetScript("OnMouseWheel", function(self, delta)
         local maxScroll = math.max(0, (edit:GetHeight() or 0) - (self:GetHeight() or 0))
@@ -2289,12 +2300,16 @@ function W.TextBox(opts)
 
         edit:SetText(o.text or "")
         win:Show()
-        -- Select everything on an export so the user can copy without aiming.
+        -- Focused either way, because both jobs start at the keyboard: an
+        -- export wants Ctrl+C and an empty box wants Ctrl+V. It used to clear
+        -- focus when there was no text, which is exactly backwards -- the one
+        -- case that exists to be TYPED INTO was the one that opened with no
+        -- caret and nothing to paste into.
+        edit:SetFocus()
+        -- Only an export is selected: highlighting lets the copy happen without
+        -- aiming, and there is nothing to select in an empty box.
         if o.text and o.text ~= "" then
-            edit:SetFocus()
             edit:HighlightText()
-        else
-            edit:ClearFocus()
         end
     end
 
