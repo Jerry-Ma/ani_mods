@@ -2233,6 +2233,12 @@ function W.TextBox(opts)
 
     local edit = CreateFrame("EditBox", nil, scroll)
     edit:SetMultiLine(true)
+    -- A bare EditBox is NOT mouse-enabled. Blizzard's templates turn this on,
+    -- which is why the omission is easy to miss when creating one from
+    -- scratch: without it, clicking the text places no caret and selecting
+    -- with the mouse does nothing. Everything else here was built on top of a
+    -- field that could not be clicked.
+    edit:EnableMouse(true)
     edit:SetAutoFocus(false)
     edit:SetFontObject("ChatFontNormal")
     edit:SetTextInsets(4, 4, 4, 4)
@@ -2246,12 +2252,15 @@ function W.TextBox(opts)
     --
     -- A multiline EditBox in a ScrollFrame is only as TALL AS ITS CONTENT, so
     -- an empty one is a single line at the top of a 300px box: every click
-    -- below that first line lands on nothing, the caret never appears, and the
-    -- box reads as "not ready yet" when it was only ever a few pixels tall.
-    -- Making its backdrop take the click turns the whole visible rectangle
-    -- into what it already looks like.
+    -- below that first line lands on nothing. The backdrop takes those.
+    --
+    -- Explicitly BELOW the scroll frame. box is the scroll frame's parent, and
+    -- a parent that enables mouse can otherwise win the hit test over what it
+    -- contains -- which would take every click away from the edit box itself,
+    -- including the ones meant to place a caret or drag a selection.
     box:EnableMouse(true)
     box:SetScript("OnMouseDown", function() edit:SetFocus() end)
+    scroll:SetFrameLevel(box:GetFrameLevel() + 1)
 
     scroll:EnableMouseWheel(true)
     scroll:SetScript("OnMouseWheel", function(self, delta)
