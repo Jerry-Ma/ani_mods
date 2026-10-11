@@ -131,25 +131,14 @@ GetMinimapShape = nil
 -- ---------------------------------------------------------------------------
 -- Superseded Blizzard globals, kept as guarded fallbacks
 -- ---------------------------------------------------------------------------
--- These are NOT present on current retail -- that is why the WoW API
--- annotations, which are generated from a live retail client, don't carry
--- them. They are declared here only so the guarded fallback paths that call
--- them stop being flagged. Every one is behind an `if` or an `or`, with the
--- modern equivalent tried first, so their absence is the expected case.
+-- There were three more stubs here -- AudioOptionsFrame_AudioRestart,
+-- IsAddOnLoaded and GetAddOnMetadata, all pre-10.0 globals the client no
+-- longer defines -- declared so that guarded fallbacks calling them would not
+-- be flagged. The fallbacks are gone and so are the stubs.
 --
--- If any of these ever becomes the ONLY path to something, that is a bug:
--- the modern call has been dropped and this addon is relying on a global the
--- client no longer defines.
-
----Pre-10.0 sound restart. SoundSwitch tries Sound_GameSystem_RestartSoundSystem
----first and only falls back to this.
----@type any
-AudioOptionsFrame_AudioRestart = nil
-
----Pre-10.0 addon query. Core.lua prefers C_AddOns.IsAddOnLoaded.
----@type any
-IsAddOnLoaded = nil
-
----Pre-10.0 addon metadata. Core.lua prefers C_AddOns.GetAddOnMetadata.
----@type any
-GetAddOnMetadata = nil
+-- Nothing belongs in that category again. A stub for a global that does not
+-- exist is a way of telling the checker not to worry about a call that can
+-- only ever fail, and the reason to write one is always a fallback path --
+-- which is the thing to delete instead. This file is for FOREIGN globals that
+-- really are there when the addon providing them is loaded, not for dead
+-- Blizzard spellings.

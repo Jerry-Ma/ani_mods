@@ -245,7 +245,7 @@ local function LabelHex(euiFrame)
     local hex = euiFrame and euiFrame._classHex
     if type(hex) == "string" then return hex end
     local _, class = _G.UnitClass("player")
-    local c = class and _G.RAID_CLASS_COLORS and _G.RAID_CLASS_COLORS[class]
+    local c = _G.RAID_CLASS_COLORS[class]
     if c then return ("%02x%02x%02x"):format(c.r * 255, c.g * 255, c.b * 255) end
     return "ffffff"
 end
@@ -596,7 +596,7 @@ local function CountOnline()
     _G.wipe(seenBNet)
     local myName = _G.UnitName("player")
 
-    if _G.IsInGuild and _G.IsInGuild() then
+    if _G.IsInGuild() then
         local total = _G.GetNumGuildMembers() or 0
         for i = 1, total do
             local name, _, _, _, _, _, _, _, online = _G.GetGuildRosterInfo(i)
@@ -610,10 +610,11 @@ local function CountOnline()
         end
     end
 
-    local numBNet = _G.BNGetNumFriends and _G.BNGetNumFriends() or 0
+    local numBNet = _G.BNGetNumFriends() or 0
     for i = 1, numBNet do
-        local acct = _G.C_BattleNet and _G.C_BattleNet.GetFriendAccountInfo
-            and _G.C_BattleNet.GetFriendAccountInfo(i)
+        -- The account info itself can be nil for an index the client has not
+        -- filled in yet; the function cannot be missing.
+        local acct = _G.C_BattleNet.GetFriendAccountInfo(i)
         local gameInfo = acct and acct.gameAccountInfo
         if acct and gameInfo and gameInfo.isOnline and gameInfo.clientProgram == "WoW" then
             local charName = gameInfo.characterName
@@ -631,8 +632,7 @@ local function CountOnline()
         end
     end
 
-    local numChar = _G.C_FriendList and _G.C_FriendList.GetNumFriends
-        and _G.C_FriendList.GetNumFriends() or 0
+    local numChar = _G.C_FriendList.GetNumFriends() or 0
     for i = 1, numChar do
         local info = _G.C_FriendList.GetFriendInfoByIndex(i)
         if info and info.connected then

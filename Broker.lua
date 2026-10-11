@@ -132,7 +132,10 @@ local atlasAspect = {}
 function Broker.AtlasEscape(atlas)
     local aspect = atlasAspect[atlas]
     if aspect == nil then
-        local info = C_Texture and C_Texture.GetAtlasInfo and C_Texture.GetAtlasInfo(atlas)
+        -- nil for an atlas that does not exist, which is a real answer and the
+        -- reason the result is still tested -- unlike the API itself, which is
+        -- simply there.
+        local info = C_Texture.GetAtlasInfo(atlas)
         local w, h = info and info.width, info and info.height
         aspect = (w and h and h > 0) and (w / h) or false
         atlasAspect[atlas] = aspect

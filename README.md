@@ -12,12 +12,12 @@ Personal/local use — not published to CurseForge.
 ## Checks
 
 ```powershell
-.\Tools\check.ps1             # all three layers
+.\Tools\check.ps1             # all four layers
 .\Tools\check.ps1 -Fast       # Lua 5.1 parse only, while iterating
 .\Tools\check.ps1 -SkipTypes  # layers 1-2, if the VS Code extensions aren't installed
 ```
 
-Three layers, because each catches what the previous cannot:
+Four layers, because each catches what the previous cannot:
 
 1. **`luac -p`** — a real **Lua 5.1** parse of every file `AniMods.toc` loads, in load
    order. WoW runs 5.1; luacheck's own bundled runtime is 5.4 and its parser accepts a
@@ -40,6 +40,45 @@ Three layers, because each catches what the previous cannot:
    It uses the language server binary bundled with the `sumneko.lua` extension, so
    there's nothing extra to install. Both extensions are located by glob with the newest
    match winning, so upgrading either doesn't need an edit to the script.
+4. **Deprecated API** — greps the source against `Blizzard_Deprecated`, which the
+   annotations mirror. All three layers above *pass* a deprecated call: it exists, it's
+   annotated, and it returns the right type. It just stops existing a patch or two later,
+   silently and at the call site. Comments match too — a comment naming a dead API is
+   documentation that will mislead whoever reads it next. Verified against EllesmereUI as
+   a control group, where it fires on 13 lines; AniMods is at zero.
+
+   Its blind spot is the annotations' own lag: 0.22.3 targets **12.0.1**, so a
+   deprecation from 12.0.5 / 12.0.7 / 12.1.0 is not in the list. On a game-version bump,
+   check `Blizzard_Deprecated/Mainline/` on the
+   [`live` branch of wow-ui-source](https://github.com/Gethe/wow-ui-source/tree/live/Interface/AddOns/Blizzard_Deprecated/Mainline)
+   — that and `Blizzard_APIDocumentationGenerated/` are the current API, straight from
+   the shipping client, and they're what to check a signature against when the
+   annotations disagree or stay silent.
+
+**What none of it catches: a guessed API name behind an existence check.** `if
+C_Thing.Fn then … end` on a function that was never called that makes layer 3 blind — it
+has plenty to say about a direct call to a name not in the annotations, and nothing at
+all about a boolean test. This cost a session:
+`C_SpecializationInfo.GetNumSpecializations` doesn't exist (it's
+`GetNumSpecializationsForClassID(classID)`; the bare global is deprecated), the guard
+turned that into an empty spec list, and Talent Loadouts drew no grids and every count
+read `0` — indistinguishable from a character with nothing to show. All four layers
+passed it. `GetSpecializationInfoByID` was the same story in the same file: it's a
+FrameXML **global**, never a `C_SpecializationInfo` member, so every spec card was
+titled "Spec 258".
+
+So: **call Blizzard APIs directly and let a wrong name throw.** Guard only what may
+genuinely be absent — another addon's API, a load-on-demand frame, a value the game
+declines to give (`C_Traits.GetConfigInfo` keeps its `pcall`, because it really does
+refuse a config from a spec you aren't in). When in doubt about a name, grep the
+annotations for `function <Name>(` — `Deprecated_*.lua` tells you which spelling is
+current — and grep this AddOns folder for how a maintained addon spells it. BigWigs'
+`LibDualSpec` is the reference for the spec APIs:
+
+```lua
+local _, _, classId = UnitClass("player")
+numSpecs = C_SpecializationInfo.GetNumSpecializationsForClassID(classId)
+```
 
 Setup (one-off):
 
@@ -57,20 +96,17 @@ activates automatically on a folder containing a `.toc`.
 `.luarc.json` configures LuaLS for both the editor and layer 3.
 `Tools\meta\externals.lua` is a `---@meta` stub — not loaded by the game, not in the
 `.toc` — declaring the foreign globals AniMods deliberately reaches for
-(`EllesmereUI`, `NDui`, `EllesmereUIRaidToolsIcon`, `_EUI_RaidTools_DB`) plus the
-superseded Blizzard ones kept as guarded fallbacks (`IsAddOnLoaded`,
-`GetAddOnMetadata`, `AudioOptionsFrame_AudioRestart`). Without it, reaching into another
+(`EllesmereUI`, `NDui`, `EllesmereUIRaidToolsIcon`, `_EUI_RaidTools_DB`). Without it, reaching into another
 addon's globals — most of what this addon does — is an "undefined field" warning at
 every site, and a checker that cries wolf on the core idiom is one nobody reads. Types
 there are deliberately loose (`any`): these are foreign, undocumented, version-dependent
 objects, and pretending to know their shape would invent a contract nothing enforces.
 Warnings are suppressed **inline at the exact line**, never by loosening a check
-globally. The one worth knowing about is `SpecSwitch.lua`'s
-`C_SpecializationInfo.SetSpecialization`, which neither the LuaLS annotations nor the
-generated globals list knows about even though it is the current call and four addons in
-this folder use it. It needs a directive for *each* checker (`-- luacheck: push ignore
-143` and `---@diagnostic disable-next-line`), since silencing one says nothing to the
-other — worth knowing before assuming a suppression took.
+globally — and if you do need one, note that a directive for each checker is two
+directives (`-- luacheck: push ignore 143` and `---@diagnostic disable-next-line`),
+since silencing one says nothing to the other. There are currently none: the last pair
+guarded `C_SpecializationInfo.SetSpecialization` on the belief that no list knew about
+it, which the 12.1 generated docs disprove.
 
 `.luacheckrc` is a **generated artifact and is gitignored** — it is the ~44,000-entry
 Blizzard globals list from [Jayrgo/wow-luacheckrc](https://github.com/Jayrgo/wow-luacheckrc)

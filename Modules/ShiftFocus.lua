@@ -187,7 +187,6 @@ local function AnnounceMarker()
     local mark = GetMark()
     if not mark then return end
     if _G.IsInRaid() or not _G.IsInGroup() then return end
-    if not (_G.C_ChatInfo and _G.C_ChatInfo.SendChatMessage) then return end
     _G.C_ChatInfo.SendChatMessage(("My focus marker is {rt%d}"):format(mark), "PARTY")
 end
 

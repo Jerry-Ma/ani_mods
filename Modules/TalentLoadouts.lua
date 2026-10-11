@@ -397,13 +397,12 @@ FileVariant = function(info, bases)
     return pcall(charAPI.SetParentLoadout, charAPI, info.id, configID) and true or false
 end
 
+--- A GLOBAL, not a C_SpecializationInfo member: it is a FrameXML function and
+--- has never been in the namespaced API, which is where this looked for it.
+--- Guarded, so the miss was silent and every spec card was titled "Spec 258".
 local function SpecName(specID)
-    local si = _G.C_SpecializationInfo
-    if si and si.GetSpecializationInfoByID then
-        local ok, _, name = pcall(si.GetSpecializationInfoByID, specID)
-        if ok and name and name ~= "" then return name end
-    end
-    return "Spec " .. tostring(specID)
+    local _, name = _G.GetSpecializationInfoByID(specID)
+    return (name and name ~= "") and name or ("Spec " .. tostring(specID))
 end
 
 --- The Blizzard loadout TLM currently files a build under, or nil.

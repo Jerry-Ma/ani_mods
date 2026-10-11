@@ -256,7 +256,6 @@ end
 
 function W.AtlasExists(atlas)
     if not atlas then return false end
-    if not (C_Texture and C_Texture.GetAtlasInfo) then return false end
     return C_Texture.GetAtlasInfo(atlas) and true or false
 end
 

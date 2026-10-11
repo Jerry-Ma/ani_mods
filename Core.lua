@@ -69,17 +69,16 @@ end
 
 -- ── AddOn / version helpers ───────────────────────────────────────────────────
 
+-- C_AddOns only. The bare IsAddOnLoaded and GetAddOnMetadata were the pre-11.0
+-- spelling and are gone from the current API; keeping them as a fallback meant
+-- a wrong namespaced name would quietly take the dead path instead of erroring.
 local function IsAddOnLoaded(name)
-    if _G.C_AddOns and _G.C_AddOns.IsAddOnLoaded then
-        return _G.C_AddOns.IsAddOnLoaded(name) and true or false
-    end
-    return _G.IsAddOnLoaded(name) and true or false
+    return _G.C_AddOns.IsAddOnLoaded(name) and true or false
 end
 AniMods.IsAddOnLoaded = IsAddOnLoaded
 
 local function GetAddOnVersion(name)
-    local getMeta = (_G.C_AddOns and _G.C_AddOns.GetAddOnMetadata) or _G.GetAddOnMetadata
-    return getMeta and getMeta(name, "Version") or nil
+    return _G.C_AddOns.GetAddOnMetadata(name, "Version")
 end
 AniMods.GetAddOnVersion = GetAddOnVersion
 

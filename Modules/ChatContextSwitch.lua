@@ -275,8 +275,7 @@ function ChatContextSwitch:Enable()
     -- UpdateWorldChannelInfo returns immediately, and the CHANNEL_UI_UPDATE
     -- handler would just be spawning a 0.2s timer per event to call a
     -- guaranteed no-op, forever.
-    local getCVar = (C_CVar and C_CVar.GetCVar) or GetCVar
-    if getCVar and getCVar("portal") == "CN" then
+    if C_CVar.GetCVar("portal") == "CN" then
         worldChannelName = "大脚世界频道"
         C_Timer.After(0.2, UpdateWorldChannelInfo)
 

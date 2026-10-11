@@ -21,12 +21,16 @@
 --
 -- Only Blizzard API is used, so nothing needs to be installed:
 --
---   GetNumSpecializations()                  -- spec count
---   GetSpecializationInfo(i)                 -- id, name, _, icon, role
---   GetSpecialization()                      -- active spec INDEX
---   C_SpecializationInfo.SetSpecialization(i)-- change spec (out of combat)
+--   C_SpecializationInfo.GetNumSpecializationsForClassID(classID) -- count
+--   C_SpecializationInfo.GetSpecializationInfo(i) -- id, name, _, icon, role
+--   C_SpecializationInfo.GetSpecialization()      -- active spec INDEX
+--   C_SpecializationInfo.SetSpecialization(i)     -- change spec (no combat)
 --   GetLootSpecialization()                  -- loot spec ID, 0 = follow spec
 --   SetLootSpecialization(id)                -- change loot spec (combat-legal)
+--
+-- The spec trio is namespaced; the loot-spec pair is still global. That split
+-- is Blizzard's, not a style choice here -- the bare GetSpecialization and
+-- GetSpecializationInfo live in Blizzard_Deprecated now.
 
 local SpecSwitch = {
     title = "Spec Switch",
@@ -72,7 +76,7 @@ end
 -- every hover and every click.
 --
 -- The first version rebuilt it inside each of those, so one broker update walked
--- GetSpecializationInfo three times over to answer a question whose answer had
+-- the spec list three times over to answer a question whose answer had
 -- not changed since login. That is the same "compute what the caller actually
 -- needs" mistake SocialStatus made with its friend list.
 local specCache, specByID = {}, {}
@@ -80,9 +84,15 @@ local specCache, specByID = {}, {}
 local function BuildSpecCache()
     wipe(specCache)
     wipe(specByID)
-    local count = GetNumSpecializations and GetNumSpecializations() or 0
-    for i = 1, count do
-        local id, name, _, icon = GetSpecializationInfo(i)
+    -- C_SpecializationInfo, not the bare globals: GetSpecialization and
+    -- GetSpecializationInfo still answer, but they live in
+    -- Blizzard_Deprecated now and the namespaced pair is the current API.
+    -- There is no GetNumSpecializations in the namespace at all -- the count
+    -- comes from the class, which is the only form Blizzard kept.
+    local si = _G.C_SpecializationInfo
+    local _, _, classID = _G.UnitClass("player")
+    for i = 1, si.GetNumSpecializationsForClassID(classID) do
+        local id, name, _, icon = si.GetSpecializationInfo(i)
         if id and name then
             local spec = { index = i, id = id, name = name, icon = icon }
             specCache[i] = spec
@@ -96,18 +106,18 @@ local function GetSpecs()
     return specCache
 end
 
--- Indexed straight into the cache rather than searched: GetSpecialization()
--- returns the INDEX, which is exactly the cache's key.
+-- Indexed straight into the cache rather than searched: the call returns the
+-- spec INDEX, which is exactly the cache's key.
 local function CurrentSpec()
     GetSpecs()
-    local index = GetSpecialization and GetSpecialization()
+    local index = _G.C_SpecializationInfo.GetSpecialization()
     return index and specCache[index] or nil
 end
 
 -- 0 means "whatever the active spec is", which is Blizzard's own default and
 -- is a real choice rather than an absence -- so it is reported as such.
 local function LootSpecID()
-    return (GetLootSpecialization and GetLootSpecialization()) or 0
+    return _G.GetLootSpecialization() or 0
 end
 
 local function SpecByID(id)
@@ -143,20 +153,7 @@ local function SwitchSpec(spec)
         Warn("can't change spec in combat")
         return
     end
-    -- Both suppressions are for the API metadata, not for a real problem:
-    -- neither the LuaLS annotations nor the generated globals list declares
-    -- SetSpecialization on C_SpecializationInfo, but it is the current call and
-    -- four addons in this folder use it -- EllesmereUIDataBars_Blocks.lua:3700,
-    -- EllesmereUIQuickdraw.lua:1792, NDui/Modules/Infobar/Spec.lua:12,
-    -- OPie/Meta/SpecSet.lua:21. The bare global SetSpecialization is the
-    -- pre-11.0 form and is what the lists still know about.
-    --
-    -- Suppressed at this exact line in both checkers rather than by adding the
-    -- field to the config, which would silence it everywhere.
-    -- luacheck: push ignore 143
-    ---@diagnostic disable-next-line: undefined-field
-    C_SpecializationInfo.SetSpecialization(spec.index)
-    -- luacheck: pop
+    _G.C_SpecializationInfo.SetSpecialization(spec.index)
     -- No UpdateBroker() here: the change is asynchronous (it is a cast), and
     -- PLAYER_SPECIALIZATION_CHANGED is what reports it actually happening.
 end
@@ -244,17 +241,16 @@ end
 --
 -- Reading the name is kept, because that is display rather than action, and it
 -- costs one hook rather than a menu (see Enable).
-local function LoadoutsAvailable()
-    return (C_ClassTalents and C_ClassTalents.GetLastSelectedSavedConfigID
-        and C_Traits and C_Traits.GetConfigInfo) and true or false
-end
-
 -- Reads the one name directly. It runs on every broker update, so building a
 -- list of every saved loadout to take one field off one of them -- which is
 -- what the removed menu needed -- would be the shape of waste the performance
 -- audit went looking for.
+--
+-- Each step can legitimately come back empty -- no saved loadout selected, a
+-- config the game will not describe -- and each is tested. What is NOT tested
+-- is whether the two functions exist; they do, and a check for that would turn
+-- a renamed API into a silently blank widget.
 local function ActiveLoadoutName()
-    if not LoadoutsAvailable() then return nil end
     local spec = CurrentSpec()
     if not spec then return nil end
     local configID = C_ClassTalents.GetLastSelectedSavedConfigID(spec.id)
@@ -540,12 +536,10 @@ function SpecSwitch:Enable()
     -- PLAYER_REGEN_ENABLED catch-up: theirs re-measures and re-anchors frames,
     -- which is protected, while all this does is assign a string to an LDB
     -- object and repaint a panel that is ours.
-    if C_ClassTalents and C_ClassTalents.UpdateLastSelectedSavedConfigID then
-        hooksecurefunc(C_ClassTalents, "UpdateLastSelectedSavedConfigID", function()
-            UpdateBroker()
-            if AniMods.RefreshUI then AniMods.RefreshUI() end
-        end)
-    end
+    hooksecurefunc(C_ClassTalents, "UpdateLastSelectedSavedConfigID", function()
+        UpdateBroker()
+        if AniMods.RefreshUI then AniMods.RefreshUI() end
+    end)
 
     -- Single notifications rather than per-item bursts, so there is nothing to
     -- coalesce; and none fires while nothing is happening, so there is nothing

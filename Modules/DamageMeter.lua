@@ -44,13 +44,12 @@ local DamageMeter = {
 local CVAR = "damageMeterEnabled"
 
 local function GetCVarBool(name)
-    return _G.C_CVar and _G.C_CVar.GetCVarBool and _G.C_CVar.GetCVarBool(name) or false
+    return _G.C_CVar.GetCVarBool(name) or false
 end
 
 -- Only ever called out of combat: Enable runs at login through W.OnReady, and
 -- the toggle is a click in a panel that hides itself when combat starts.
 local function SetMeterEnabled(on)
-    if not (_G.C_CVar and _G.C_CVar.SetCVar) then return false end
     if _G.InCombatLockdown() then return false end
     _G.C_CVar.SetCVar(CVAR, on and "1" or "0")
     return true

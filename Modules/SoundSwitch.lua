@@ -66,9 +66,10 @@ local function GetDevices()
 end
 
 local function CurrentDeviceName()
-    local raw = C_CVar and C_CVar.GetCVar and C_CVar.GetCVar(SOUND_CVAR)
-    local idx = tonumber(raw)
-    if not idx or not Sound_GameSystem_GetOutputDriverNameByIndex then return nil end
+    -- The CVar can be unset or non-numeric; the two calls around it cannot be
+    -- missing, so only the value is tested.
+    local idx = tonumber(C_CVar.GetCVar(SOUND_CVAR))
+    if not idx then return nil end
     return Sound_GameSystem_GetOutputDriverNameByIndex(idx)
 end
 
@@ -86,11 +87,10 @@ end
 
 local function SwitchToIndex(index)
     C_CVar.SetCVar(SOUND_CVAR, index)
-    -- RestartSoundSystem is the modern call; AudioOptionsFrame_AudioRestart
-    -- is the pre-10.0 one SoundManager still falls back to.
-    if not pcall(Sound_GameSystem_RestartSoundSystem) then
-        if AudioOptionsFrame_AudioRestart then AudioOptionsFrame_AudioRestart() end
-    end
+    -- SoundManager also falls back to the pre-10.0
+    -- AudioOptionsFrame_AudioRestart. Not kept: that name is gone, so the
+    -- fallback could only ever have been a second way to do nothing.
+    Sound_GameSystem_RestartSoundSystem()
 end
 
 -- Returns the next in-cycle device after the current one, wrapping; or nil
