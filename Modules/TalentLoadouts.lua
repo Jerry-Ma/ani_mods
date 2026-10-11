@@ -172,6 +172,7 @@ local function ApplyDump(text)
     if type(text) ~= "string" or text == "" then return false, "Nothing pasted." end
 
     local added, failed, seen = 0, 0, 0
+    local firstParsed, firstStored
     for line in text:gmatch("[^\r\n]+") do
         if line:sub(1, #DUMP_HEADER) ~= DUMP_HEADER and line:match("%S") then
             seen = seen + 1
@@ -180,7 +181,23 @@ local function ApplyDump(text)
             local name = sep and line:sub(sep + 1) or nil
             if str and name and str ~= "" and name ~= "" then
                 local ok, result = pcall(api.ImportCustomLoadout, api, str, name)
-                if ok and result then added = added + 1 else failed = failed + 1 end
+                if ok and result then
+                    added = added + 1
+                    -- The first one, both sides of the call: what we PARSED out
+                    -- of the line, and what TLM says it STORED. A name that
+                    -- differs between those two was changed by TLM; one that is
+                    -- already wrong on the left was mangled before it got there.
+                    -- Reported rather than inferred, because this module has
+                    -- had a stray "|" in restored names and the two halves need
+                    -- opposite fixes. Only the first: twelve of these would be
+                    -- a wall of text rather than an answer.
+                    if not firstParsed then
+                        firstParsed = name
+                        firstStored = (type(result) == "table") and result.name or nil
+                    end
+                else
+                    failed = failed + 1
+                end
             else
                 failed = failed + 1
             end
@@ -189,6 +206,14 @@ local function ApplyDump(text)
 
     if seen == 0 then return false, "No loadout lines found." end
     if added == 0 then return false, ("All %d failed to import."):format(failed) end
+
+    if firstParsed then
+        AniMods.Print(("restore read the first name as [%s]"):format(firstParsed))
+        if firstStored and firstStored ~= firstParsed then
+            AniMods.Print(("...and TalentLoadoutManager stored it as [%s]"):format(firstStored))
+        end
+    end
+
     return true, ("Imported %d loadout%s%s."):format(
         added, added == 1 and "" or "s",
         failed > 0 and (", " .. failed .. " failed") or "")
