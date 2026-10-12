@@ -382,8 +382,13 @@ end
 --- true, false, or nil meaning Blizzard did not answer for this config.
 --- The three are kept apart on purpose -- see the scope note above.
 --- pcall'd, not guarded: GetConfigInfo is expected to be there and a rename
---- should be an error, but it genuinely refuses a config belonging to a spec
---- you are not in, and that refusal is the nil this returns.
+--- should be an error, but a config it does not know is a refusal rather than
+--- a bug, and that refusal is the nil this returns.
+---
+--- It DOES answer for a loadout on a spec you are not in -- the question
+--- marks the table draws on other specs are proof -- which was assumed the
+--- other way round here for a while and gated actions that did not need
+--- gating.
 local function UsesSharedBars(configID)
     local ok, cfg = pcall(_G.C_Traits.GetConfigInfo, configID)
     if not ok or type(cfg) ~= "table" or cfg.usesSharedActionBars == nil then return nil end
@@ -767,7 +772,7 @@ local function CellTip(cell, editable)
         head = head .. "\n\nKeeps its own action bars, so applying it replaces "
             .. "your bar layout."
     elseif cell.shared == nil then
-        head = head .. "\n\nAction bar setting unavailable off-spec."
+        head = head .. "\n\nThe game did not report its action bar setting."
     end
 
     if not cell.current then
@@ -879,7 +884,7 @@ local function OtherTip(entry, editable)
     if entry.shared == false then
         head = head .. "\n\nNot using shared action bars."
     elseif entry.shared == nil then
-        head = head .. "\n\nAction bar setting unavailable off-spec."
+        head = head .. "\n\nThe game did not report its action bar setting."
     end
 
     if not entry.current then
@@ -912,9 +917,19 @@ local function ConfirmDelete(entries)
                 table.concat(names, ", ")),
         confirmText = "Delete",
         onConfirm = function()
+            -- DeleteConfig RETURNS whether it did it, and the two outcomes
+            -- are different: an error means the call was wrong, false means
+            -- the game declined. Testing only that the pcall survived would
+            -- report a refusal as a success.
+            --
+            -- Whether it declines a loadout on a spec you are not in is not
+            -- settled -- Blizzard's own UI never asks, since its delete
+            -- button only exists inside the edit dialog for the active spec.
+            -- Tried and reported rather than gated on a guess.
             local done, failed = 0, 0
             for _, e in ipairs(entries) do
-                if pcall(_G.C_ClassTalents.DeleteConfig, e.configID) then
+                local ok, deleted = pcall(_G.C_ClassTalents.DeleteConfig, e.configID)
+                if ok and deleted then
                     done = done + 1
                 else
                     failed = failed + 1
@@ -963,20 +978,24 @@ local function CellClick(cell, specID, specName, editable)
             return
         end
 
+        -- Each entry NAMES the loadout rather than a heading doing it once.
+        -- A title turns a two-item menu into a three-line one and still
+        -- leaves "Delete" sitting there on its own, which is the line you
+        -- least want to read out of context.
         local entries = {}
-        if editable and cell.shared == false then
+        if cell.shared == false then
             entries[#entries + 1] = {
-                text = "Use shared action bars",
+                text = "Use shared action bars for " .. cell.name,
                 onClick = function() ConfirmSharedBars(cell.configID, cell.name) end,
             }
         end
         entries[#entries + 1] = {
-            text = "Delete",
+            text = "Delete " .. cell.name,
             onClick = function()
                 ConfirmDelete({ { name = cell.name, configID = cell.configID } })
             end,
         }
-        AniMods.W.Menu(anchor, entries, { title = cell.name })
+        AniMods.W.Menu(anchor, entries, { atCursor = true })
     end
 end
 
@@ -1084,10 +1103,9 @@ function TalentLoadouts:GetInfoRows()
                 -- A tick is PRESENCE and nothing more. The question mark is
                 -- reserved for a fault actually observed -- today that is one
                 -- check, the action bar flag, and there is room for more
-                -- without a new mark. A loadout Blizzard will not describe is
-                -- present and unjudged, so it keeps the tick: most of the
-                -- table is off-spec, and marking all of it as questionable
-                -- would make the mark mean nothing.
+                -- without a new mark. A loadout the game will not describe is
+                -- present and unjudged, so it keeps the tick rather than
+                -- being guessed into a fault.
                 cell.state = (shared == false) and "warn" or "ok"
                 cell.configID = base.configID
                 cell.shared = shared
@@ -1203,18 +1221,18 @@ function TalentLoadouts:GetInfoRows()
             .. "The highlighted cell is the loadout that spec is on. Other "
             .. "rows are loadouts that do not fit the convention.\n\n"
             .. "Left-click applies a loadout, switching spec first if it "
-            .. "belongs to another one. Right-click switches it to shared "
-            .. "action bars, and clicking an empty cell creates it -- both on "
-            .. "your current spec only, the bordered columns.\n\n"
+            .. "belongs to another one. Right-click opens its menu. Clicking "
+            .. "an empty cell creates it, on your current spec only -- the "
+            .. "bordered columns.\n\n"
             .. "Loadout names are {Prefix}-{Case}{Variant}; a cell is the "
             .. "{Prefix}-{Case} part.",
     }
     rows[#rows + 1] = { grid = { cols = cols, rows = gridRows } }
     rows[#rows + 1] = {
         kind = "button", button = "Use shared action bars for all",
-        help = "Switches every amber loadout to shared action bars, after one "
-            .. "confirmation listing them. Loadouts on specs you are not in "
-            .. "are left alone.",
+        help = "Switches every question-marked loadout to shared action bars, "
+            .. "after one confirmation listing them. Any the game would not "
+            .. "report a setting for are left alone.",
         onClick = UseSharedBarsForAll,
     }
     -- Only when there is something to delete. A permanently-present delete
@@ -1267,8 +1285,8 @@ function TalentLoadouts:GetInfoRows()
         value = unreadable > 0
             and ("%d (%d unreadable)"):format(notShared, unreadable)
             or tostring(notShared),
-        help  = "The amber cells, counted. Unreadable ones are on specs you "
-             .. "are not in, where the game will not report the setting.",
+        help  = "The question-marked cells, counted. Unreadable ones are "
+             .. "loadouts the game would not report a setting for.",
     }
 
     -- There was a card here listing the loadouts the table could not place.

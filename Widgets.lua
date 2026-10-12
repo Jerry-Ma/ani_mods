@@ -2049,7 +2049,9 @@ local function EnsurePopupFooter(index)
 end
 
 -- `entries`: { text, icon, active, onClick }
--- `opts`:    { title = "...", footer = { { "Left-click", "Choose spec" }, ... } }
+-- `opts`:    { title = "...", footer = { { "Left-click", "Choose spec" }, ... },
+--              atCursor = true -- place it at the pointer, for a context menu
+--            }
 function W.Menu(anchor, entries, opts)
     EnsureClickPopup()
     opts = opts or {}
@@ -2160,11 +2162,25 @@ function W.Menu(anchor, entries, opts)
     -- the row rather than just its text.
     for i = 1, #entries do popupRows[i].frame:SetWidth(widest) end
 
-    -- Same placement rule as the hover tooltip, so a widget's menu and its
-    -- tooltip appear on the same side of it rather than disagreeing. This used
-    -- to flip vertically only, which left a menu opened from a widget at the
-    -- far right of a bar running off the screen edge.
-    AnchorNear(clickPopup, anchor)
+    if opts.atCursor then
+        -- A CONTEXT menu, which belongs where the pointer is. AnchorNear
+        -- places a popup above or below its owner and pins it to a screen
+        -- third, which is right for a data bar widget whose menu should hang
+        -- off the bar -- and wrong for a right-click on something small in
+        -- the middle of a panel, where the menu lands somewhere the hand is
+        -- not. Clamping keeps it on screen near an edge.
+        local cx, cy = GetCursorPosition()
+        local scale = UIParent:GetEffectiveScale()
+        clickPopup:ClearAllPoints()
+        clickPopup:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT",
+            cx / scale, cy / scale)
+    else
+        -- Same placement rule as the hover tooltip, so a widget's menu and
+        -- its tooltip appear on the same side of it rather than disagreeing.
+        -- This used to flip vertically only, which left a menu opened from a
+        -- widget at the far right of a bar running off the screen edge.
+        AnchorNear(clickPopup, anchor)
+    end
 
     clickPopupCatcher:Show()
     clickPopup:Show()
