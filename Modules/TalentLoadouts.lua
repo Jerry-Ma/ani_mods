@@ -498,6 +498,13 @@ end
 -- loaded first. And it is skipped entirely while their edit dialog is open:
 -- configID is a field on a shared object, and overwriting it mid-edit would
 -- retarget a dialog the player is already using.
+--- Set once, the first time their dialog is available: their popup runs their
+--- OnAccept, so without this the table has no idea the setting changed and
+--- goes on drawing a question mark over a loadout that is now fine. A post
+--- hook on the exact function their popup calls is a certainty, where waiting
+--- for whichever event SetUsesSharedActionBars happens to raise is a guess.
+local hookedSharedBars = false
+
 local function ConfirmSharedBars(configID, name)
     local addons = _G.C_AddOns
     if addons and addons.LoadAddOn and not addons.IsAddOnLoaded("Blizzard_PlayerSpells") then
@@ -505,6 +512,12 @@ local function ConfirmSharedBars(configID, name)
     end
 
     local dialog = _G.ClassTalentLoadoutEditDialog
+    if dialog and not hookedSharedBars then
+        hookedSharedBars = true
+        _G.hooksecurefunc(dialog, "OnSharedActionBarsConfirmed", function()
+            if AniMods.RefreshUI then AniMods.RefreshUI() end
+        end)
+    end
     if not (dialog and _G.StaticPopup_Show and _G.StaticPopupDialogs
         and _G.StaticPopupDialogs["LOADOUT_CONFIRM_SHARED_ACTION_BARS"]) then
         -- Their path is not there. Ours is not a substitute for a confirmation
@@ -548,11 +561,9 @@ local function CreateBase(name)
             local ok = pcall(talents.RequestNewConfig, name)
             AniMods.Print(ok and ("asked for \"" .. name .. "\".")
                 or "the game refused the new loadout.")
-            -- Creation is a server round trip, so the grid cannot be correct
-            -- immediately. Refreshed a moment later rather than guessed at.
-            _G.C_Timer.After(1, function()
-                if AniMods.RefreshUI then AniMods.RefreshUI() end
-            end)
+            -- No refresh here: TRAIT_CONFIG_CREATED brings one when the
+            -- server has actually made it, which is the moment the table can
+            -- be right. A guessed delay is either too early or wasted.
         end,
     })
 end
@@ -922,10 +933,11 @@ local function ConfirmDelete(entries)
             -- the game declined. Testing only that the pcall survived would
             -- report a refusal as a success.
             --
-            -- Whether it declines a loadout on a spec you are not in is not
-            -- settled -- Blizzard's own UI never asks, since its delete
-            -- button only exists inside the edit dialog for the active spec.
-            -- Tried and reported rather than gated on a guess.
+            -- It DOES delete a loadout on a spec you are not in, which
+            -- Blizzard's own UI never shows because its delete button only
+            -- exists inside the edit dialog for the active spec. Tried and
+            -- reported rather than gated on a guess, and the report settled
+            -- it.
             local done, failed = 0, 0
             for _, e in ipairs(entries) do
                 local ok, deleted = pcall(_G.C_ClassTalents.DeleteConfig, e.configID)
@@ -937,11 +949,9 @@ local function ConfirmDelete(entries)
             end
             AniMods.Print(("deleted %d%s."):format(done,
                 failed > 0 and (", " .. failed .. " refused") or ""))
-            -- Deletion is a server round trip, so the table cannot be right
-            -- immediately.
-            _G.C_Timer.After(1, function()
-                if AniMods.RefreshUI then AniMods.RefreshUI() end
-            end)
+            -- No refresh here: TRAIT_CONFIG_DELETED brings one when the
+            -- server has actually done it, which is the moment the table can
+            -- be right. A guessed delay is either too early or wasted.
         end,
     })
 end
@@ -1334,14 +1344,39 @@ function TalentLoadouts:GetInfoRows()
     return rows
 end
 
--- Nothing is installed, hooked or scheduled: every action runs from a button.
+-- The table reads live state -- which loadouts exist, which one is applied,
+-- which are on shared bars -- so it has to hear about changes rather than be
+-- rebuilt when something in this module happens to cause one. Half of them
+-- come from outside it anyway: Blizzard's own talent UI creates, renames and
+-- deletes loadouts, and TLM applies them.
 --
--- The one thing here is a cleanup. An earlier version persisted a "plan" of
--- the bases the collection implied, which the game is now asked for instead.
--- Dropped rather than left to sit: saved data nothing reads is a thing the
--- next reader has to work out the meaning of.
+-- Blizzard's own list, from ClassTalentsFrameEvents, plus TRAIT_CONFIG_UPDATED
+-- which they handle separately for reasons that do not apply here.
+--
+-- Coalesced, because these arrive in bursts -- a single apply raises several
+-- -- and RefreshUI does nothing while the panel is closed, which is most of
+-- the time.
+local CONFIG_EVENTS = {
+    "TRAIT_CONFIG_CREATED",
+    "TRAIT_CONFIG_DELETED",
+    "TRAIT_CONFIG_UPDATED",
+    "TRAIT_CONFIG_LIST_UPDATED",
+    "ACTIVE_COMBAT_CONFIG_CHANGED",
+}
+
 function TalentLoadouts:Enable()
+    -- A cleanup. An earlier version persisted a "plan" of the bases the
+    -- collection implied, which the game is now asked for instead. Dropped
+    -- rather than left to sit: saved data nothing reads is a thing the next
+    -- reader has to work out the meaning of.
     if AniModsDB.talentLoadouts then AniModsDB.talentLoadouts.plan = nil end
+
+    local Refresh = AniMods.Coalesce(function()
+        if AniMods.RefreshUI then AniMods.RefreshUI() end
+    end)
+    local watcher = _G.CreateFrame("Frame")
+    for _, event in ipairs(CONFIG_EVENTS) do watcher:RegisterEvent(event) end
+    watcher:SetScript("OnEvent", Refresh)
 end
 
 function TalentLoadouts:SetEnabled()
