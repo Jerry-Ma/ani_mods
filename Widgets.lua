@@ -815,7 +815,10 @@ W.GRID_STATE = {
 function W.Grid(parent)
     local CELL_W, CELL_H, GAP, LABEL_W, HEAD_H = 34, 18, 2, 46, 15
     -- What a group rule costs horizontally: space, the hairline, space.
-    local RULE_W = 7
+    -- Generous, because the rule has to read as a gap with a line in it. At a
+    -- few pixels it reads as another cell border and the groups it separates
+    -- run together -- the line stops dividing and just adds clutter.
+    local RULE_W = 18
 
     local f = CreateFrame("Frame", nil, parent)
     local o = { frame = f, heads = {}, rows = {}, rules = {}, active = {} }
