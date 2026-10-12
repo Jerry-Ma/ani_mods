@@ -125,8 +125,10 @@ TalentLoadoutManagerAPI = nil
 ---load-on-demand, so it is nil until the player has opened the talent UI
 ---once -- which is why every use of it is behind a presence check. The LuaLS
 ---annotations only carry the generated C API, not the frames their XML
----creates. Talent Loadouts nudges its loadout dropdown back into agreement
----after applying a loadout from the table.
+---creates. Talent Loadouts rebuilds its loadout dropdown after creating or
+---deleting one, since its own refresh runs before the game list has caught
+---up, and tells it when a create is in flight so it does not load a config
+---whose talents have not arrived yet.
 ---@type any
 ClassTalentsFrame = nil
 

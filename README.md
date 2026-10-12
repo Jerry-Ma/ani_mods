@@ -1287,17 +1287,41 @@ both toggleable in **General**.
   wording is Blizzard's throughout — a loadout *uses shared action bars*, it is never
   "shared", which would suggest sharing it with other people.
 
-  Clicking an amber cell runs Blizzard's own path: their
+  **It is a viewer and a housekeeping layer, not a loadout switcher.** Applying used to
+  be a click here and was removed: on the current spec it duplicated the dropdown in
+  Blizzard's own panel and TLM's list, both already open when you're thinking about
+  builds, and across specs it needed a confirmation, a six-second cast, a pending request
+  held across `PLAYER_SPECIALIZATION_CHANGED` and a drop path for an interrupted cast —
+  a lot of moving parts for something two clicks away in a panel that does it properly.
+  Which loadout is in use is still *shown*, in the accent; it just isn't changed here.
+
+  What's left is the three jobs no other UI offers: create the missing one, delete the
+  stray one, put one on shared action bars. Clicking a cell opens a menu of whichever
+  apply; an empty cell just creates, since there's only one thing it can do. Creating is
+  current-spec only — a new loadout snapshots the talents you have on — and that's the
+  one thing the bordered columns gate. Sharing goes through Blizzard's own
   `LOADOUT_CONFIRM_SHARED_ACTION_BARS` popup, pointed at that `configID` through their
-  `ClassTalentLoadoutEditDialog`, so it is their wording and their call rather than a
-  copy. The bulk button is deliberately *not* that dialog shown N times — a chain of
-  identical popups is something to click through, so it asks once and names every loadout
-  it will change. Only the current spec's columns are clickable, because creating a
-  loadout snapshots the talents you have on and Blizzard reports a config's bar setting
-  only for the spec you are in; the rest are drawn, one border marks the editable run,
-  and nothing pretends to a button that would fail invisibly. A loadout Blizzard won't
-  describe is shown present and unjudged — green with a `?` — rather than guessed into
-  amber.
+  `ClassTalentLoadoutEditDialog`, so it's their wording and their call rather than a
+  copy; the bulk button is deliberately *not* that dialog shown N times, because a chain
+  of identical popups is something to click through. **The loadout a spec is on is never
+  offered for deletion** — the game allows it and leaves you on a default build with
+  nothing behind it, so the menu omits it, the bulk button filters it, and `ConfirmDelete`
+  filters again.
+
+  Deleting goes through `TalentLoadoutManagerAPI:DeleteLoadout` rather than
+  `C_ClassTalents.DeleteConfig`. TLM hears the event either way, but its own path drops
+  the loadout from its cache and saved list *and* raises `LoadoutListUpdated` in the same
+  tick — that gap was a visible desync. The same call deletes TLM's own uncategorised
+  loadouts, since it routes a configID and a TLM loadout id to different handlers.
+
+  **Blizzard's panel needs three nudges**, all the same shape — it keeps state in memory
+  and only re-reads on signals an addon doesn't send. Its loadout dropdown is rebuilt
+  from our config-event watcher, because their own `OnTraitConfigDeleted` refresh runs
+  before the game's list has finished changing and leaves the dead row in. And a create
+  started from here calls `OnTraitConfigCreateStarted(HasAnyPurchasedRanks())` exactly as
+  their own create does: without it their handler loads the new config before its ranks
+  arrive, and you get an empty tree to fill in by hand — but only with their window open,
+  which is what made it look like a timing bug in our code.
 
   A Blizzard loadout whose name isn't `{Prefix}-{Case}` for a pair this class has gets no
   cell, so it is listed by name underneath with the reason. Out of the table is not out

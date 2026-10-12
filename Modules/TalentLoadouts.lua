@@ -851,127 +851,30 @@ local function CellTip(cell, editable)
         head = head .. "\n\nThe game did not report its action bar setting."
     end
 
-    if not cell.current then
-        head = head .. "\n\nLeft-click to apply it"
-            .. (editable and "." or ", switching spec first.")
-    end
     if HasMenu(cell) then
-        head = head .. (cell.current and "\n\n" or "\n") .. "Right-click for more."
+        head = head .. "\n\nClick for what can be done with it."
     end
     return head
 end
 
--- ── Applying a loadout ──────────────────────────────────────────────────────
+-- APPLYING A LOADOUT IS NOT DONE FROM HERE.
 --
--- Blizzard's own sequence, from ClassTalentsFrameMixin:LoadConfigInternal:
--- LoadConfig(configID, autoApply) with autoApply true, then read the result.
--- NoChangesNecessary means you are already on it and only the "last selected"
--- pointer needs writing; LoadInProgress means the server is applying it and
--- the pointer is written when it lands. Nothing here stages a config and
--- commits it separately -- that is the autoApply-false path, which exists so
--- their UI can show pending changes, and this has no pending state to show.
+-- It was, and it was more trouble than it was worth. On the current spec it
+-- duplicated the dropdown sitting in Blizzard's own talent panel and TLM's
+-- list, both of which are already open when you are thinking about builds.
+-- On another spec it meant a confirmation, a six-second cast, a pending
+-- request held across PLAYER_SPECIALIZATION_CHANGED and a dropped request
+-- when the cast was interrupted -- a lot of moving parts for something two
+-- clicks away in a panel that does it properly.
 --
--- CanChangeTalents is the gate rather than a combat check, because it answers
--- the whole question -- combat, a rested area, an active cast -- and answers
--- it with a reason that can be printed.
-
-local pendingLoad
-
-local function ApplyLoadout(configID, specID, name)
-    local talents = _G.C_ClassTalents
-    local canChange, _, changeError = talents.CanChangeTalents()
-    if not canChange then
-        return AniMods.Print(changeError or "talents cannot change right now.")
-    end
-
-    local result = talents.LoadConfig(configID, true)
-    if result == _G.Enum.LoadConfigResult.Error then
-        return AniMods.Print(("the game refused to load \"%s\"."):format(name))
-    end
-
-    talents.UpdateLastSelectedSavedConfigID(specID, configID)
-
-    -- Blizzard's own talent panel, if it happens to be open.
-    --
-    -- Its dropdown is driven by a field it keeps in memory, and it re-reads
-    -- GetLastSelectedSavedConfigID in exactly two places: when it refreshes
-    -- its loadout list, and on SELECTED_LOADOUT_CHANGED. Writing the saved
-    -- value does not raise that event, so a panel already on screen went on
-    -- naming the loadout you were on before. Closed, it is right when it
-    -- next opens, which is why this only matters while it is shown.
-    --
-    -- Both lines are what their own SELECTED_LOADOUT_CHANGED handler does,
-    -- skipLoad set, so this moves their selection to match and loads
-    -- nothing -- the loadout is already going in above.
-    local panel = _G.ClassTalentsFrame
-    if panel and panel:IsShown() then
-        panel.lastSelectedConfigID = configID
-        panel:SetSelectedSavedConfigID(configID, false, true)
-    end
-
-    AniMods.Print((result == _G.Enum.LoadConfigResult.NoChangesNecessary)
-        and ("already on \"%s\"."):format(name)
-        or ("applying \"%s\"."):format(name))
-    if AniMods.RefreshUI then AniMods.RefreshUI() end
-end
-
--- The other half of a cross-spec apply. Changing spec is a CAST, so the
--- loadout cannot be loaded in the same call -- the game is still in the old
--- spec when SetSpecialization returns. This waits for the event that says it
--- landed instead of sleeping and hoping.
---
--- One frame, registered once, holding at most one pending request. A second
--- click replaces the first rather than queueing, which is what someone who
--- clicked the wrong cell and then the right one means.
-local pendingFrame = _G.CreateFrame("Frame")
-pendingFrame:RegisterUnitEvent("PLAYER_SPECIALIZATION_CHANGED", "player")
-pendingFrame:SetScript("OnEvent", function()
-    local want = pendingLoad
-    if not want then return end
-    pendingLoad = nil
-
-    local si = _G.C_SpecializationInfo
-    local index = si.GetSpecialization()
-    local nowSpecID = index and si.GetSpecializationInfo(index)
-    -- Someone else's spec change, or the player changed their mind mid-cast.
-    -- Dropped rather than applied to whatever spec they ended up in.
-    if nowSpecID ~= want.specID then return end
-
-    ApplyLoadout(want.configID, want.specID, want.name)
-end)
-
---- Switch spec and then apply, behind one confirmation.
----
---- Confirmed because a spec change is not a small thing: it is a six-second
---- cast that cannot happen in combat and rearranges the whole character. The
---- table can offer it, but it should not happen because a cell was clicked.
-local function SwitchSpecAndApply(specID, specName, configID, name)
-    local si = _G.C_SpecializationInfo
-    local specOrder = PlayerSpecs()
-    local index
-    for i, id in ipairs(specOrder) do
-        if id == specID then index = i end
-    end
-    if not index then return end
-
-    if _G.InCombatLockdown() then
-        return AniMods.Print("can't change spec in combat.")
-    end
-
-    AniMods.W.Confirm({
-        message = ("Switch to %s and apply \"%s\"?\n\nChanging specialization "
-              .. "is a cast, so the loadout is applied once it finishes.")
-            :format(specName, name),
-        confirmText = "Switch",
-        onConfirm = function()
-            pendingLoad = { specID = specID, configID = configID, name = name }
-            si.SetSpecialization(index)
-        end,
-    })
-end
+-- What is left is what this table is actually for: seeing what exists across
+-- every spec at once, and the three housekeeping jobs no other UI offers --
+-- create the missing one, delete the stray one, put one on shared action
+-- bars. Which loadout is in use is still SHOWN, in the accent; it is just
+-- not changed here.
 
 --- The tooltip for a loadout the table has no cell for.
-local function OtherTip(entry, editable)
+local function OtherTip(entry)
     local head = ("%s\n%s\n\nDoes not fit the convention: %s."):format(
         entry.name, entry.specName, entry.why)
     if entry.variants > 0 then
@@ -984,12 +887,8 @@ local function OtherTip(entry, editable)
         head = head .. "\n\nThe game did not report its action bar setting."
     end
 
-    if not entry.current then
-        head = head .. "\n\nLeft-click to apply it"
-            .. (editable and "." or ", switching spec first.")
-    end
     if entry.shared == false or CanDelete(entry) then
-        head = head .. (entry.current and "\n\n" or "\n") .. "Right-click for more."
+        head = head .. "\n\nClick for what can be done with it."
     end
     return head
 end
@@ -1001,11 +900,16 @@ end
 --- their edit dialog, so reusing it would mean N popups for what is one
 --- decision -- and a chain of destructive popups is the worst possible thing
 --- to make someone click through.
-local function ConfirmDelete(list)
-    -- Filtered HERE as well as at both call sites. The call sites hide the
-    -- action so it cannot be chosen; this makes sure no later caller can get
-    -- past it by accident, because the cost of being wrong is a character
-    -- left on a build with nothing behind it.
+--- `opts.noun` names what is going, and `opts.note` says what else it costs.
+--- Both because this deletes two different things: Blizzard loadouts, which
+--- other loadouts may be filed under, and TLM's own, which nothing hangs off.
+local function ConfirmDelete(list, opts)
+    opts = opts or {}
+
+    -- Filtered HERE as well as at every call site. They hide the action so it
+    -- cannot be chosen; this makes sure no later caller gets past it by
+    -- accident, because the cost of being wrong is a character left on a
+    -- build with nothing behind it.
     local entries = {}
     for _, e in ipairs(list) do
         if CanDelete(e) then entries[#entries + 1] = e end
@@ -1018,12 +922,12 @@ local function ConfirmDelete(list)
     for i, e in ipairs(entries) do names[i] = e.name end
 
     AniMods.W.Confirm({
-        message = ("Permanently delete %d Blizzard loadout%s?\n\n%s\n\nThe "
-              .. "talent builds saved in them are gone and cannot be "
-              .. "recovered. Loadouts filed under them are not deleted, but "
-              .. "lose the slot they point at."):format(
-                #entries, #entries == 1 and "" or "s",
-                table.concat(names, ", ")),
+        message = ("Permanently delete %d %s%s?\n\n%s\n\nThe talent builds "
+              .. "saved in them are gone and cannot be recovered.%s"):format(
+                #entries, opts.noun or "Blizzard loadout",
+                #entries == 1 and "" or "s",
+                table.concat(names, ", "),
+                opts.note and ("\n\n" .. opts.note) or ""),
         confirmText = "Delete",
         onConfirm = function()
             -- THROUGH TLM, NOT STRAIGHT AT THE GAME.
@@ -1044,6 +948,11 @@ local function ConfirmDelete(list)
             -- reads TLM's data and asks TLM to change it, and reaching into
             -- its saved variables to tidy up would be exactly the coupling
             -- the API exists to avoid.
+            --
+            -- One call for both kinds, too: DeleteLoadout routes a Blizzard
+            -- configID to DeleteBlizzardLoadout and a TLM loadout id to
+            -- DeleteCustomLoadout, so the uncategorised ones need no
+            -- separate path.
             --
             -- Both forms return whether they did it. Testing only that the
             -- pcall survived would report a refusal as a success.
@@ -1068,40 +977,20 @@ end
 
 --- What a click on this cell does, or nil when there is nothing to do.
 ---
---- LEFT DOES THE ONE OBVIOUS THING, RIGHT OPENS THE REST. Applying a loadout
---- is what you came to do and is worth a bare click; everything else is
---- maintenance, happens rarely, and one of them is irreversible -- which is
---- exactly the kind of thing that should not be a stray right-click on a
---- 34-pixel cell. A menu names the action before it runs.
+--- EITHER BUTTON OPENS THE MENU, now that nothing is applied from here. An
+--- empty cell is the exception: there is only one thing it can do, so it does
+--- it rather than offering a menu of one.
 ---
---- A cell on another spec can still be applied, since changing spec is
---- something the game can do on the way. The action bar setting cannot be
---- read or written off-spec, so that entry only appears where it means
---- something -- which is also the only place a question mark can appear.
-local function CellClick(cell, specID, specName, editable)
+--- Every entry names the loadout it acts on, because the action is the whole
+--- line and a heading repeating it would leave "Delete" sitting on its own --
+--- the line you least want to read out of context.
+local function CellClick(cell, specID, editable)
     if cell.state == "missing" then
-        -- Nothing to maintain, so no menu: the only thing an empty cell can
-        -- do is stop being empty.
         if not editable then return nil end
-        return function(button)
-            if button ~= "RightButton" then CreateBase(cell.name, specID) end
-        end
+        return function() CreateBase(cell.name, specID) end
     end
 
-    return function(button, anchor)
-        if button ~= "RightButton" then
-            if editable then
-                ApplyLoadout(cell.configID, specID, cell.name)
-            else
-                SwitchSpecAndApply(specID, specName, cell.configID, cell.name)
-            end
-            return
-        end
-
-        -- Each entry NAMES the loadout rather than a heading doing it once.
-        -- A title turns a two-item menu into a three-line one and still
-        -- leaves "Delete" sitting there on its own, which is the line you
-        -- least want to read out of context.
+    return function(_, anchor)
         local entries = {}
         if cell.shared == false then
             entries[#entries + 1] = {
@@ -1142,12 +1031,20 @@ function TalentLoadouts:GetInfoRows()
     local rows = {}
 
     local loadouts = CustomLoadouts()
-    local bases, baseCount, bagged = {}, 0, 0
+    local bases, baseCount = {}, 0
+    -- Kept, not just counted: a count says how many there are and the list is
+    -- what the Housekeeping button acts on. These are TLM's own loadouts, so
+    -- the id is a TLM loadout id rather than a Blizzard configID -- which
+    -- DeleteLoadout takes either of.
+    local uncategorised = {}
     for _, info in ipairs(loadouts) do
         local base = BaseOf(info.name)
         if not bases[base] then bases[base] = true; baseCount = baseCount + 1 end
-        if base == UNCATEGORISED then bagged = bagged + 1 end
+        if base == UNCATEGORISED then
+            uncategorised[#uncategorised + 1] = { name = info.name, configID = info.id }
+        end
     end
+    local bagged = #uncategorised
 
     -- ── The table ───────────────────────────────────────────────────────────
     --
@@ -1288,7 +1185,7 @@ function TalentLoadouts:GetInfoRows()
                 text    = cell.text,
                 tip     = CellTip(cell, col.active),
                 current = cell.current,
-                onClick = CellClick(cell, col.specID, col.specName, col.active),
+                onClick = CellClick(cell, col.specID, col.active),
             }
         end
         gridRows[#gridRows + 1] = { label = case, cells = cells }
@@ -1314,12 +1211,12 @@ function TalentLoadouts:GetInfoRows()
                     text    = entry.name,
                     span    = g.span,
                     current = entry.current,
-                    tip     = OtherTip(entry, g.active),
+                    tip     = OtherTip(entry),
                     onClick = CellClick({
                         state = (entry.shared == false) and "warn" or "ok",
                         name = entry.name, configID = entry.configID,
                         shared = entry.shared, current = entry.current,
-                    }, specID, g.specName, g.active),
+                    }, specID, g.active),
                 }
             end
         end
@@ -1343,10 +1240,11 @@ function TalentLoadouts:GetInfoRows()
             .. "is not there yet.\n\n"
             .. "The highlighted cell is the loadout that spec is on. Other "
             .. "rows are loadouts that do not fit the convention.\n\n"
-            .. "Left-click applies a loadout, switching spec first if it "
-            .. "belongs to another one. Right-click opens its menu. Clicking "
-            .. "an empty cell creates it, on your current spec only -- the "
-            .. "bordered columns.\n\n"
+            .. "Click a cell for what can be done with it. Clicking an empty "
+            .. "one creates it, on your current spec only -- the bordered "
+            .. "columns.\n\n"
+            .. "Loadouts are applied from Blizzard's talent panel or from "
+            .. "TLM, not from here.\n\n"
             .. "Loadout names are {Prefix}-{Case}{Variant}; a cell is the "
             .. "{Prefix}-{Case} part.",
     }
@@ -1418,6 +1316,20 @@ function TalentLoadouts:GetInfoRows()
             or tostring(notShared),
         help  = "The question-marked cells, counted. Unreadable ones are "
              .. "loadouts the game would not report a setting for.",
+    }
+    rows[#rows + 1] = {
+        kind = "button", button = "Delete the uncategorised loadouts",
+        help = "Permanently deletes the uncategorised loadouts counted above, "
+            .. "after one confirmation listing them. These are your own "
+            .. "loadouts whose names carry no case token, so nothing in the "
+            .. "table stands for them.",
+        onClick = function()
+            ConfirmDelete(uncategorised, {
+                noun = "loadout",
+                note = "These are your own loadouts, not Blizzard's, so "
+                    .. "nothing else is filed under them.",
+            })
+        end,
     }
 
     -- There was a card here listing the loadouts the table could not place.
