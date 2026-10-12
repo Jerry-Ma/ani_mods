@@ -583,8 +583,30 @@ local function CreateBase(name, specID)
               .. "are not the ones you want saved under that name."):format(name),
         confirmText = "Create",
         onConfirm = function()
-            local ok = pcall(talents.RequestNewConfig, name)
-            AniMods.Print(ok and ("asked for \"" .. name .. "\".")
+            -- TELL BLIZZARD'S PANEL A CREATE IS IN FLIGHT, if it is open.
+            --
+            -- A new config inherits the talents you have on -- that is the
+            -- whole point -- but the ranks arrive from the server a moment
+            -- after the config does. Their panel handles TRAIT_CONFIG_CREATED
+            -- and, unless told otherwise, immediately selects and LOADS the
+            -- new config. Load it before the ranks land and you get an empty
+            -- tree to fill in by hand, which is exactly what happened with
+            -- their window open and never with it shut.
+            --
+            -- Their own create guards this: it reads HasAnyPurchasedRanks
+            -- first, then calls OnTraitConfigCreateStarted with it, which
+            -- sets the flag that makes their handler wait for the config to
+            -- be populated. Same two calls in the same order here, so a
+            -- create from this table behaves like a create from theirs.
+            local panel = _G.ClassTalentsFrame
+            local hasRanks = panel and panel:HasAnyPurchasedRanks()
+
+            local ok, created = pcall(talents.RequestNewConfig, name)
+            if ok and created and panel then
+                panel:OnTraitConfigCreateStarted(hasRanks)
+            end
+
+            AniMods.Print((ok and created) and ("asked for \"" .. name .. "\".")
                 or "the game refused the new loadout.")
             -- No refresh here: TRAIT_CONFIG_CREATED brings one when the
             -- server has actually made it, which is the moment the table can
@@ -868,6 +890,25 @@ local function ApplyLoadout(configID, specID, name)
     end
 
     talents.UpdateLastSelectedSavedConfigID(specID, configID)
+
+    -- Blizzard's own talent panel, if it happens to be open.
+    --
+    -- Its dropdown is driven by a field it keeps in memory, and it re-reads
+    -- GetLastSelectedSavedConfigID in exactly two places: when it refreshes
+    -- its loadout list, and on SELECTED_LOADOUT_CHANGED. Writing the saved
+    -- value does not raise that event, so a panel already on screen went on
+    -- naming the loadout you were on before. Closed, it is right when it
+    -- next opens, which is why this only matters while it is shown.
+    --
+    -- Both lines are what their own SELECTED_LOADOUT_CHANGED handler does,
+    -- skipLoad set, so this moves their selection to match and loads
+    -- nothing -- the loadout is already going in above.
+    local panel = _G.ClassTalentsFrame
+    if panel and panel:IsShown() then
+        panel.lastSelectedConfigID = configID
+        panel:SetSelectedSavedConfigID(configID, false, true)
+    end
+
     AniMods.Print((result == _G.Enum.LoadConfigResult.NoChangesNecessary)
         and ("already on \"%s\"."):format(name)
         or ("applying \"%s\"."):format(name))
@@ -1454,24 +1495,30 @@ function TalentLoadouts:Enable()
     local Refresh = AniMods.Coalesce(function()
         if AniMods.RefreshUI then AniMods.RefreshUI() end
     end)
+    -- Blizzard's loadout dropdown, nudged on the same events.
+    --
+    -- Their panel rebuilds that list from GetConfigIDsBySpecID in
+    -- OnTraitConfigDeleted and on TRAIT_CONFIG_LIST_UPDATED, so in principle
+    -- it keeps itself right. In practice a loadout deleted from here stayed
+    -- in the dropdown while TLM's own list -- which purges its cache in the
+    -- same call -- updated at once. Their refresh runs against a list the
+    -- game has not finished changing.
+    --
+    -- So it is asked again on every config event, which is a later look at
+    -- the same question rather than a guessed delay. RefreshLoadoutOptions
+    -- is what their own handlers call and only rereads and redraws, and this
+    -- only touches a panel that is open: a closed one rebuilds when it next
+    -- opens and needs no help.
+    local RefreshBlizzardPanel = AniMods.Coalesce(function()
+        local panel = _G.ClassTalentsFrame
+        if panel and panel:IsShown() then panel:RefreshLoadoutOptions() end
+    end)
+
     local watcher = _G.CreateFrame("Frame")
     for _, event in ipairs(CONFIG_EVENTS) do watcher:RegisterEvent(event) end
-    watcher:SetScript("OnEvent", function(_, event, arg)
-        -- TEMPORARY. A loadout made from a cell did not appear until
-        -- something else happened, and the candidates are all timing: the
-        -- event not arriving, arriving before the config is populated, or
-        -- arriving and the name not being readable yet. Blizzard's own frame
-        -- guards the middle one with IsConfigPopulated, so this reports what
-        -- actually turns up and whether the config is usable when it does.
-        if AniModsDB.talentLoadoutsDebug then
-            local id = (type(arg) == "table") and arg.ID or arg
-            local info = id and _G.C_Traits.GetConfigInfo(id)
-            AniMods.Print(("%s id=%s populated=%s name=%s"):format(
-                event, tostring(id),
-                id and tostring(_G.C_ClassTalents.IsConfigPopulated(id)) or "-",
-                info and tostring(info.name) or "-"))
-        end
+    watcher:SetScript("OnEvent", function()
         Refresh()
+        RefreshBlizzardPanel()
     end)
 end
 

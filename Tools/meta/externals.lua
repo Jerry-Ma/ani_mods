@@ -121,6 +121,15 @@ NSAPI = nil
 ---@type any
 TalentLoadoutManagerAPI = nil
 
+---Blizzard's talent panel, from Blizzard_PlayerSpells. Real, but
+---load-on-demand, so it is nil until the player has opened the talent UI
+---once -- which is why every use of it is behind a presence check. The LuaLS
+---annotations only carry the generated C API, not the frames their XML
+---creates. Talent Loadouts nudges its loadout dropdown back into agreement
+---after applying a loadout from the table.
+---@type any
+ClassTalentsFrame = nil
+
 ---Not a Blizzard API: a convention that addons reshaping the minimap define,
 ---returning a shape name ("ROUND", "SQUARE", "TRICORNER-TOPLEFT", ...).
 ---LibDBIcon reads it and so does General's minimap button, both guarded --
