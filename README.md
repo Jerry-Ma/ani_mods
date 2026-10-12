@@ -1308,6 +1308,14 @@ both toggleable in **General**.
   nothing behind it, so the menu omits it, the bulk button filters it, and `ConfirmDelete`
   filters again.
 
+  There is no "show groups" report and no name-repair button, and both were removed
+  rather than kept as insurance. The report listed every base with its variants indented,
+  which the table now *is* — and it built those groups by parsing names, so one stray
+  character invented a group that existed nowhere else in the addon. A repair for exactly
+  that stray character lasted one commit: it's rare, it's visible the moment it happens,
+  and TLM renames in two clicks, so a permanent button would be a fixture apologising for
+  an occasional bug.
+
   Deleting goes through `TalentLoadoutManagerAPI:DeleteLoadout` rather than
   `C_ClassTalents.DeleteConfig`. TLM hears the event either way, but its own path drops
   the loadout from its cache and saved list *and* raises `LoadoutListUpdated` in the same
