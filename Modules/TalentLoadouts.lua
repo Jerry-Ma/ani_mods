@@ -1068,14 +1068,14 @@ function TalentLoadouts:GetInfoRows()
                     end
                 end
 
-                -- Green is PRESENCE and nothing more. Amber is reserved for a
-                -- fault actually observed -- today that is one check, the
-                -- action bar flag, and there is room for more without a new
-                -- colour. A loadout Blizzard will not describe is present and
-                -- unjudged, so it stays green with a mark rather than being
-                -- guessed into amber.
-                cell.state  = (shared == false) and "warn" or "ok"
-                cell.text   = (shared == false and "!") or (shared == nil and "?") or ""
+                -- A tick is PRESENCE and nothing more. The question mark is
+                -- reserved for a fault actually observed -- today that is one
+                -- check, the action bar flag, and there is room for more
+                -- without a new mark. A loadout Blizzard will not describe is
+                -- present and unjudged, so it keeps the tick: most of the
+                -- table is off-spec, and marking all of it as questionable
+                -- would make the mark mean nothing.
+                cell.state = (shared == false) and "warn" or "ok"
                 cell.configID = base.configID
                 cell.shared = shared
                 cell.filed  = filed
@@ -1185,11 +1185,11 @@ function TalentLoadouts:GetInfoRows()
         -- built this way belongs in the comments above, not here.
         help = "Every base this class can have. Columns are spec and hero "
             .. "talent initials -- hover one for the full names.\n\n"
-            .. "|cff2ec759Green|r exists. |cffffa640Amber|r needs attention: "
-            .. "it is not using shared action bars. Empty is not there "
-            .. "yet.\n\n"
-            .. "An underlined cell is the loadout that spec is on. Other rows "
-            .. "are loadouts that do not fit the convention.\n\n"
+            .. "A tick means it exists. A question mark means it needs "
+            .. "attention: it is not using shared action bars. An empty cell "
+            .. "is not there yet.\n\n"
+            .. "The highlighted cell is the loadout that spec is on. Other "
+            .. "rows are loadouts that do not fit the convention.\n\n"
             .. "Left-click applies a loadout, switching spec first if it "
             .. "belongs to another one. Right-click switches it to shared "
             .. "action bars, and clicking an empty cell creates it -- both on "

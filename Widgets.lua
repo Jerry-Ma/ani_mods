@@ -778,21 +778,26 @@ end
 -- click handlers all arrive from the caller; the widget owns layout, the
 -- palette and the pooling, and nothing else.
 --
--- Cells carry a state key rather than a colour, so the palette lives in one
--- place and a caller cannot invent a fourth meaning by passing a new colour.
--- The three are about PRESENCE, which is what a wall of coloured cells can
--- actually say at a glance. What a cell needs attention FOR is a detail, and
--- details belong in the tooltip -- there can be several kinds of attention and
--- there is only ever one colour for them.
+-- Cells carry a state key rather than an appearance, so the vocabulary lives
+-- in one place and a caller cannot invent a fourth meaning.
 --
--- Absence is NOT red. The grid is the full set of things that COULD exist, so
--- most of it is empty on any normal character, and a card of red would be
--- shouting about builds nobody wants. An empty well is what absence looks
--- like: visible, countable and quiet. Only a thing that exists gets a colour.
+-- MARKS, NOT FILLS. A wall of saturated blocks is a lot of colour for what is
+-- mostly a yes/no, and it spends the one visual channel the table has left on
+-- restating what the mark already says. The game's own ready-check sprites
+-- are a vocabulary players already read: a tick is fine, a question mark is
+-- something to look at.
+--
+-- Absence has no mark at all, and no red cross. The grid is the full set of
+-- things that COULD exist, so most of it is empty on any normal character,
+-- and a card of crosses would be shouting about builds nobody wants. An empty
+-- well is what absence looks like: visible, countable and quiet.
+--
+-- That leaves the fill free to mean one thing, which is what a fill is good
+-- at: WHICH ONE IS IN USE, in the accent, painted by PaintChrome.
 W.GRID_STATE = {
-    ok      = { 0.18, 0.78, 0.35 },   -- exists
-    warn    = { 1.00, 0.65, 0.25 },   -- exists, needs attention (W.BADGE_WARN)
-    missing = { 1.00, 1.00, 1.00 },   -- not there yet; drawn as a faint well
+    ok      = "Interface\\RaidFrame\\ReadyCheck-Ready",    -- a green tick
+    warn    = "Interface\\RaidFrame\\ReadyCheck-Waiting",  -- an amber question
+    missing = false,                                       -- nothing at all
 }
 
 --- cols: { { label =, tip =, active = bool, rule = bool }, ... }
@@ -812,9 +817,10 @@ W.GRID_STATE = {
 --- belongs to a group of them rather than to one. Covered columns draw
 --- nothing, so the caller leaves them empty.
 ---
---- `current` underlines a cell: the selected-tab idiom, which does not
---- compete with the border around the active run the way a second outline
---- would and leaves the cell's colour the thing you see first.
+--- `current` fills a cell with the accent. The marks carry status, so the
+--- fill is free to answer the other question a table like this gets asked --
+--- which one am I on -- in the colour the rest of the panel already uses for
+--- the live thing.
 ---
 --- `active` marks the columns that can be acted on right now. The run of them
 --- gets ONE border rather than a box per column -- adjacent boxes in a table
@@ -826,6 +832,8 @@ W.GRID_STATE = {
 --- a short wide table fits a panel and a tall narrow one does not.
 function W.Grid(parent)
     local CELL_W, CELL_H, GAP, LABEL_W, HEAD_H = 34, 18, 2, 46, 15
+    -- The ready-check sprites are square and read fine small.
+    local MARK = 13
     -- What a group rule costs across it: space, the hairline, space.
     -- Generous, because the rule has to read as a gap with a line in it. At a
     -- few pixels it reads as another cell border and the groups it separates
@@ -840,6 +848,19 @@ function W.Grid(parent)
     -- leaves an object later SetBackdrop calls fight over.
     local border = {}
     for e = 1, 4 do border[e] = W.Tex(f, "OVERLAY", 1, 1, 1, 1) end
+
+    -- The well behind a cell. Accent when this is the one in use, because
+    -- with the marks carrying status the fill has nothing else to say; plain
+    -- and faint otherwise, a hair brighter under the cursor.
+    local function PaintCell(btn)
+        local hot = btn:IsMouseOver()
+        if btn.current then
+            local ar, ag, ab = W.Accent()
+            btn.fill:SetColorTexture(ar, ag, ab, hot and 0.55 or 0.38)
+        else
+            btn.fill:SetColorTexture(1, 1, 1, hot and 0.16 or 0.06)
+        end
+    end
 
     -- The accent marks the active run -- its border and its headings -- so
     -- "this is the part you can act on" is said in the same colour the rest of
@@ -856,15 +877,13 @@ function W.Grid(parent)
                 head.text:SetTextColor(1, 1, 1, W.TEXT_DIM_A)
             end
         end
+        -- The cells too: the in-use well is accent-coloured, so a theme
+        -- change has to reach them as well as the chrome around them.
+        for _, row in ipairs(o.rows) do
+            for _, btn in ipairs(row.cells) do PaintCell(btn) end
+        end
     end
     W.OnLooksChanged(PaintChrome)
-
-    local function PaintCell(btn)
-        local c = W.GRID_STATE[btn.state] or W.GRID_STATE.missing
-        local a = (btn.state == "missing") and 0.06
-            or (btn:IsMouseOver() and 1 or 0.82)
-        btn.fill:SetColorTexture(c[1], c[2], c[3], a)
-    end
 
     -- Cells, column headers and row labels all want a tooltip and none of
     -- them owns the one tooltip object.
@@ -1021,18 +1040,16 @@ function W.Grid(parent)
                     btn:SetSize(CELL_W, CELL_H)
                     btn.fill = W.Tex(btn, "BACKGROUND", 1, 1, 1, 1)
                     btn.fill:SetAllPoints()
+
+                    -- The mark LEADS the text rather than following it. With
+                    -- several of these stacked, leading marks line up in a
+                    -- column you can run an eye down; trailing ones scatter
+                    -- along the ragged right edge of the names.
+                    btn.mark = btn:CreateTexture(nil, "ARTWORK")
+                    btn.mark:SetSize(MARK, MARK)
+
                     btn.text = W.Font(btn, 10)
-                    btn.text:SetAllPoints()
-                    btn.text:SetJustifyH("CENTER")
-                    -- An underline, not an outline. A box inside a cell this
-                    -- small leaves barely any fill showing and reads as a
-                    -- second border competing with the one around the active
-                    -- group; a bar along the bottom edge is the selected-tab
-                    -- idiom and takes no room from the colour.
-                    btn.mark = W.Tex(btn, "OVERLAY", 1, 1, 1, 0.95)
-                    btn.mark:SetPoint("BOTTOMLEFT", 3, 2)
-                    btn.mark:SetPoint("BOTTOMRIGHT", -3, 2)
-                    btn.mark:SetHeight(2)
+                    btn.text:SetPoint("RIGHT", btn, "RIGHT", -3, 0)
 
                     btn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
                     btn:SetScript("OnEnter", function(b)
@@ -1055,9 +1072,28 @@ function W.Grid(parent)
                 -- a value that belongs to a GROUP rather than to one column.
                 local span = (cell and cell.span) or 1
                 btn:SetWidth(CELL_W + (span - 1) * (CELL_W + GAP))
-                btn.state = cell and cell.state or "missing"
+                btn.current = cell and cell.current or false
                 btn.tip = cell and cell.tip or nil
-                btn.mark:SetShown(cell and cell.current and true or false)
+
+                local text = cell and cell.text or ""
+                local icon = cell and W.GRID_STATE[cell.state]
+                btn.mark:ClearAllPoints()
+                if icon then
+                    btn.mark:SetTexture(icon)
+                    -- Centred when the mark is all there is, left when it is
+                    -- introducing a name.
+                    if text ~= "" then
+                        btn.mark:SetPoint("LEFT", btn, "LEFT", 3, 0)
+                    else
+                        btn.mark:SetPoint("CENTER")
+                    end
+                end
+                btn.mark:SetShown(icon and true or false)
+                btn.text:SetText(text)
+                btn.text:SetPoint("LEFT", btn, "LEFT",
+                    (icon and text ~= "") and (MARK + 5) or 3, 0)
+                btn.text:SetJustifyH(text == "" and "CENTER" or "LEFT")
+
                 -- Only a cell with something to do is clickable. An inert
                 -- button that highlights on hover promises an action it does
                 -- not have.
@@ -1067,7 +1103,6 @@ function W.Grid(parent)
                 -- click, and a disabled Button stops receiving OnEnter -- so
                 -- mouse input is set apart from the click.
                 btn:EnableMouse(btn.onClick ~= nil or btn.tip ~= nil)
-                btn.text:SetText(cell and cell.text or "")
                 PaintCell(btn)
                 btn:SetShown(not covered[c])
             end
