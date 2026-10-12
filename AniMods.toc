@@ -34,4 +34,5 @@ Modules\PluginButtons.lua
 Modules\ShiftFocus.lua
 Modules\SoundSwitch.lua
 Modules\SpecSwitch.lua
+Modules\TalentNames.lua
 Modules\TalentLoadouts.lua

@@ -483,15 +483,17 @@ end
 -- popup runs their exact path: their wording, their alert styling, their call.
 --
 -- Worth knowing why a confirmation exists at all, from the same file: turning
--- sharing ON is the only direction they guard. Turning it off calls the API
--- straight. So the thing being confirmed is the loss of that loadout's own bar
--- layout, which is exactly what a yellow cell is asking you to agree to.
+-- the setting ON is the only direction they guard. Turning it off calls the
+-- API straight. So the thing being confirmed is the loss of that loadout's own
+-- bar layout -- their popup says the loadout's action bars will be replaced
+-- with your shared ones -- which is exactly what an amber cell asks you to
+-- agree to.
 --
 -- The dialog lives in Blizzard_PlayerSpells, which is load-on-demand, so it is
 -- loaded first. And it is skipped entirely while their edit dialog is open:
 -- configID is a field on a shared object, and overwriting it mid-edit would
 -- retarget a dialog the player is already using.
-local function ConfirmShareOne(configID, name)
+local function ConfirmSharedBars(configID, name)
     local addons = _G.C_AddOns
     if addons and addons.LoadAddOn and not addons.IsAddOnLoaded("Blizzard_PlayerSpells") then
         pcall(addons.LoadAddOn, "Blizzard_PlayerSpells")
@@ -550,14 +552,14 @@ local function CreateBase(name)
     })
 end
 
---- Put every Blizzard loadout on shared action bars.
+--- Switch every Blizzard loadout to shared action bars.
 --- ONE CONFIRMATION FOR THE WHOLE SET, not Blizzard's per-loadout dialog shown
 --- N times. A chain of identical popups is not consent, it is something to
 --- click through; a single prompt that NAMES what it is about to change is.
 ---
---- Blizzard's own warning string is reused, so the sentence about what sharing
---- costs is the one already seen in the talent UI rather than a paraphrase.
-local function ShareAll()
+--- Blizzard's own warning string is reused, so the sentence about what the
+--- change costs is the one already seen in the talent UI, not a paraphrase.
+local function UseSharedBarsForAll()
     local talents = _G.C_ClassTalents
     local specs, order = Survey()
     local targets, unknown = {}, 0
@@ -579,7 +581,7 @@ local function ShareAll()
     if #targets == 0 then
         AniMods.Print(unknown > 0
             and ("nothing to change, %d could not be read."):format(unknown)
-            or "every loadout is already on shared action bars.")
+            or "every loadout already uses shared action bars.")
         return
     end
 
@@ -587,14 +589,14 @@ local function ShareAll()
     for i, t in ipairs(targets) do names[i] = t.name end
 
     AniMods.W.Confirm({
-        message = ("Put these %d loadouts on shared action bars?\n\n%s\n\n%s")
+        message = ("Switch these %d loadouts to shared action bars?\n\n%s\n\n%s")
             :format(#targets, table.concat(names, ", "),
-                -- Blizzard's own sentence about what sharing costs, so the
+                -- Blizzard's own sentence about what the change costs, so the
                 -- warning here is the one already seen in the talent UI.
                 -- Indexed by name because the capital L is their typo, and
                 -- spelling it as a field just looks like ours.
                 _G["HUD_ClASS_TALENTS_EDIT_LOADOUT_CONFIRM_SHARED_ACTION_BARS"]),
-        confirmText = "Share all",
+        confirmText = "Switch all",
         onConfirm = function()
             local done, failed = 0, 0
             for _, t in ipairs(targets) do
@@ -652,98 +654,63 @@ local function PlayerSpecs()
     return order, active
 end
 
---- The hero talent specs a spec offers, as { id, name }, in Blizzard's order.
+--- The hero talent specs a spec offers, in Blizzard's order, as
+--- { id, name, englishName }.
 ---
---- Works for a spec you are not in, which is the point: the table covers all
---- of them. GetSubTreeInfo needs a configID belonging to that spec's tree
---- rather than the active one, so the tree is looked up per spec.
+--- THE CONFIG ID IS THE ACTIVE ONE, for both calls, and that is measured
+--- rather than reasoned: an earlier version resolved a config per spec via
+--- GetTraitTreeForSpec and GetConfigIDByTreeID, and GetConfigIDByTreeID
+--- returns nil, which is why the table drew no columns at all. A probe tried
+--- every combination and found that GetHeroTalentSpecsForClassSpec answers
+--- with any config -- including none -- while GetSubTreeInfo answers ONLY
+--- with the active one. It happily describes another spec's subtrees; it just
+--- wants a config it knows.
+---
+--- Two names, because they are for different jobs. The localised one is what
+--- the player reads. The English one is what the convention's prefix is built
+--- from, since a loadout called "SA-Raid" is spelled the same on every
+--- client -- see TalentNames.lua.
 local function HeroSpecs(specID)
-    local treeID = _G.C_ClassTalents.GetTraitTreeForSpec(specID)
-    local configID = treeID and _G.C_Traits.GetConfigIDByTreeID(treeID)
+    -- A real absence, not a missing API: there is no active config before the
+    -- talent system has initialised, or on a character too low to have one.
+    local configID = _G.C_ClassTalents.GetActiveConfigID()
+    if not configID then return {} end
+
     local subTreeIDs = _G.C_ClassTalents.GetHeroTalentSpecsForClassSpec(configID, specID)
-    if not (configID and subTreeIDs) then return {} end
+    if not subTreeIDs then return {} end
 
     local out = {}
     for _, subTreeID in ipairs(subTreeIDs) do
         local info = _G.C_Traits.GetSubTreeInfo(configID, subTreeID)
         if info and info.name then
-            out[#out + 1] = { id = subTreeID, name = info.name }
+            out[#out + 1] = {
+                id = subTreeID,
+                name = info.name,
+                -- A hero talent added since TalentNames was last generated
+                -- has no English name here. Using the localised one keeps the
+                -- column visible with a prefix that may not match; the
+                -- alternative is a silently absent column.
+                englishName = AniMods.TalentNames.hero[subTreeID] or info.name,
+            }
         end
     end
     return out
 end
 
---- TEMPORARY. Which argument combination actually answers for a spec you are
---- not in, reported rather than reasoned about: the table came up with no
---- columns at all and there are three calls in the chain that could be the
---- one returning nothing. Delete this and its button once it has been read.
-local function HeroProbe()
-    local out = {}
-    local function Say(...) out[#out + 1] = table.concat({ ... }, "") end
-    local function Try(fn, ...)
-        local ok, a = pcall(fn, ...)
-        if not ok then return "ERROR " .. tostring(a) end
-        return tostring(a)
-    end
-
-    local ct, traits = _G.C_ClassTalents, _G.C_Traits
-    local active = Try(ct.GetActiveConfigID)
-    Say("GetActiveConfigID -> ", active)
-
-    local specOrder = PlayerSpecs()
-    Say("PlayerSpecs -> ", tostring(#specOrder), " specs")
-
-    for _, specID in ipairs(specOrder) do
-        Say("")
-        Say("spec ", tostring(specID), "  ", SpecName(specID))
-
-        local treeID = Try(ct.GetTraitTreeForSpec, specID)
-        Say("  GetTraitTreeForSpec     -> ", treeID)
-        local byTree = Try(traits.GetConfigIDByTreeID, tonumber(treeID) or 0)
-        Say("  GetConfigIDByTreeID     -> ", byTree)
-
-        -- Every configID worth trying, including none at all.
-        local configs = {
-            { "byTree", tonumber(byTree) },
-            { "active", tonumber(active) },
-            { "nil",    nil },
-        }
-        for _, c in ipairs(configs) do
-            local okCall, ids = pcall(ct.GetHeroTalentSpecsForClassSpec, c[2], specID)
-            if not okCall then
-                Say("  heroSpecs(", c[1], ") -> ERROR ", tostring(ids))
-            elseif type(ids) ~= "table" then
-                Say("  heroSpecs(", c[1], ") -> ", tostring(ids))
-            else
-                Say("  heroSpecs(", c[1], ") -> ", tostring(#ids), " ids")
-                for _, subTreeID in ipairs(ids) do
-                    local names = {}
-                    for _, c2 in ipairs(configs) do
-                        local okInfo, info = pcall(traits.GetSubTreeInfo, c2[2], subTreeID)
-                        names[#names + 1] = c2[1] .. "=" ..
-                            ((okInfo and type(info) == "table" and tostring(info.name))
-                             or (okInfo and "nil-info") or "ERROR")
-                    end
-                    Say("      subTree ", tostring(subTreeID), "  ",
-                        table.concat(names, "  "))
-                end
-            end
-        end
-    end
-
-    return table.concat(out, "\n")
-end
-
---- The convention's prefix for one spec-and-hero pair: their initials.
+--- The convention's prefix for one spec-and-hero pair: their ENGLISH
+--- initials. "SA" is Shadow + Archon, "HO" is Holy + Oracle -- the rule the
+--- loadout names already follow, which means a column can be labelled for a
+--- combination nobody has ever written down.
 ---
---- DERIVED, not stored. "SA" is Shadow + Archon and "HO" is Holy + Oracle, so
---- the rule the names already follow is a rule the game can be asked for --
---- which means the table can label a row for a combination that has never been
---- written down anywhere. A pair whose initials collide with another's would
---- show two columns under one heading; no class currently does that, and the
---- heading's tooltip spells both out in full either way.
-local function HeroPrefix(specName, heroName)
-    return (specName:sub(1, 1) .. heroName:sub(1, 1)):upper()
+--- English because the names are. A loadout called "SA-Raid" is spelled that
+--- way on a zhCN client too, where the game reports the spec as 暗影 and the
+--- hero talent as 执政官 and the initials of those match nothing.
+---
+--- A pair whose initials collide with another's would show two columns under
+--- one heading; no class currently does, and the heading's tooltip spells
+--- both out in full either way.
+local function HeroPrefix(specEnglish, heroEnglish)
+    return (specEnglish:sub(1, 1) .. heroEnglish:sub(1, 1)):upper()
 end
 
 --- Every column the table can have: one per spec-and-hero pair, grouped by
@@ -752,10 +719,13 @@ local function ColumnPlan()
     local specOrder, currentSpecID = PlayerSpecs()
     local cols = {}
     for i, specID in ipairs(specOrder) do
+        -- Localised for reading, English for the prefix. The two are the same
+        -- string on an enUS client and nothing downstream assumes they are.
         local specName = SpecName(specID)
+        local specEnglish = AniMods.TalentNames.spec[specID] or specName
         for j, hero in ipairs(HeroSpecs(specID)) do
             cols[#cols + 1] = {
-                label  = HeroPrefix(specName, hero.name),
+                label  = HeroPrefix(specEnglish, hero.englishName),
                 tip    = specName .. " / " .. hero.name,
                 active = (specID == currentSpecID),
                 rule   = (i > 1 and j == 1),
@@ -790,11 +760,14 @@ local function CellTip(cell, editable)
     local head = ("%s\n\nExists. %d of %d loadouts filed under it."):format(
         what, cell.filed, cell.total)
     if cell.shared == true then
-        return head .. "\n\nOn shared action bars."
+        return head .. "\n\nUsing shared action bars."
     elseif cell.shared == false then
-        return head .. "\n\nNot on shared action bars, so applying it "
-            .. "rearranges your bars.\n\n" .. (editable
-                and "Click to put it on shared bars."
+        -- Blizzard's own wording for what this costs, give or take: their
+        -- confirmation says the loadout's action bars will be replaced with
+        -- your shared ones.
+        return head .. "\n\nKeeps its own action bars, so applying it replaces "
+            .. "your bar layout.\n\n" .. (editable
+                and "Click to switch it to shared action bars."
                 or "Switch to this spec to change that.")
     end
     return head .. "\n\nAction bar setting unavailable off-spec."
@@ -805,7 +778,7 @@ local function CellClick(cell)
     if cell.state == "missing" then
         return function() CreateBase(cell.name) end
     elseif cell.shared == false then
-        return function() ConfirmShareOne(cell.configID, cell.name) end
+        return function() ConfirmSharedBars(cell.configID, cell.name) end
     end
     return nil
 end
@@ -952,19 +925,20 @@ function TalentLoadouts:GetInfoRows()
         help = "Every base this class can have. Columns are spec and hero "
             .. "talent initials -- hover one for the full names.\n\n"
             .. "|cff2ec759Green|r exists. |cffffa640Amber|r needs attention: "
-            .. "not on shared action bars. Empty is not there yet.\n\n"
-            .. "Click a cell to create or share it. Current spec only, the "
-            .. "bordered columns.\n\n"
+            .. "it is not using shared action bars. Empty is not there "
+            .. "yet.\n\n"
+            .. "Click a cell to create the loadout, or to switch it to shared "
+            .. "action bars. Current spec only, the bordered columns.\n\n"
             .. "Loadout names are {Prefix}-{Case}{Variant}; a cell is the "
             .. "{Prefix}-{Case} part.",
     }
     rows[#rows + 1] = { grid = { cols = cols, rows = gridRows } }
     rows[#rows + 1] = {
-        kind = "button", button = "Make all loadouts shared",
-        help = "Puts every amber loadout on shared action bars, after one "
+        kind = "button", button = "Use shared action bars for all",
+        help = "Switches every amber loadout to shared action bars, after one "
             .. "confirmation listing them. Loadouts on specs you are not in "
             .. "are left alone.",
-        onClick = ShareAll,
+        onClick = UseSharedBarsForAll,
     }
 
     rows[#rows + 1] = { section = "Collection" }
@@ -1021,8 +995,8 @@ function TalentLoadouts:GetInfoRows()
             help  = "Blizzard loadouts whose names are not {Prefix}-{Case} for "
                  .. "a spec and hero talent this class has, so the table has "
                  .. "no cell for them.\n\nRename one in Blizzard's talent UI "
-                 .. "and it joins the table. Make all loadouts shared still "
-                 .. "acts on these.",
+                 .. "and it joins the table. The shared action bars button "
+                 .. "still acts on these.",
         }
         for _, entry in ipairs(offConvention) do
             rows[#rows + 1] = {
@@ -1037,15 +1011,6 @@ function TalentLoadouts:GetInfoRows()
             }
         end
     end
-
-    -- TEMPORARY, alongside HeroProbe. Goes when the column chain is settled.
-    rows[#rows + 1] = {
-        kind = "button", label = "Hero talent probe", button = "Probe",
-        help = "Reports what the game answers about this class's hero talents.",
-        onClick = function()
-            W.TextBox({ title = "Hero talent probe", text = HeroProbe() })
-        end,
-    }
 
     rows[#rows + 1] = { section = "Transfer" }
     rows[#rows + 1] = {

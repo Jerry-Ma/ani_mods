@@ -1260,12 +1260,32 @@ both toggleable in **General**.
   same way, so a column exists for a pair nothing has ever been named after; hover one
   for the full names.
 
+  Those initials come from `Modules\TalentNames.lua`, a generated table of **English**
+  spec and hero-talent names by ID, because the API answers in the client's language: on
+  a zhCN client `C_Traits.GetSubTreeInfo` returns 执政官 for Archon, and `执` matches no
+  loadout anybody has typed. Names in the game are locale-independent, so the prefix has
+  to be too. `Tools\update-talentnames.ps1` regenerates it from Blizzard's DB2 tables
+  (`ChrSpecialization`, `TraitSubTree`) at the enUS locale; re-run it after a patch adds
+  a spec or a hero talent. Tooltips still use the localized names — those are for
+  reading.
+
+  The config ID for both hero-talent calls is the **active** one, which was measured, not
+  reasoned. An earlier version resolved one per spec via `GetTraitTreeForSpec` →
+  `GetConfigIDByTreeID`; that returns `nil`, so the table drew no columns at all. A probe
+  tried every combination and found `GetHeroTalentSpecsForClassSpec` answers with any
+  config — including none — while `GetSubTreeInfo` answers *only* with the active one. It
+  describes another spec's subtrees happily; it just wants a config it knows. Blizzard's
+  own frame does the same thing (`ClassTalentsFrameMixin:RefreshConfigID`) and never
+  touches `GetConfigIDByTreeID`.
+
   Three states, all about **presence**: green exists, amber exists and needs attention,
   empty isn't there yet. Absence is deliberately not red — most of the table is empty on
   any normal character, and a card of red would be shouting about builds nobody wants.
-  "Attention" is open-ended and today has exactly one check, the shared-action-bars flag;
-  a second kind would reuse the same amber rather than invent a colour, which is why the
-  legend names presence and the tooltip names the fault.
+  "Attention" is open-ended and today has exactly one check, Blizzard's **Use Shared
+  Action Bars** setting; a second kind would reuse the same amber rather than invent a
+  colour, which is why the legend names presence and the tooltip names the fault. The
+  wording is Blizzard's throughout — a loadout *uses shared action bars*, it is never
+  "shared", which would suggest sharing it with other people.
 
   Clicking an amber cell runs Blizzard's own path: their
   `LOADOUT_CONFIRM_SHARED_ACTION_BARS` popup, pointed at that `configID` through their
