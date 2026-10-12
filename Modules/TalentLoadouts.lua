@@ -983,19 +983,31 @@ local function ConfirmDelete(list)
                 table.concat(names, ", ")),
         confirmText = "Delete",
         onConfirm = function()
-            -- DeleteConfig RETURNS whether it did it, and the two outcomes
-            -- are different: an error means the call was wrong, false means
-            -- the game declined. Testing only that the pcall survived would
-            -- report a refusal as a success.
+            -- THROUGH TLM, NOT STRAIGHT AT THE GAME.
             --
-            -- It DOES delete a loadout on a spec you are not in, which
-            -- Blizzard's own UI never shows because its delete button only
-            -- exists inside the edit dialog for the active spec. Tried and
-            -- reported rather than gated on a guess, and the report settled
-            -- it.
+            -- C_ClassTalents.DeleteConfig does delete it, and TLM does hear
+            -- about it -- it watches TRAIT_CONFIG_DELETED. But its own
+            -- DeleteBlizzardLoadout does three things that call cannot:
+            -- drops the loadout from its cache there and then, drops it from
+            -- its saved list, and raises its own LoadoutListUpdated so
+            -- anything drawing from TLM redraws immediately rather than at
+            -- the next thing that happens to refresh it. That gap is the
+            -- out-of-sync: the game agreed, and TLM's readers had not caught
+            -- up.
+            --
+            -- Its cleanup is written against the CURRENT spec, so deleting a
+            -- loadout on another one still leaves an entry in its saved list
+            -- until something re-scans. That is TLM's to fix, not ours: this
+            -- reads TLM's data and asks TLM to change it, and reaching into
+            -- its saved variables to tidy up would be exactly the coupling
+            -- the API exists to avoid.
+            --
+            -- Both forms return whether they did it. Testing only that the
+            -- pcall survived would report a refusal as a success.
+            local api = API()
             local done, failed = 0, 0
             for _, e in ipairs(entries) do
-                local ok, deleted = pcall(_G.C_ClassTalents.DeleteConfig, e.configID)
+                local ok, deleted = pcall(api.DeleteLoadout, api, e.configID)
                 if ok and deleted then
                     done = done + 1
                 else
