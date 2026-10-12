@@ -818,13 +818,31 @@ function W.Grid(parent)
     local RULE_W = 7
 
     local f = CreateFrame("Frame", nil, parent)
-    local o = { frame = f, heads = {}, rows = {}, rules = {} }
+    local o = { frame = f, heads = {}, rows = {}, rules = {}, active = {} }
 
     -- Four textures rather than a backdrop: same reason Compat.lua draws
     -- borders that way, a backdrop goes blurry at fractional UI scale and
     -- leaves an object later SetBackdrop calls fight over.
     local border = {}
-    for e = 1, 4 do border[e] = W.Tex(f, "OVERLAY", 1, 1, 1, 0.22) end
+    for e = 1, 4 do border[e] = W.Tex(f, "OVERLAY", 1, 1, 1, 1) end
+
+    -- The accent marks the active run -- its border and its headings -- so
+    -- "this is the part you can act on" is said in the same colour the rest of
+    -- the panel uses for the live thing. A heading's colour therefore depends
+    -- on its state as well as the theme, which is why this is a repaint
+    -- function rather than a set of regions registered for recolouring.
+    local function PaintChrome()
+        local ar, ag, ab = W.Accent()
+        for _, edge in ipairs(border) do edge:SetColorTexture(ar, ag, ab, 0.9) end
+        for i, head in ipairs(o.heads) do
+            if o.active and o.active[i] then
+                head.text:SetTextColor(ar, ag, ab, 1)
+            else
+                head.text:SetTextColor(1, 1, 1, W.TEXT_DIM_A)
+            end
+        end
+    end
+    W.OnLooksChanged(PaintChrome)
 
     local function PaintCell(btn)
         local c = W.GRID_STATE[btn.state] or W.GRID_STATE.missing
@@ -884,7 +902,9 @@ function W.Grid(parent)
             if not head then
                 head = CreateFrame("Frame", nil, f)
                 head:SetSize(CELL_W, HEAD_H)
-                head.text = W.Font(head, 11, nil, W.TEXT_DIM_A)
+                -- Colour comes from PaintChrome, which knows whether this
+                -- column is the active one.
+                head.text = W.Font(head, 11)
                 head.text:SetAllPoints()
                 head.text:SetJustifyH("CENTER")
                 head:SetScript("OnEnter", function(h) ShowTip(h, h.tip) end)
@@ -897,8 +917,14 @@ function W.Grid(parent)
             head.tip = col.tip
             head:EnableMouse(col.tip ~= nil)
             head:Show()
+            -- Recorded rather than read back off the column list later: the
+            -- repaint runs on a theme change too, long after `cols` is gone.
+            o.active[i] = col.active and true or nil
         end
-        for i = #cols + 1, #o.heads do o.heads[i]:Hide() end
+        for i = #cols + 1, #o.heads do
+            o.heads[i]:Hide()
+            o.active[i] = nil
+        end
 
         for r, data in ipairs(rows) do
             local row = o.rows[r]
@@ -1003,6 +1029,7 @@ function W.Grid(parent)
         end
         for _, edge in ipairs(border) do edge:SetShown(firstActive ~= nil) end
 
+        PaintChrome()
         f:SetHeight(height + 3)
     end
 
