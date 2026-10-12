@@ -1456,7 +1456,23 @@ function TalentLoadouts:Enable()
     end)
     local watcher = _G.CreateFrame("Frame")
     for _, event in ipairs(CONFIG_EVENTS) do watcher:RegisterEvent(event) end
-    watcher:SetScript("OnEvent", Refresh)
+    watcher:SetScript("OnEvent", function(_, event, arg)
+        -- TEMPORARY. A loadout made from a cell did not appear until
+        -- something else happened, and the candidates are all timing: the
+        -- event not arriving, arriving before the config is populated, or
+        -- arriving and the name not being readable yet. Blizzard's own frame
+        -- guards the middle one with IsConfigPopulated, so this reports what
+        -- actually turns up and whether the config is usable when it does.
+        if AniModsDB.talentLoadoutsDebug then
+            local id = (type(arg) == "table") and arg.ID or arg
+            local info = id and _G.C_Traits.GetConfigInfo(id)
+            AniMods.Print(("%s id=%s populated=%s name=%s"):format(
+                event, tostring(id),
+                id and tostring(_G.C_ClassTalents.IsConfigPopulated(id)) or "-",
+                info and tostring(info.name) or "-"))
+        end
+        Refresh()
+    end)
 end
 
 function TalentLoadouts:SetEnabled()
