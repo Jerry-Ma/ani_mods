@@ -757,20 +757,117 @@ local function CellTip(cell, editable)
                 or "Switch to this spec to create it.")
     end
 
-    local head = ("%s\n\nExists. %d of %d loadouts filed under it."):format(
-        what, cell.filed, cell.total)
-    if cell.shared == true then
-        return head .. "\n\nUsing shared action bars."
-    elseif cell.shared == false then
+    local head = ("%s\n\n%s. %d of %d loadouts filed under it."):format(
+        what, cell.current and "In use" or "Exists", cell.filed, cell.total)
+
+    if cell.shared == false then
         -- Blizzard's own wording for what this costs, give or take: their
         -- confirmation says the loadout's action bars will be replaced with
         -- your shared ones.
-        return head .. "\n\nKeeps its own action bars, so applying it replaces "
-            .. "your bar layout.\n\n" .. (editable
-                and "Click to switch it to shared action bars."
-                or "Switch to this spec to change that.")
+        head = head .. "\n\nKeeps its own action bars, so applying it replaces "
+            .. "your bar layout."
+    elseif cell.shared == nil then
+        head = head .. "\n\nAction bar setting unavailable off-spec."
     end
-    return head .. "\n\nAction bar setting unavailable off-spec."
+
+    if not cell.current then
+        head = head .. "\n\nLeft-click to apply it"
+            .. (editable and "." or ", switching spec first.")
+    end
+    if editable and cell.shared == false then
+        head = head .. "\nRight-click to switch it to shared action bars."
+    end
+    return head
+end
+
+-- ── Applying a loadout ──────────────────────────────────────────────────────
+--
+-- Blizzard's own sequence, from ClassTalentsFrameMixin:LoadConfigInternal:
+-- LoadConfig(configID, autoApply) with autoApply true, then read the result.
+-- NoChangesNecessary means you are already on it and only the "last selected"
+-- pointer needs writing; LoadInProgress means the server is applying it and
+-- the pointer is written when it lands. Nothing here stages a config and
+-- commits it separately -- that is the autoApply-false path, which exists so
+-- their UI can show pending changes, and this has no pending state to show.
+--
+-- CanChangeTalents is the gate rather than a combat check, because it answers
+-- the whole question -- combat, a rested area, an active cast -- and answers
+-- it with a reason that can be printed.
+
+local pendingLoad
+
+local function ApplyLoadout(configID, specID, name)
+    local talents = _G.C_ClassTalents
+    local canChange, _, changeError = talents.CanChangeTalents()
+    if not canChange then
+        return AniMods.Print(changeError or "talents cannot change right now.")
+    end
+
+    local result = talents.LoadConfig(configID, true)
+    if result == _G.Enum.LoadConfigResult.Error then
+        return AniMods.Print(("the game refused to load \"%s\"."):format(name))
+    end
+
+    talents.UpdateLastSelectedSavedConfigID(specID, configID)
+    AniMods.Print((result == _G.Enum.LoadConfigResult.NoChangesNecessary)
+        and ("already on \"%s\"."):format(name)
+        or ("applying \"%s\"."):format(name))
+    if AniMods.RefreshUI then AniMods.RefreshUI() end
+end
+
+-- The other half of a cross-spec apply. Changing spec is a CAST, so the
+-- loadout cannot be loaded in the same call -- the game is still in the old
+-- spec when SetSpecialization returns. This waits for the event that says it
+-- landed instead of sleeping and hoping.
+--
+-- One frame, registered once, holding at most one pending request. A second
+-- click replaces the first rather than queueing, which is what someone who
+-- clicked the wrong cell and then the right one means.
+local pendingFrame = _G.CreateFrame("Frame")
+pendingFrame:RegisterUnitEvent("PLAYER_SPECIALIZATION_CHANGED", "player")
+pendingFrame:SetScript("OnEvent", function()
+    local want = pendingLoad
+    if not want then return end
+    pendingLoad = nil
+
+    local si = _G.C_SpecializationInfo
+    local index = si.GetSpecialization()
+    local nowSpecID = index and si.GetSpecializationInfo(index)
+    -- Someone else's spec change, or the player changed their mind mid-cast.
+    -- Dropped rather than applied to whatever spec they ended up in.
+    if nowSpecID ~= want.specID then return end
+
+    ApplyLoadout(want.configID, want.specID, want.name)
+end)
+
+--- Switch spec and then apply, behind one confirmation.
+---
+--- Confirmed because a spec change is not a small thing: it is a six-second
+--- cast that cannot happen in combat and rearranges the whole character. The
+--- table can offer it, but it should not happen because a cell was clicked.
+local function SwitchSpecAndApply(specID, specName, configID, name)
+    local si = _G.C_SpecializationInfo
+    local specOrder = PlayerSpecs()
+    local index
+    for i, id in ipairs(specOrder) do
+        if id == specID then index = i end
+    end
+    if not index then return end
+
+    if _G.InCombatLockdown() then
+        return AniMods.Print("can't change spec in combat.")
+    end
+
+    AniMods.W.Confirm({
+        message = ("Switch to %s and apply \"%s\"?\n\nChanging specialization "
+              .. "is a cast, so the loadout is applied once it finishes.")
+            :format(specName, name),
+        confirmText = "Switch",
+        onConfirm = function()
+            pendingLoad = { specID = specID, configID = configID, name = name }
+            si.SetSpecialization(index)
+        end,
+    })
 end
 
 --- The tooltip for a loadout the table has no cell for.
@@ -782,13 +879,19 @@ local function OtherTip(entry, editable)
             entry.variants, entry.variants == 1 and " is" or "s are")
     end
     if entry.shared == false then
-        return head .. "\n\nNot using shared action bars.\n\n" .. (editable
-            and "Click to switch it to shared action bars."
-            or "Switch to this spec to change that.")
-    elseif entry.shared == true then
-        return head .. "\n\nUsing shared action bars."
+        head = head .. "\n\nNot using shared action bars."
+    elseif entry.shared == nil then
+        head = head .. "\n\nAction bar setting unavailable off-spec."
     end
-    return head .. "\n\nAction bar setting unavailable off-spec."
+
+    if not entry.current then
+        head = head .. "\n\nLeft-click to apply it"
+            .. (editable and "." or ", switching spec first.")
+    end
+    if editable and entry.shared == false then
+        head = head .. "\nRight-click to switch it to shared action bars."
+    end
+    return head
 end
 
 --- Delete every loadout the table could not place.
@@ -834,13 +937,34 @@ local function DeleteOthers(entries)
 end
 
 --- What a click on this cell does, or nil when there is nothing to do.
-local function CellClick(cell)
+---
+--- LEFT APPLIES, RIGHT MAINTAINS. Applying is the thing you will do a hundred
+--- times and fixing the action bar flag is the thing you do once, so the
+--- common action gets the common button -- and an amber cell would otherwise
+--- have two jobs for one click.
+---
+--- A cell on another spec can still be applied, since changing spec is
+--- something the game can do on the way; everything else needs the spec you
+--- are already in, because Blizzard only allows it there.
+local function CellClick(cell, specID, specName, editable)
     if cell.state == "missing" then
+        if not editable then return nil end
         return function() CreateBase(cell.name) end
-    elseif cell.shared == false then
-        return function() ConfirmSharedBars(cell.configID, cell.name) end
     end
-    return nil
+
+    return function(button)
+        if button == "RightButton" then
+            if editable and cell.shared == false then
+                ConfirmSharedBars(cell.configID, cell.name)
+            end
+            return
+        end
+        if editable then
+            ApplyLoadout(cell.configID, specID, cell.name)
+        else
+            SwitchSpecAndApply(specID, specName, cell.configID, cell.name)
+        end
+    end
 end
 
 -- ---------------------------------------------------------------------------
@@ -1010,7 +1134,7 @@ function TalentLoadouts:GetInfoRows()
                 text    = cell.text,
                 tip     = CellTip(cell, col.active),
                 current = cell.current,
-                onClick = col.active and CellClick(cell) or nil,
+                onClick = CellClick(cell, col.specID, col.specName, col.active),
             }
         end
         gridRows[#gridRows + 1] = { label = case, cells = cells }
@@ -1031,9 +1155,18 @@ function TalentLoadouts:GetInfoRows()
                     span    = g.span,
                     current = entry.current,
                     tip     = OtherTip(entry, g.active),
-                    onClick = (g.active and entry.shared == false)
-                        and function() ConfirmSharedBars(entry.configID, entry.name) end
-                        or nil,
+                    onClick = function(button)
+                        if button == "RightButton" then
+                            if g.active and entry.shared == false then
+                                ConfirmSharedBars(entry.configID, entry.name)
+                            end
+                        elseif g.active then
+                            ApplyLoadout(entry.configID, specID, entry.name)
+                        else
+                            SwitchSpecAndApply(specID, g.specName,
+                                entry.configID, entry.name)
+                        end
+                    end,
                 }
             end
         end
@@ -1055,10 +1188,12 @@ function TalentLoadouts:GetInfoRows()
             .. "|cff2ec759Green|r exists. |cffffa640Amber|r needs attention: "
             .. "it is not using shared action bars. Empty is not there "
             .. "yet.\n\n"
-            .. "An outlined cell is the loadout that spec last had applied. "
-            .. "Other rows are loadouts that do not fit the convention.\n\n"
-            .. "Click a cell to create the loadout, or to switch it to shared "
-            .. "action bars. Current spec only, the bordered columns.\n\n"
+            .. "An underlined cell is the loadout that spec is on. Other rows "
+            .. "are loadouts that do not fit the convention.\n\n"
+            .. "Left-click applies a loadout, switching spec first if it "
+            .. "belongs to another one. Right-click switches it to shared "
+            .. "action bars, and clicking an empty cell creates it -- both on "
+            .. "your current spec only, the bordered columns.\n\n"
             .. "Loadout names are {Prefix}-{Case}{Variant}; a cell is the "
             .. "{Prefix}-{Case} part.",
     }

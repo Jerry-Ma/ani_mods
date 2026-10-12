@@ -800,6 +800,9 @@ W.GRID_STATE = {
 --- cell: { state = "ok"|"warn"|"missing", text =, tip =, onClick =,
 ---         span = n, current = bool }
 ---
+--- `onClick` is handed the mouse button, so a cell can carry a second action
+--- on right-click. Both buttons are registered whether or not it uses them.
+---
 --- `rule` draws a hairline before that column or row, marking a group inside
 --- one table rather than splitting it into several. A heading per group turns
 --- a product back into a list of products, which is the shape a grid exists to
@@ -809,9 +812,9 @@ W.GRID_STATE = {
 --- belongs to a group of them rather than to one. Covered columns draw
 --- nothing, so the caller leaves them empty.
 ---
---- `current` outlines a cell from the INSIDE. Inset on purpose: the active
---- run is marked by an outset border, and two outlines that meant different
---- things would have to be told apart by which side of the line they sat on.
+--- `current` underlines a cell: the selected-tab idiom, which does not
+--- compete with the border around the active run the way a second outline
+--- would and leaves the cell's colour the thing you see first.
 ---
 --- `active` marks the columns that can be acted on right now. The run of them
 --- gets ONE border rather than a box per column -- adjacent boxes in a table
@@ -865,12 +868,19 @@ function W.Grid(parent)
 
     -- Cells, column headers and row labels all want a tooltip and none of
     -- them owns the one tooltip object.
+    --
+    -- Anchored to the RIGHT of whatever is hovered, the way a "?" marker is,
+    -- rather than through AnchorNear. That picks a corner from which screen
+    -- third the anchor sits in, which is right for a data bar widget at the
+    -- edge of the screen and wrong for a cell in the middle of a panel: it
+    -- put the popup underneath the table, over the rows below. The tooltip
+    -- is clamped to the screen, so the edge case is already handled.
     local function ShowTip(region, text)
         if not text then return end
         o.tip = o.tip or W.Tooltip()
         o.tip:Clear()
         o.tip:AddLine(text, 1, 1, 1)
-        o.tip:Show(region)
+        o.tip:Show(region, "LEFT", "RIGHT", 8, 0)
     end
     local function HideTip() if o.tip then o.tip:Hide() end end
 
@@ -1014,18 +1024,17 @@ function W.Grid(parent)
                     btn.text = W.Font(btn, 10)
                     btn.text:SetAllPoints()
                     btn.text:SetJustifyH("CENTER")
-                    -- Inset, so "this is the one in use" cannot be confused
-                    -- with the outset border that marks the active group.
-                    -- Inside its own cell rather than around it: an outline
-                    -- between two touching cells belongs to neither.
-                    btn.mark = {}
-                    for e = 1, 4 do
-                        btn.mark[e] = W.Tex(btn, "OVERLAY", 1, 1, 1, 0.85)
-                    end
-                    btn.mark[1]:SetPoint("TOPLEFT", 2, -2);     btn.mark[1]:SetPoint("TOPRIGHT", -2, -2);     btn.mark[1]:SetHeight(1)
-                    btn.mark[2]:SetPoint("BOTTOMLEFT", 2, 2);   btn.mark[2]:SetPoint("BOTTOMRIGHT", -2, 2);   btn.mark[2]:SetHeight(1)
-                    btn.mark[3]:SetPoint("TOPLEFT", 2, -2);     btn.mark[3]:SetPoint("BOTTOMLEFT", 2, 2);     btn.mark[3]:SetWidth(1)
-                    btn.mark[4]:SetPoint("TOPRIGHT", -2, -2);   btn.mark[4]:SetPoint("BOTTOMRIGHT", -2, 2);   btn.mark[4]:SetWidth(1)
+                    -- An underline, not an outline. A box inside a cell this
+                    -- small leaves barely any fill showing and reads as a
+                    -- second border competing with the one around the active
+                    -- group; a bar along the bottom edge is the selected-tab
+                    -- idiom and takes no room from the colour.
+                    btn.mark = W.Tex(btn, "OVERLAY", 1, 1, 1, 0.95)
+                    btn.mark:SetPoint("BOTTOMLEFT", 3, 2)
+                    btn.mark:SetPoint("BOTTOMRIGHT", -3, 2)
+                    btn.mark:SetHeight(2)
+
+                    btn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
                     btn:SetScript("OnEnter", function(b)
                         PaintCell(b)
                         ShowTip(b, b.tip)
@@ -1034,8 +1043,8 @@ function W.Grid(parent)
                         PaintCell(b)
                         HideTip()
                     end)
-                    btn:SetScript("OnClick", function(b)
-                        if b.onClick then b.onClick() end
+                    btn:SetScript("OnClick", function(b, mouseButton)
+                        if b.onClick then b.onClick(mouseButton) end
                     end)
                     row.cells[c] = btn
                 end
@@ -1048,9 +1057,7 @@ function W.Grid(parent)
                 btn:SetWidth(CELL_W + (span - 1) * (CELL_W + GAP))
                 btn.state = cell and cell.state or "missing"
                 btn.tip = cell and cell.tip or nil
-                for _, edge in ipairs(btn.mark) do
-                    edge:SetShown(cell and cell.current and true or false)
-                end
+                btn.mark:SetShown(cell and cell.current and true or false)
                 -- Only a cell with something to do is clickable. An inert
                 -- button that highlights on hover promises an action it does
                 -- not have.
