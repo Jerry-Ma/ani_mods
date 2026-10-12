@@ -370,6 +370,14 @@ local function BuildShape(rows)
         if previews then
             sig = sig .. ":" .. (type(previews) == "table" and #previews or 1)
         end
+        -- A grid's ROW COUNT is structural, because its height follows it.
+        -- Without this the signature was "grid:nil" however tall the thing
+        -- got, so a grid that grew a row was refreshed in place and never
+        -- re-stacked -- and the rows below it stayed where the shorter grid
+        -- had left them, underneath the taller one.
+        if d.grid then
+            sig = sig .. ":" .. #d.grid.rows .. "x" .. #d.grid.cols
+        end
         -- Whether a row HAS a "?" is structural: the marker is created beside
         -- the label when the row is built, so a pooled row that gains or loses
         -- one cannot be updated in place -- it has to be rebuilt or it would

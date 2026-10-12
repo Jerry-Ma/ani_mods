@@ -969,7 +969,9 @@ local function ConfirmDelete(list)
     for _, e in ipairs(list) do
         if CanDelete(e) then entries[#entries + 1] = e end
     end
-    if #entries == 0 then return end
+    if #entries == 0 then
+        return AniMods.Print("nothing to delete.")
+    end
 
     local names = {}
     for i, e in ipairs(entries) do names[i] = e.name end
@@ -1315,25 +1317,26 @@ function TalentLoadouts:GetInfoRows()
             .. "report a setting for are left alone.",
         onClick = UseSharedBarsForAll,
     }
-    -- Only when there is something to delete, and never the one in use. A
-    -- permanently-present delete button on a panel about talent builds is an
-    -- invitation to a mistake, and a bulk one that quietly includes the
-    -- applied loadout is the same mistake made for you.
+    -- ALWAYS PRESENT, even with nothing to delete. A button that comes and
+    -- goes changes the card's shape under the table above it, and a row that
+    -- appears is a row everything below has to move for. It costs nothing to
+    -- leave it: with nothing deletable it says so and stops.
+    --
+    -- The applied loadout is never in the set. A bulk action that quietly
+    -- includes the one you are on is the same mistake made for you.
     local deletable = {}
     for _, entry in ipairs(offConvention) do
         if CanDelete(entry) then deletable[#deletable + 1] = entry end
     end
-    if #deletable > 0 then
-        rows[#rows + 1] = {
-            kind = "button", button = "Delete the Other loadouts",
-            help = "Permanently deletes the loadouts in the Other rows, after "
-                .. "one confirmation listing them. The builds in them are "
-                .. "gone; loadouts filed under them are not deleted, but lose "
-                .. "the slot they were pointed at.\n\nA loadout a spec is "
-                .. "currently on is left alone -- apply something else first.",
-            onClick = function() ConfirmDelete(deletable) end,
-        }
-    end
+    rows[#rows + 1] = {
+        kind = "button", button = "Delete the Other loadouts",
+        help = "Permanently deletes the loadouts in the Other rows, after "
+            .. "one confirmation listing them. The builds in them are gone; "
+            .. "loadouts filed under them are not deleted, but lose the slot "
+            .. "they were pointed at.\n\nA loadout a spec is currently on is "
+            .. "left alone -- apply something else first.",
+        onClick = function() ConfirmDelete(deletable) end,
+    }
 
     rows[#rows + 1] = { section = "Collection" }
     rows[#rows + 1] = { label = "Custom loadouts", value = tostring(#loadouts) }
