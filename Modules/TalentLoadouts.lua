@@ -773,6 +773,66 @@ local function CellTip(cell, editable)
     return head .. "\n\nAction bar setting unavailable off-spec."
 end
 
+--- The tooltip for a loadout the table has no cell for.
+local function OtherTip(entry, editable)
+    local head = ("%s\n%s\n\nDoes not fit the convention: %s."):format(
+        entry.name, entry.specName, entry.why)
+    if entry.variants > 0 then
+        head = head .. ("\n\n%d loadout%s filed under it."):format(
+            entry.variants, entry.variants == 1 and " is" or "s are")
+    end
+    if entry.shared == false then
+        return head .. "\n\nNot using shared action bars.\n\n" .. (editable
+            and "Click to switch it to shared action bars."
+            or "Switch to this spec to change that.")
+    elseif entry.shared == true then
+        return head .. "\n\nUsing shared action bars."
+    end
+    return head .. "\n\nAction bar setting unavailable off-spec."
+end
+
+--- Delete every loadout the table could not place.
+---
+--- ONE CONFIRMATION FOR THE SET, the same shape as the shared action bars
+--- button, but this one spells out that it cannot be undone. Blizzard's own
+--- delete popup takes a single name and runs through their edit dialog, so
+--- reusing it would mean N popups for what is one decision -- and a chain of
+--- destructive popups is the worst possible thing to make someone click
+--- through.
+local function DeleteOthers(entries)
+    if #entries == 0 then return end
+
+    local names = {}
+    for i, e in ipairs(entries) do names[i] = e.name end
+
+    AniMods.W.Confirm({
+        message = ("Permanently delete %d Blizzard loadout%s?\n\n%s\n\nThe "
+              .. "talent builds saved in them are gone and cannot be "
+              .. "recovered. Loadouts filed under them are not deleted, but "
+              .. "lose the slot they point at."):format(
+                #entries, #entries == 1 and "" or "s",
+                table.concat(names, ", ")),
+        confirmText = "Delete",
+        onConfirm = function()
+            local done, failed = 0, 0
+            for _, e in ipairs(entries) do
+                if pcall(_G.C_ClassTalents.DeleteConfig, e.configID) then
+                    done = done + 1
+                else
+                    failed = failed + 1
+                end
+            end
+            AniMods.Print(("deleted %d%s."):format(done,
+                failed > 0 and (", " .. failed .. " refused") or ""))
+            -- Deletion is a server round trip, so the table cannot be right
+            -- immediately.
+            _G.C_Timer.After(1, function()
+                if AniMods.RefreshUI then AniMods.RefreshUI() end
+            end)
+        end,
+    })
+end
+
 --- What a click on this cell does, or nil when there is nothing to do.
 local function CellClick(cell)
     if cell.state == "missing" then
@@ -827,10 +887,32 @@ function TalentLoadouts:GetInfoRows()
 
     -- Which column a base name belongs in, by its prefix. Built from the
     -- columns rather than by parsing, so a name whose prefix is not one the
-    -- game implies has nowhere to go -- and gets said out loud below instead
-    -- of landing in an invented column.
+    -- game implies has nowhere to go -- and gets a row of its own below
+    -- instead of landing in an invented column.
     local colOfPrefix = {}
     for i, col in ipairs(cols) do colOfPrefix[col.specID .. "/" .. col.label] = i end
+
+    -- Where each spec's run of columns starts and how wide it is, so a value
+    -- that belongs to the SPEC rather than to one hero talent can sit under
+    -- the right part of the table.
+    local group, groupOrder = {}, {}
+    for i, col in ipairs(cols) do
+        local g = group[col.specID]
+        if not g then
+            g = { first = i, span = 0, specName = col.specName, active = col.active }
+            group[col.specID] = g
+            groupOrder[#groupOrder + 1] = col.specID
+        end
+        g.span = g.span + 1
+    end
+
+    -- The Blizzard loadout each spec last had applied. Marked rather than
+    -- counted: which one you are actually on is the first thing you look for
+    -- in a table of the ones you could be on.
+    local currentOf = {}
+    for specID in pairs(group) do
+        currentOf[specID] = _G.C_ClassTalents.GetLastSelectedSavedConfigID(specID)
+    end
 
     -- case -> colIndex -> cell, filled from what exists; everything not filled
     -- in stays nil and draws as an empty well, which is the "not there yet"
@@ -874,6 +956,7 @@ function TalentLoadouts:GetInfoRows()
                 cell.shared = shared
                 cell.filed  = filed
                 cell.total  = #base.variants
+                cell.current = (currentOf[col.specID] == base.configID)
             else
                 cell.state   = "missing"
                 cell.waiting = spec.waiting[baseName] or 0
@@ -883,24 +966,38 @@ function TalentLoadouts:GetInfoRows()
         end
     end
 
-    -- Anything that exists but has no column: a Blizzard loadout whose name
+    -- Anything that exists but has no cell: a Blizzard loadout whose name
     -- carries no case token, or whose prefix is not a spec-and-hero pair this
-    -- class has. Out of the table is not out of the addon -- Share still acts
-    -- on these -- so they are named below.
-    for specID, spec in pairs(specs) do
-        for _, baseName in ipairs(spec.baseOrder) do
+    -- class has. Collected per spec, because they get rows of their own at
+    -- the foot of the table under the spec they belong to -- out of the
+    -- convention is not out of the addon, and a thing you own should be
+    -- somewhere you can see it.
+    local otherOf, mostOthers = {}, 0
+    for _, specID in ipairs(groupOrder) do
+        local spec = specs[specID]
+        local list = {}
+        for _, baseName in ipairs(spec and spec.baseOrder or {}) do
             local prefix, case = ParseName(baseName)
             local placed = case and prefix
                 and colOfPrefix[specID .. "/" .. prefix] ~= nil
             if not placed then
-                offConvention[#offConvention + 1] = {
+                local base = spec.bases[baseName]
+                local entry = {
                     name = baseName, specID = specID,
-                    shared = UsesSharedBars(spec.bases[baseName].configID),
-                    variants = #spec.bases[baseName].variants,
-                    why = (not case) and "no case token" or "no such spec and hero talent",
+                    specName = group[specID].specName,
+                    configID = base.configID,
+                    shared = UsesSharedBars(base.configID),
+                    variants = #base.variants,
+                    current = (currentOf[specID] == base.configID),
+                    why = (not case) and "its name carries no case token"
+                        or "no spec and hero talent of this class spells that prefix",
                 }
+                list[#list + 1] = entry
+                offConvention[#offConvention + 1] = entry
             end
         end
+        otherOf[specID] = list
+        if #list > mostOthers then mostOthers = #list end
     end
 
     local gridRows = {}
@@ -912,14 +1009,45 @@ function TalentLoadouts:GetInfoRows()
                 state   = cell.state,
                 text    = cell.text,
                 tip     = CellTip(cell, col.active),
+                current = cell.current,
                 onClick = col.active and CellClick(cell) or nil,
             }
         end
         gridRows[#gridRows + 1] = { label = case, cells = cells }
     end
 
+    -- The leftovers, under the spec that owns them, spanning that spec's
+    -- columns: they belong to a spec but to no hero talent, so no single
+    -- column is the right place for one.
+    for n = 1, mostOthers do
+        local cells = {}
+        for _, specID in ipairs(groupOrder) do
+            local entry = otherOf[specID][n]
+            if entry then
+                local g = group[specID]
+                cells[g.first] = {
+                    state   = (entry.shared == false) and "warn" or "ok",
+                    text    = entry.name,
+                    span    = g.span,
+                    current = entry.current,
+                    tip     = OtherTip(entry, g.active),
+                    onClick = (g.active and entry.shared == false)
+                        and function() ConfirmSharedBars(entry.configID, entry.name) end
+                        or nil,
+                }
+            end
+        end
+        gridRows[#gridRows + 1] = {
+            -- Named once. Four rows each labelled "Other" is the label
+            -- shouting over the names it is introducing.
+            label = (n == 1) and "Other" or "",
+            rule  = (n == 1),
+            cells = cells,
+        }
+    end
+
     rows[#rows + 1] = {
-        section = "Loadouts",
+        section = "Blizzard Loadouts",
         -- A tooltip, so: what it shows and what to do with it. Why it is
         -- built this way belongs in the comments above, not here.
         help = "Every base this class can have. Columns are spec and hero "
@@ -927,6 +1055,8 @@ function TalentLoadouts:GetInfoRows()
             .. "|cff2ec759Green|r exists. |cffffa640Amber|r needs attention: "
             .. "it is not using shared action bars. Empty is not there "
             .. "yet.\n\n"
+            .. "An outlined cell is the loadout that spec last had applied. "
+            .. "Other rows are loadouts that do not fit the convention.\n\n"
             .. "Click a cell to create the loadout, or to switch it to shared "
             .. "action bars. Current spec only, the bordered columns.\n\n"
             .. "Loadout names are {Prefix}-{Case}{Variant}; a cell is the "
@@ -940,6 +1070,18 @@ function TalentLoadouts:GetInfoRows()
             .. "are left alone.",
         onClick = UseSharedBarsForAll,
     }
+    -- Only when there is something to delete. A permanently-present delete
+    -- button on a panel about talent builds is an invitation to a mistake.
+    if #offConvention > 0 then
+        rows[#rows + 1] = {
+            kind = "button", button = "Delete the Other loadouts",
+            help = "Permanently deletes the loadouts in the Other rows, after "
+                .. "one confirmation listing them. The builds in them are "
+                .. "gone; TLM loadouts filed under them are not deleted, but "
+                .. "lose the slot they were pointed at.",
+            onClick = function() DeleteOthers(offConvention) end,
+        }
+    end
 
     rows[#rows + 1] = { section = "Collection" }
     rows[#rows + 1] = { label = "Custom loadouts", value = tostring(#loadouts) }
@@ -982,35 +1124,10 @@ function TalentLoadouts:GetInfoRows()
              .. "are not in, where the game will not report the setting.",
     }
 
-    -- ── Off the table ───────────────────────────────────────────────────────
-    --
-    -- Only when there are some. An empty section headed "Outside the
-    -- convention" reads as a warning about nothing, and the table above
-    -- already accounts for everything else.
-    if #offConvention > 0 then
-        rows[#rows + 1] = { section = "Outside the convention" }
-        rows[#rows + 1] = {
-            label = "Loadouts the table cannot place",
-            value = tostring(#offConvention),
-            help  = "Blizzard loadouts whose names are not {Prefix}-{Case} for "
-                 .. "a spec and hero talent this class has, so the table has "
-                 .. "no cell for them.\n\nRename one in Blizzard's talent UI "
-                 .. "and it joins the table. The shared action bars button "
-                 .. "still acts on these.",
-        }
-        for _, entry in ipairs(offConvention) do
-            rows[#rows + 1] = {
-                label = entry.name,
-                value = (entry.shared == true and "shared")
-                    or (entry.shared == false and "|cffffa640own bars|r")
-                    or "|cff999999bars unknown|r",
-                help  = ("%s, on %s. %d loadout%s filed under it.\n\nNot in the "
-                      .. "table: %s."):format(
-                        entry.name, SpecName(entry.specID), entry.variants,
-                        entry.variants == 1 and " is" or "s are", entry.why),
-            }
-        end
-    end
+    -- There was a card here listing the loadouts the table could not place.
+    -- They are Other rows in the table itself now, under the spec that owns
+    -- them, which is both nearer the thing they are an exception to and one
+    -- less place to look.
 
     rows[#rows + 1] = { section = "Transfer" }
     rows[#rows + 1] = {

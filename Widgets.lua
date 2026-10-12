@@ -796,13 +796,22 @@ W.GRID_STATE = {
 }
 
 --- cols: { { label =, tip =, active = bool, rule = bool }, ... }
---- rows: { { label =, tip =, cells = { [colIndex] = cell } }, ... }
---- cell: { state = "ok"|"warn"|"missing", text =, tip =, onClick = }
+--- rows: { { label =, tip =, rule = bool, cells = { [colIndex] = cell } } }
+--- cell: { state = "ok"|"warn"|"missing", text =, tip =, onClick =,
+---         span = n, current = bool }
 ---
---- `rule` draws a hairline to the LEFT of that column, marking a group inside
+--- `rule` draws a hairline before that column or row, marking a group inside
 --- one table rather than splitting it into several. A heading per group turns
 --- a product back into a list of products, which is the shape a grid exists to
 --- avoid.
+---
+--- `span` widens a cell over the columns to its right, for something that
+--- belongs to a group of them rather than to one. Covered columns draw
+--- nothing, so the caller leaves them empty.
+---
+--- `current` outlines a cell from the INSIDE. Inset on purpose: the active
+--- run is marked by an outset border, and two outlines that meant different
+--- things would have to be told apart by which side of the line they sat on.
 ---
 --- `active` marks the columns that can be acted on right now. The run of them
 --- gets ONE border rather than a box per column -- adjacent boxes in a table
@@ -814,11 +823,11 @@ W.GRID_STATE = {
 --- a short wide table fits a panel and a tall narrow one does not.
 function W.Grid(parent)
     local CELL_W, CELL_H, GAP, LABEL_W, HEAD_H = 34, 18, 2, 46, 15
-    -- What a group rule costs horizontally: space, the hairline, space.
+    -- What a group rule costs across it: space, the hairline, space.
     -- Generous, because the rule has to read as a gap with a line in it. At a
     -- few pixels it reads as another cell border and the groups it separates
     -- run together -- the line stops dividing and just adds clutter.
-    local RULE_W = 18
+    local RULE_W, RULE_H = 18, 10
 
     local f = CreateFrame("Frame", nil, parent)
     local o = { frame = f, heads = {}, rows = {}, rules = {}, active = {} }
@@ -929,6 +938,32 @@ function W.Grid(parent)
             o.active[i] = nil
         end
 
+        -- Row y positions, worked out up front for the same reason the column
+        -- ones are: a horizontal rule makes the spacing uneven, and the active
+        -- border has to know where the last row ended.
+        local yOf, y = {}, -HEAD_H
+        for r, data in ipairs(rows) do
+            if data.rule and r > 1 then
+                nRules = nRules + 1
+                local rule = o.rules[nRules]
+                if not rule then
+                    rule = W.Tex(f, "ARTWORK", 1, 1, 1, 0.10)
+                    rule:SetHeight(1)
+                    o.rules[nRules] = rule
+                end
+                y = y - math.floor(RULE_H / 2)
+                rule:ClearAllPoints()
+                rule:SetPoint("TOPLEFT", f, "TOPLEFT", 0, y)
+                rule:SetPoint("TOPRIGHT", f, "TOPRIGHT", 0, y)
+                rule:Show()
+                y = y - (RULE_H - math.floor(RULE_H / 2))
+            end
+            yOf[r] = y
+            y = y - (CELL_H + GAP)
+        end
+        local height = -y - GAP
+        for i = nRules + 1, #o.rules do o.rules[i]:Hide() end
+
         for r, data in ipairs(rows) do
             local row = o.rows[r]
             if not row then
@@ -951,14 +986,22 @@ function W.Grid(parent)
             -- row has an explicit height, and a side anchor would also pin its
             -- vertical centre, which with a top anchor is two answers to the
             -- same question.
-            local y = -HEAD_H - (r - 1) * (CELL_H + GAP)
             row.frame:ClearAllPoints()
-            row.frame:SetPoint("TOPLEFT", f, "TOPLEFT", 0, y)
-            row.frame:SetPoint("TOPRIGHT", f, "TOPRIGHT", 0, y)
+            row.frame:SetPoint("TOPLEFT", f, "TOPLEFT", 0, yOf[r])
+            row.frame:SetPoint("TOPRIGHT", f, "TOPRIGHT", 0, yOf[r])
             row.label:SetText(data.label or "")
             row.labelHit.tip = data.tip
             row.labelHit:EnableMouse(data.tip ~= nil)
             row.frame:Show()
+
+            -- Columns a span has swallowed. Without this the faint well of an
+            -- empty cell would still be drawn underneath the span covering it.
+            local covered = {}
+            for c = 1, #cols do
+                local cell = data.cells and data.cells[c]
+                local span = (cell and cell.span) or 1
+                for n = c + 1, c + span - 1 do covered[n] = true end
+            end
 
             for c = 1, #cols do
                 local cell = data.cells and data.cells[c]
@@ -971,6 +1014,18 @@ function W.Grid(parent)
                     btn.text = W.Font(btn, 10)
                     btn.text:SetAllPoints()
                     btn.text:SetJustifyH("CENTER")
+                    -- Inset, so "this is the one in use" cannot be confused
+                    -- with the outset border that marks the active group.
+                    -- Inside its own cell rather than around it: an outline
+                    -- between two touching cells belongs to neither.
+                    btn.mark = {}
+                    for e = 1, 4 do
+                        btn.mark[e] = W.Tex(btn, "OVERLAY", 1, 1, 1, 0.85)
+                    end
+                    btn.mark[1]:SetPoint("TOPLEFT", 2, -2);     btn.mark[1]:SetPoint("TOPRIGHT", -2, -2);     btn.mark[1]:SetHeight(1)
+                    btn.mark[2]:SetPoint("BOTTOMLEFT", 2, 2);   btn.mark[2]:SetPoint("BOTTOMRIGHT", -2, 2);   btn.mark[2]:SetHeight(1)
+                    btn.mark[3]:SetPoint("TOPLEFT", 2, -2);     btn.mark[3]:SetPoint("BOTTOMLEFT", 2, 2);     btn.mark[3]:SetWidth(1)
+                    btn.mark[4]:SetPoint("TOPRIGHT", -2, -2);   btn.mark[4]:SetPoint("BOTTOMRIGHT", -2, 2);   btn.mark[4]:SetWidth(1)
                     btn:SetScript("OnEnter", function(b)
                         PaintCell(b)
                         ShowTip(b, b.tip)
@@ -987,8 +1042,15 @@ function W.Grid(parent)
 
                 btn:ClearAllPoints()
                 btn:SetPoint("LEFT", row.frame, "LEFT", colX[c], 0)
+                -- A span covers the columns to its right, gaps included, for
+                -- a value that belongs to a GROUP rather than to one column.
+                local span = (cell and cell.span) or 1
+                btn:SetWidth(CELL_W + (span - 1) * (CELL_W + GAP))
                 btn.state = cell and cell.state or "missing"
                 btn.tip = cell and cell.tip or nil
+                for _, edge in ipairs(btn.mark) do
+                    edge:SetShown(cell and cell.current and true or false)
+                end
                 -- Only a cell with something to do is clickable. An inert
                 -- button that highlights on hover promises an action it does
                 -- not have.
@@ -1000,13 +1062,11 @@ function W.Grid(parent)
                 btn:EnableMouse(btn.onClick ~= nil or btn.tip ~= nil)
                 btn.text:SetText(cell and cell.text or "")
                 PaintCell(btn)
-                btn:Show()
+                btn:SetShown(not covered[c])
             end
             for c = #cols + 1, #row.cells do row.cells[c]:Hide() end
         end
         for r = #rows + 1, #o.rows do o.rows[r].frame:Hide() end
-
-        local height = HEAD_H + math.max(#rows, 1) * (CELL_H + GAP) - GAP
 
         -- Offset by 2 so the border sits just outside the cells rather than
         -- on their edge pixels.
