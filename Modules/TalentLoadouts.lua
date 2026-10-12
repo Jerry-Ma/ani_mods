@@ -773,11 +773,9 @@ local function CellTip(cell, editable)
     if not cell.current then
         head = head .. "\n\nLeft-click to apply it"
             .. (editable and "." or ", switching spec first.")
+        return head .. "\nRight-click for more."
     end
-    if editable and cell.shared == false then
-        head = head .. "\nRight-click to switch it to shared action bars."
-    end
-    return head
+    return head .. "\n\nRight-click for more."
 end
 
 -- ── Applying a loadout ──────────────────────────────────────────────────────
@@ -887,22 +885,19 @@ local function OtherTip(entry, editable)
     if not entry.current then
         head = head .. "\n\nLeft-click to apply it"
             .. (editable and "." or ", switching spec first.")
+        return head .. "\nRight-click for more."
     end
-    if editable and entry.shared == false then
-        head = head .. "\nRight-click to switch it to shared action bars."
-    end
-    return head
+    return head .. "\n\nRight-click for more."
 end
 
---- Delete every loadout the table could not place.
+--- Delete one Blizzard loadout, or a set of them, behind one confirmation.
 ---
---- ONE CONFIRMATION FOR THE SET, the same shape as the shared action bars
---- button, but this one spells out that it cannot be undone. Blizzard's own
---- delete popup takes a single name and runs through their edit dialog, so
---- reusing it would mean N popups for what is one decision -- and a chain of
---- destructive popups is the worst possible thing to make someone click
---- through.
-local function DeleteOthers(entries)
+--- ONE CONFIRMATION FOR THE SET, and it spells out that this cannot be
+--- undone. Blizzard's own delete popup takes a single name and runs through
+--- their edit dialog, so reusing it would mean N popups for what is one
+--- decision -- and a chain of destructive popups is the worst possible thing
+--- to make someone click through.
+local function ConfirmDelete(entries)
     if #entries == 0 then return end
 
     local names = {}
@@ -938,32 +933,50 @@ end
 
 --- What a click on this cell does, or nil when there is nothing to do.
 ---
---- LEFT APPLIES, RIGHT MAINTAINS. Applying is the thing you will do a hundred
---- times and fixing the action bar flag is the thing you do once, so the
---- common action gets the common button -- and an amber cell would otherwise
---- have two jobs for one click.
+--- LEFT DOES THE ONE OBVIOUS THING, RIGHT OPENS THE REST. Applying a loadout
+--- is what you came to do and is worth a bare click; everything else is
+--- maintenance, happens rarely, and one of them is irreversible -- which is
+--- exactly the kind of thing that should not be a stray right-click on a
+--- 34-pixel cell. A menu names the action before it runs.
 ---
 --- A cell on another spec can still be applied, since changing spec is
---- something the game can do on the way; everything else needs the spec you
---- are already in, because Blizzard only allows it there.
+--- something the game can do on the way. The action bar setting cannot be
+--- read or written off-spec, so that entry only appears where it means
+--- something -- which is also the only place a question mark can appear.
 local function CellClick(cell, specID, specName, editable)
     if cell.state == "missing" then
+        -- Nothing to maintain, so no menu: the only thing an empty cell can
+        -- do is stop being empty.
         if not editable then return nil end
-        return function() CreateBase(cell.name) end
+        return function(button)
+            if button ~= "RightButton" then CreateBase(cell.name) end
+        end
     end
 
-    return function(button)
-        if button == "RightButton" then
-            if editable and cell.shared == false then
-                ConfirmSharedBars(cell.configID, cell.name)
+    return function(button, anchor)
+        if button ~= "RightButton" then
+            if editable then
+                ApplyLoadout(cell.configID, specID, cell.name)
+            else
+                SwitchSpecAndApply(specID, specName, cell.configID, cell.name)
             end
             return
         end
-        if editable then
-            ApplyLoadout(cell.configID, specID, cell.name)
-        else
-            SwitchSpecAndApply(specID, specName, cell.configID, cell.name)
+
+        local entries = {}
+        if editable and cell.shared == false then
+            entries[#entries + 1] = {
+                text = "Use shared action bars",
+                onClick = function() ConfirmSharedBars(cell.configID, cell.name) end,
+            }
         end
+        entries[#entries + 1] = {
+            text = "Delete",
+            onClick = function()
+                ConfirmDelete({ { name = cell.name, configID = cell.configID } })
+            end,
+        }
+        AniMods.W.Menu(anchor, entries, { title = cell.name })
     end
 end
 
@@ -1147,26 +1160,25 @@ function TalentLoadouts:GetInfoRows()
         local cells = {}
         for _, specID in ipairs(groupOrder) do
             local entry = otherOf[specID][n]
-            if entry then
-                local g = group[specID]
+            local g = group[specID]
+            -- A spanning cell even with nothing in it. Leaving the slot empty
+            -- would let the per-column wells show through, so a spec with no
+            -- entry on this row would be drawn divided down the middle while
+            -- the spec beside it is one continuous name.
+            if not entry then
+                cells[g.first] = { state = "missing", span = g.span }
+            else
                 cells[g.first] = {
                     state   = (entry.shared == false) and "warn" or "ok",
                     text    = entry.name,
                     span    = g.span,
                     current = entry.current,
                     tip     = OtherTip(entry, g.active),
-                    onClick = function(button)
-                        if button == "RightButton" then
-                            if g.active and entry.shared == false then
-                                ConfirmSharedBars(entry.configID, entry.name)
-                            end
-                        elseif g.active then
-                            ApplyLoadout(entry.configID, specID, entry.name)
-                        else
-                            SwitchSpecAndApply(specID, g.specName,
-                                entry.configID, entry.name)
-                        end
-                    end,
+                    onClick = CellClick({
+                        state = (entry.shared == false) and "warn" or "ok",
+                        name = entry.name, configID = entry.configID,
+                        shared = entry.shared,
+                    }, specID, g.specName, g.active),
                 }
             end
         end
@@ -1214,7 +1226,7 @@ function TalentLoadouts:GetInfoRows()
                 .. "one confirmation listing them. The builds in them are "
                 .. "gone; TLM loadouts filed under them are not deleted, but "
                 .. "lose the slot they were pointed at.",
-            onClick = function() DeleteOthers(offConvention) end,
+            onClick = function() ConfirmDelete(offConvention) end,
         }
     end
 

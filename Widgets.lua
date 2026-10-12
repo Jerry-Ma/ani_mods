@@ -898,7 +898,14 @@ function W.Grid(parent)
         if not text then return end
         o.tip = o.tip or W.Tooltip()
         o.tip:Clear()
-        o.tip:AddLine(text, 1, 1, 1)
+        -- One AddLine per LINE. AddLine keeps GameTooltip's contract, where a
+        -- line is a line: it advances by one row height and measures one
+        -- string width, so a newline inside the text renders outside the
+        -- panel that was sized for it. Splitting here keeps the paragraph
+        -- breaks these tooltips are written with.
+        for line in (text .. "\n"):gmatch("([^\n]*)\n") do
+            o.tip:AddLine(line, 1, 1, 1)
+        end
         o.tip:Show(region, "LEFT", "RIGHT", 8, 0)
     end
     local function HideTip() if o.tip then o.tip:Hide() end end
@@ -1061,7 +1068,9 @@ function W.Grid(parent)
                         HideTip()
                     end)
                     btn:SetScript("OnClick", function(b, mouseButton)
-                        if b.onClick then b.onClick(mouseButton) end
+                        -- The cell frame goes with the button, so a handler
+                        -- that opens a menu has something to anchor it to.
+                        if b.onClick then b.onClick(mouseButton, b) end
                     end)
                     row.cells[c] = btn
                 end
