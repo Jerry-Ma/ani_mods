@@ -147,7 +147,7 @@ end
 -- Declared rather than left to resolve later: a local defined below this point
 -- reads as a nil GLOBAL from inside these functions, and says nothing about it
 -- until the line runs.
-local BlizzardBases, FileVariant
+local BlizzardBases, FileVariant, PlayerSpecs
 
 --- One loadout per line: export string, then the name exactly as TLM holds it.
 ---
@@ -330,14 +330,20 @@ local function AllLoadouts()
     return all
 end
 
---- specID -> baseName -> configID, for the Blizzard loadouts TLM can see.
+--- specID -> baseName -> configID, asked of the game rather than of TLM.
+---
+--- TLM's view of Blizzard's loadouts is a cache and lags one behind: a
+--- loadout made a moment ago is not in it. Restore files variants as it goes
+--- and would miss any base created in the same session.
 BlizzardBases = function()
     local bases = {}
-    for _, info in ipairs(AllLoadouts()) do
-        if info.isBlizzardLoadout and info.name and info.specID then
-            bases[info.specID] = bases[info.specID] or {}
-            bases[info.specID][info.name] = info.id
+    for _, specID in ipairs(PlayerSpecs()) do
+        local byName = {}
+        for _, configID in ipairs(_G.C_ClassTalents.GetConfigIDsBySpecID(specID) or {}) do
+            local info = _G.C_Traits.GetConfigInfo(configID)
+            if info and info.name then byName[info.name] = configID end
         end
+        bases[specID] = byName
     end
     return bases
 end
@@ -412,14 +418,22 @@ local function Survey()
         return s
     end
 
-    -- Blizzard loadouts first. A variant can only be adopted by a base that
-    -- already exists, so the bases have to be known before the walk that files
-    -- variants under them.
-    for _, info in ipairs(all) do
-        if info.isBlizzardLoadout and info.name and info.specID then
-            local s = Spec(info.specID)
-            if not s.bases[info.name] then
-                s.bases[info.name] = { name = info.name, configID = info.id, variants = {} }
+    -- BLIZZARD LOADOUTS COME FROM THE GAME, not from TLM's list of them.
+    --
+    -- TLM's is a cache, and a cache is behind: a loadout created a moment ago
+    -- is not in it, so the table went on showing an empty cell for something
+    -- that now existed -- and clicking the cell again made a second loadout
+    -- with the same name. GetConfigIDsBySpecID answers for every spec and
+    -- answers now.
+    --
+    -- The variants below still come from TLM, because they ARE TLM's: the
+    -- game knows nothing about them.
+    for _, specID in ipairs(PlayerSpecs()) do
+        local s = Spec(specID)
+        for _, configID in ipairs(_G.C_ClassTalents.GetConfigIDsBySpecID(specID) or {}) do
+            local info = _G.C_Traits.GetConfigInfo(configID)
+            if info and info.name and not s.bases[info.name] then
+                s.bases[info.name] = { name = info.name, configID = configID, variants = {} }
                 s.baseOrder[#s.baseOrder + 1] = info.name
             end
         end
@@ -543,12 +557,23 @@ end
 --- is no way to make one for a spec you are not in. Cells for other specs are
 --- drawn as missing but are not clickable, which is the honest rendering --
 --- the alternative is a button that fails for a reason the player cannot see.
-local function CreateBase(name)
+local function CreateBase(name, specID)
     local talents = _G.C_ClassTalents
     -- A real refusal from the game, not a check that the function is there:
     -- loadout slots run out, and talents do not change everywhere.
     if not talents.CanCreateNewConfig() then
         return AniMods.Print("no loadout slots left, or talents cannot change here.")
+    end
+
+    -- Asked of the game at the moment of the click, not of the table that
+    -- drew the cell. The game lets you make a second loadout with a name you
+    -- already have, and two of those are indistinguishable everywhere they
+    -- matter -- in the talent UI, in this table, and in TLM's parent list.
+    for _, configID in ipairs(talents.GetConfigIDsBySpecID(specID) or {}) do
+        local info = _G.C_Traits.GetConfigInfo(configID)
+        if info and info.name == name then
+            return AniMods.Print(("\"%s\" already exists."):format(name))
+        end
     end
 
     AniMods.W.Confirm({
@@ -654,7 +679,7 @@ end
 --- turned a wrong name into an empty list -- so the view drew nothing and
 --- every count read zero, which looks exactly like a character with nothing to
 --- show. A missing API should be an error, not a blank page.
-local function PlayerSpecs()
+PlayerSpecs = function()
     local si = _G.C_SpecializationInfo
     local _, _, classID = _G.UnitClass("player")
 
@@ -1004,7 +1029,7 @@ local function CellClick(cell, specID, specName, editable)
         -- do is stop being empty.
         if not editable then return nil end
         return function(button)
-            if button ~= "RightButton" then CreateBase(cell.name) end
+            if button ~= "RightButton" then CreateBase(cell.name, specID) end
         end
     end
 
