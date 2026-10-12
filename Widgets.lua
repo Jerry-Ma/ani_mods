@@ -522,14 +522,27 @@ function W.Confirm(spec)
         local cancel = W.Button(host, 100, 22)
         cancel.frame:SetPoint("BOTTOMRIGHT", confirm.frame, "BOTTOMLEFT", -8, 0)
 
-        confirmPopup = { frame = f, msg = msg, confirm = confirm, cancel = cancel }
+        confirmPopup = { frame = f, host = host, msg = msg,
+                         confirm = confirm, cancel = cancel }
     end
 
     local p = confirmPopup
-    p.msg:SetText(spec.message or "")
     p.msg:Resize(352)
+    p.msg:SetText(spec.message or "")
     p.confirm:SetText(spec.confirmText or "OK")
     p.cancel:SetText(spec.cancelText or "Cancel")
+
+    -- GROW TO FIT THE MESSAGE. The window was a fixed 150 tall, which was
+    -- enough for the one-line questions it started with and not for one that
+    -- lists eight loadout names -- the text ran straight through the buttons.
+    --
+    -- The chrome is measured rather than assumed: the content frame fills the
+    -- window below the title band, so the difference between the two is the
+    -- band, whatever the skin makes of it. Taken fresh each time because both
+    -- numbers move together when the height is set.
+    local chrome = (p.frame:GetHeight() or 150) - (p.host:GetHeight() or 0)
+    local body = 10 + (p.msg.frame:GetHeight() or 0) + 16 + 22 + 14
+    p.frame:SetHeight(math.max(150, chrome + body))
 
     p.confirm:SetOnClick(function()
         p.frame:Hide()

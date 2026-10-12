@@ -250,37 +250,16 @@ local function ApplyDump(text)
         failed > 0 and (", " .. failed .. " failed") or "")
 end
 
---- The collection as the convention sees it: base, then its variants.
-local function BuildGroupReport()
-    local groups, order = {}, {}
-    for _, info in ipairs(CustomLoadouts()) do
-        local base = BaseOf(info.name)
-        if not groups[base] then
-            groups[base] = {}
-            order[#order + 1] = base
-        end
-        table.insert(groups[base], info.name)
-    end
-
-    if #order == 0 then return "No custom loadouts found." end
-
-    -- The bag sorts last however it is spelled: it is a leftover, not a group.
-    table.sort(order, function(a, b)
-        if (a == UNCATEGORISED) ~= (b == UNCATEGORISED) then return b == UNCATEGORISED end
-        return a < b
-    end)
-
-    local out = {}
-    for _, base in ipairs(order) do
-        out[#out + 1] = base
-        table.sort(groups[base])
-        for _, entry in ipairs(groups[base]) do
-            out[#out + 1] = "    " .. entry
-        end
-        out[#out + 1] = ""
-    end
-    return table.concat(out, "\n")
-end
+-- There was a "Show groups" report here: every base, with its variants
+-- indented underneath, in a text window. It was the only view of the
+-- collection when the panel showed counts and nothing else, and the table
+-- has replaced it -- the bases ARE the cells, their variant counts are in the
+-- cell tooltips, and "File variants under their base" is the thing you would
+-- have opened the report to decide to press.
+--
+-- Kept being wrong, too. Its groups came from parsing names, so a name with a
+-- stray character made up a group that existed nowhere else in the addon, and
+-- the report was the only place that showed it.
 
 -- ---------------------------------------------------------------------------
 -- Bases -- the Blizzard loadouts that variants hang off
@@ -975,6 +954,68 @@ local function ConfirmDelete(list, opts)
     })
 end
 
+--- Loadouts whose names carry a stray leading "|", and what they should be.
+---
+--- WHY THEY EXIST. The dump writes one line per loadout as
+--- `<export string>|<name>` and restore splits at the first "|". An EditBox
+--- hands text back with every literal "|" doubled, so the paste is unescaped
+--- first -- and a line that reaches the split still carrying "||" yields a
+--- name beginning with "|". Every one of these was made by a restore, and
+--- each is one pipe away from correct.
+---
+--- WHY IT MATTERS. The name is the only thing that says where a loadout
+--- belongs. "|SV-M+1" parses to the base "|SV-M+", which is not "SV-M+", so
+--- it files under nothing, the table has no column for it, and the groups
+--- report shows a one-off group that exists nowhere else. The data is three
+--- different shapes depending on who is reading it.
+---
+--- Repaired rather than parsed around: tolerating it in the reader would
+--- leave the wrong name in TLM, in its panel and in the next dump.
+local function StrayPipeNames()
+    local out = {}
+    for _, info in ipairs(CustomLoadouts()) do
+        if type(info.name) == "string" and info.name:sub(1, 1) == "|" then
+            local fixed = info.name:gsub("^|+", "")
+            if fixed ~= "" then
+                out[#out + 1] = { id = info.id, from = info.name, to = fixed }
+            end
+        end
+    end
+    return out
+end
+
+local function RepairNames()
+    local strays = StrayPipeNames()
+    if #strays == 0 then
+        return AniMods.Print("no names need repairing.")
+    end
+
+    local lines = {}
+    for i, s in ipairs(strays) do
+        lines[i] = ("%s  ->  %s"):format(s.from, s.to)
+    end
+
+    AniMods.W.Confirm({
+        message = ("Rename %d loadout%s?\n\n%s\n\nThe leading \"|\" is left "
+              .. "over from a restore. Removing it puts each one back under "
+              .. "the base its name is meant to name."):format(
+                #strays, #strays == 1 and "" or "s",
+                table.concat(lines, "\n")),
+        confirmText = "Rename",
+        onConfirm = function()
+            local api = API()
+            local done, failed = 0, 0
+            for _, s in ipairs(strays) do
+                local ok, renamed = pcall(api.RenameLoadout, api, s.id, s.to)
+                if ok and renamed then done = done + 1 else failed = failed + 1 end
+            end
+            AniMods.Print(("renamed %d%s."):format(done,
+                failed > 0 and (", " .. failed .. " refused") or ""))
+            if AniMods.RefreshUI then AniMods.RefreshUI() end
+        end,
+    })
+end
+
 --- What a click on this cell does, or nil when there is nothing to do.
 ---
 --- EITHER BUTTON OPENS THE MENU, now that nothing is applied from here. An
@@ -1318,6 +1359,22 @@ function TalentLoadouts:GetInfoRows()
              .. "loadouts the game would not report a setting for.",
     }
     rows[#rows + 1] = {
+        label = "Names with a stray leading pipe",
+        value = tostring(#StrayPipeNames()),
+        help  = "Left over from a restore: the dump separates the export "
+             .. "string from the name with \"|\", and a line that kept an "
+             .. "extra one gives the name a leading pipe. It changes which "
+             .. "base the name belongs to, so the loadout files under nothing "
+             .. "and the table has no cell for it.",
+    }
+    rows[#rows + 1] = {
+        kind = "button", button = "Repair the pipe-prefixed names",
+        help = "Renames each one to what it was meant to be, after one "
+            .. "confirmation showing every change. Nothing else about the "
+            .. "loadout is touched.",
+        onClick = RepairNames,
+    }
+    rows[#rows + 1] = {
         kind = "button", button = "Delete the uncategorised loadouts",
         help = "Permanently deletes the uncategorised loadouts counted above, "
             .. "after one confirmation listing them. These are your own "
@@ -1338,14 +1395,6 @@ function TalentLoadouts:GetInfoRows()
     -- less place to look.
 
     rows[#rows + 1] = { section = "Transfer" }
-    rows[#rows + 1] = {
-        kind = "button", label = "Show groups", button = "Show",
-        help = "What the convention makes of the current collection, before "
-            .. "anything is written anywhere.",
-        onClick = function()
-            W.TextBox({ title = "Talent loadout groups", text = BuildGroupReport() })
-        end,
-    }
     rows[#rows + 1] = {
         kind = "button", label = "Dump all loadouts", button = "Dump",
         help = "Every custom loadout as one string. Copy it, then paste it into "
