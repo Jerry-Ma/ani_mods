@@ -754,6 +754,24 @@ local function ColumnPlan()
     return cols
 end
 
+--- THE LOADOUT IN USE CANNOT BE DELETED FROM HERE.
+---
+--- Deleting the applied loadout leaves the character on a build with nothing
+--- behind it -- the game falls back to its default state and the talent UI
+--- has no selection -- which is a mess to notice and a worse one to undo. The
+--- game permits it; this does not offer it. Apply something else first and
+--- the entry comes back.
+local function CanDelete(cell)
+    return not cell.current
+end
+
+--- Whether a right-click has anything to show. A menu that opens empty is
+--- worse than one that does not open.
+local function HasMenu(cell)
+    return cell.state ~= "missing"
+        and (cell.shared == false or CanDelete(cell))
+end
+
 --- A cell's tooltip: what it is, and what a click does or why it cannot.
 --- User-facing text, so it says what and what-to-do and nothing about why it
 --- is built this way.
@@ -789,9 +807,11 @@ local function CellTip(cell, editable)
     if not cell.current then
         head = head .. "\n\nLeft-click to apply it"
             .. (editable and "." or ", switching spec first.")
-        return head .. "\nRight-click for more."
     end
-    return head .. "\n\nRight-click for more."
+    if HasMenu(cell) then
+        head = head .. (cell.current and "\n\n" or "\n") .. "Right-click for more."
+    end
+    return head
 end
 
 -- ── Applying a loadout ──────────────────────────────────────────────────────
@@ -901,9 +921,11 @@ local function OtherTip(entry, editable)
     if not entry.current then
         head = head .. "\n\nLeft-click to apply it"
             .. (editable and "." or ", switching spec first.")
-        return head .. "\nRight-click for more."
     end
-    return head .. "\n\nRight-click for more."
+    if entry.shared == false or CanDelete(entry) then
+        head = head .. (entry.current and "\n\n" or "\n") .. "Right-click for more."
+    end
+    return head
 end
 
 --- Delete one Blizzard loadout, or a set of them, behind one confirmation.
@@ -913,7 +935,15 @@ end
 --- their edit dialog, so reusing it would mean N popups for what is one
 --- decision -- and a chain of destructive popups is the worst possible thing
 --- to make someone click through.
-local function ConfirmDelete(entries)
+local function ConfirmDelete(list)
+    -- Filtered HERE as well as at both call sites. The call sites hide the
+    -- action so it cannot be chosen; this makes sure no later caller can get
+    -- past it by accident, because the cost of being wrong is a character
+    -- left on a build with nothing behind it.
+    local entries = {}
+    for _, e in ipairs(list) do
+        if CanDelete(e) then entries[#entries + 1] = e end
+    end
     if #entries == 0 then return end
 
     local names = {}
@@ -999,12 +1029,15 @@ local function CellClick(cell, specID, specName, editable)
                 onClick = function() ConfirmSharedBars(cell.configID, cell.name) end,
             }
         end
-        entries[#entries + 1] = {
-            text = "Delete " .. cell.name,
-            onClick = function()
-                ConfirmDelete({ { name = cell.name, configID = cell.configID } })
-            end,
-        }
+        if CanDelete(cell) then
+            entries[#entries + 1] = {
+                text = "Delete " .. cell.name,
+                onClick = function()
+                    ConfirmDelete({ { name = cell.name, configID = cell.configID } })
+                end,
+            }
+        end
+        if #entries == 0 then return end
         AniMods.W.Menu(anchor, entries, { atCursor = true })
     end
 end
@@ -1205,7 +1238,7 @@ function TalentLoadouts:GetInfoRows()
                     onClick = CellClick({
                         state = (entry.shared == false) and "warn" or "ok",
                         name = entry.name, configID = entry.configID,
-                        shared = entry.shared,
+                        shared = entry.shared, current = entry.current,
                     }, specID, g.specName, g.active),
                 }
             end
@@ -1245,16 +1278,23 @@ function TalentLoadouts:GetInfoRows()
             .. "report a setting for are left alone.",
         onClick = UseSharedBarsForAll,
     }
-    -- Only when there is something to delete. A permanently-present delete
-    -- button on a panel about talent builds is an invitation to a mistake.
-    if #offConvention > 0 then
+    -- Only when there is something to delete, and never the one in use. A
+    -- permanently-present delete button on a panel about talent builds is an
+    -- invitation to a mistake, and a bulk one that quietly includes the
+    -- applied loadout is the same mistake made for you.
+    local deletable = {}
+    for _, entry in ipairs(offConvention) do
+        if CanDelete(entry) then deletable[#deletable + 1] = entry end
+    end
+    if #deletable > 0 then
         rows[#rows + 1] = {
             kind = "button", button = "Delete the Other loadouts",
             help = "Permanently deletes the loadouts in the Other rows, after "
                 .. "one confirmation listing them. The builds in them are "
-                .. "gone; TLM loadouts filed under them are not deleted, but "
-                .. "lose the slot they were pointed at.",
-            onClick = function() ConfirmDelete(offConvention) end,
+                .. "gone; loadouts filed under them are not deleted, but lose "
+                .. "the slot they were pointed at.\n\nA loadout a spec is "
+                .. "currently on is left alone -- apply something else first.",
+            onClick = function() ConfirmDelete(deletable) end,
         }
     end
 
