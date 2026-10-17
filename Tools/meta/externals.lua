@@ -132,6 +132,13 @@ TalentLoadoutManagerAPI = nil
 ---@type any
 ClassTalentsFrame = nil
 
+---MeetingStone's main window, which it publishes as a global at the end of
+---its own MainPanel OnInitialize. The Meeting Stone module resizes it: the
+---addon fixes it at 922x447 and offers only a scale setting, which enlarges
+---the text along with the window and so shows no more of the activity list.
+---@type any
+MeetingStoneMainPanel = nil
+
 ---Not a Blizzard API: a convention that addons reshaping the minimap define,
 ---returning a shape name ("ROUND", "SQUARE", "TRICORNER-TOPLEFT", ...).
 ---LibDBIcon reads it and so does General's minimap button, both guarded --

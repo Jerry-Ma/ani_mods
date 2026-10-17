@@ -29,6 +29,7 @@ Modules\EllesmereUIMisc.lua
 Modules\ExtraButtonClicks.lua
 Modules\GearSync.lua
 Modules\GroupRoles.lua
+Modules\MeetingStone.lua
 Modules\NSRTMisc.lua
 Modules\PluginButtons.lua
 Modules\ShiftFocus.lua

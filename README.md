@@ -1229,6 +1229,19 @@ both toggleable in **General**.
   windows showing the same numbers. This switches it back on for a setup that has none.
   Its three conditions are all *forbids* — EllesmereUI, NDui, Details — because the
   module exists only when the field is empty.
+- **Meeting Stone** — resizes MeetingStone's main window, which the addon fixes at
+  922×447 in `MainPanel.lua`'s `OnInitialize` and offers no setting for. Its `uiscale`
+  setting is not the same thing: scaling enlarges the text along with the window, so the
+  activity list still shows the same number of rows. Three things had to be true for a
+  resize to leave a working window rather than a broken one, and each was checked in
+  NetEaseGUI's source: the border art is anchored by two points per bar with only the
+  corners fixed (ordinary nine-slice, so it stretches); `Panel:SetTopHeight` places the
+  inset by offsets from the panel's own edges and each content panel is `SetAllPoints` on
+  it; and `ListView:OnSizeChanged` clears `maxCount` and re-lays out, so a taller window
+  draws *more rows* rather than the same rows with blank space beneath. That last one is
+  the whole point — a resize that showed no more than before would just be a bigger
+  window. Re-applied on the window's `OnShow`, not once at login, because the frame isn't
+  ours and whatever sets its size last at load would otherwise win.
 - **Talent Loadouts** — dumps every Talent Loadout Manager build into one string and
   reads them back, which TLM itself can't do (its own import/export is one build at a
   time). Everything goes through `TalentLoadoutManagerAPI`, never TLM's saved variables:
