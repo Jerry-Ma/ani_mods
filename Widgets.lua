@@ -2531,9 +2531,30 @@ function W.Slider(parent, width)
     label:SetPoint("TOPLEFT", f, "TOPLEFT", 8, 0)
     label:SetJustifyH("LEFT")
 
-    local valueFS = W.Font(f, 12, nil, W.TEXT_A)
-    valueFS:SetPoint("TOPRIGHT", f, "TOPRIGHT", -8, 0)
-    valueFS:SetJustifyH("RIGHT")
+    -- THE READ-OUT IS AN EDIT BOX, not a label. Dragging is the right way to
+    -- find a value and the wrong way to land on one: at four digits a pixel
+    -- of travel is several units, so "make it 1180" means nudging until the
+    -- number agrees. Typing it is one gesture and exact.
+    --
+    -- It still looks like a read-out until you click in it. A box with a
+    -- border drawn permanently would advertise a field in every slider row,
+    -- which is more furniture than the common case wants.
+    local valueBox = CreateFrame("EditBox", nil, f)
+    valueBox:SetSize(52, 16)
+    valueBox:SetPoint("TOPRIGHT", f, "TOPRIGHT", -6, 0)
+    valueBox:SetAutoFocus(false)
+    valueBox:SetMultiLine(false)
+    valueBox:SetJustifyH("RIGHT")
+    -- A bare CreateFrame("EditBox") takes no mouse, so clicking it does
+    -- nothing at all and it reads as a label that will not focus.
+    valueBox:EnableMouse(true)
+    -- Deliberately NOT SetNumeric: it would also refuse a minus sign, and
+    -- this widget is shared with any slider that might one day have a
+    -- negative end. Junk is handled where the value is read instead.
+    W.SetFont(valueBox, 12)
+
+    local valueBG = W.Tex(valueBox, "BACKGROUND", 1, 1, 1, 0)
+    valueBG:SetAllPoints()
 
     local slider = CreateFrame("Slider", nil, f)
     slider:SetOrientation("HORIZONTAL")
@@ -2564,7 +2585,12 @@ function W.Slider(parent, width)
         local pct = (maxV > minV) and ((v - minV) / (maxV - minV)) or 0
         local w = slider:GetWidth() or 0
         fill:SetWidth(math.max(1, w * pct))
-        valueFS:SetText(tostring(math.floor(v + 0.5)))
+        -- Left alone while it has focus: rewriting the box under someone
+        -- mid-type is how a field eats half of what was typed.
+        if not valueBox:HasFocus() then
+            valueBox:SetText(tostring(math.floor(v + 0.5)))
+            valueBox:SetCursorPosition(0)
+        end
     end
 
     slider:SetScript("OnValueChanged", function(_, value)
@@ -2575,6 +2601,31 @@ function W.Slider(parent, width)
         if o._onChange then o._onChange(slider:GetValue()) end
     end)
     slider:SetScript("OnSizeChanged", Redraw)
+
+    -- A typed value goes through the SLIDER, not around it: setting it there
+    -- clamps to the range and snaps to the step, so the box cannot produce a
+    -- value the drag never could. Redraw then writes back whatever survived
+    -- that, which is also how a rejected entry shows what it became.
+    local function CommitTyped()
+        local typed = tonumber(valueBox:GetText())
+        if typed then slider:SetValue(typed) end
+        Redraw()
+        if o._onChange then o._onChange(slider:GetValue()) end
+    end
+
+    valueBox:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
+    valueBox:SetScript("OnEditFocusLost", function()
+        valueBG:SetColorTexture(1, 1, 1, 0)
+        CommitTyped()
+    end)
+    valueBox:SetScript("OnEditFocusGained", function(self)
+        valueBG:SetColorTexture(1, 1, 1, 0.10)
+        self:HighlightText()
+    end)
+    valueBox:SetScript("OnEscapePressed", function(self)
+        self:ClearFocus()
+        Redraw()
+    end)
 
     function o:SetLabel(text) label:SetText(text or "") end
     function o:SetRange(minV, maxV, step)
