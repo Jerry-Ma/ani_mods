@@ -524,143 +524,30 @@ end
 --   schedule, because re-posting a standing fact every few seconds is how a
 --   warning becomes noise.
 
-local WARN_COLOR = { 1, 0.65, 0.25 }  -- W.BADGE_WARN, the widget's amber
-
+-- The plumbing is in Warn.lua, because a second module wanted the same thing
+-- and none of it was ever about gear. What is left here is the sentence and
+-- the rule for when it is true.
+--
 -- Our key in NSRT's display. Named after us on purpose: it is written into
 -- another addon's saved variables and should say whose it is on sight.
-local NSRT_KEY = "AniModsGearSync"
+local warning = AniMods.Warn.New("AniModsGearSync")
 
--- The icon crop every WoW icon uses -- 4..60 of a 64px canvas trims the border
--- the art is drawn with. NSRT writes its own entries exactly this way.
-local function IconEscape(icon, size)
-    if not icon then return "" end
-    return ("|T%s:%d:%d:0:0:64:64:4:60:4:60|t "):format(icon, size, size)
-end
-
--- Reached by shape rather than by name, the way every other foreign-addon read
--- in AniMods is: the pieces we actually call have to be there, and a partial or
--- renamed install then reads as absent instead of erroring.
-local function NSRTDisplay()
-    local NSI = _G.NorthernSkyRaidTools
-    if type(NSI) ~= "table" or type(NSI.UpdateQoLTextDisplay) ~= "function" then return nil end
-    -- Its renderer reads NSRT.QoL.TextDisplay for anchor, font and offsets, so
-    -- without that table there is nothing to draw into.
-    local db = _G.NSRT
-    if type(db) ~= "table" or type(db.QoL) ~= "table" or type(db.QoL.TextDisplay) ~= "table" then
-        return nil
-    end
-    return NSI, db
-end
-
-local function BigWigsMessages()
-    local bw = _G.BigWigs
-    if type(bw) ~= "table" or type(bw.GetPlugin) ~= "function" then return nil end
-    -- The silent form: a missing plugin returns nil rather than erroring.
-    local ok, plugin = _G.pcall(bw.GetPlugin, bw, "Messages", true)
-    if not ok or type(plugin) ~= "table" or type(plugin.SendMessage) ~= "function" then
-        return nil
-    end
-    return plugin
-end
-
-local BACKENDS = {
-    {
-        title  = "Northern Sky Raid Tools",
-        detail = "Its QoL text display -- the one that says Gateway Useable or "
-              .. "Reset Boss. The line stays up while the gear is wrong.",
-        Available = function() return NSRTDisplay() ~= nil end,
-        Show = function(text, icon)
-            local NSI, db = NSRTDisplay()
-            if not (NSI and db) then return false end
-            -- Its renderer draws an entry only while NSRT.QoL[SettingsName] is
-            -- truthy -- that is how its own displays are switched on and off in
-            -- its options. Ours has no row there, so we set the flag ourselves.
-            -- One boolean under a name that says who put it there; with AniMods
-            -- gone it is read by nothing, since the entry it gated is gone too.
-            db.QoL[NSRT_KEY] = true
-            NSI.QoLTextDisplays = NSI.QoLTextDisplays or {}
-            NSI.QoLTextDisplays[NSRT_KEY] = {
-                SettingsName = NSRT_KEY,
-                text = IconEscape(icon, 12) .. text,
-            }
-            NSI:UpdateQoLTextDisplay()
-            return true
-        end,
-        Clear = function()
-            local NSI = NSRTDisplay()
-            if not NSI or type(NSI.QoLTextDisplays) ~= "table" then return end
-            if NSI.QoLTextDisplays[NSRT_KEY] == nil then return end
-            NSI.QoLTextDisplays[NSRT_KEY] = nil
-            NSI:UpdateQoLTextDisplay()
-        end,
-    },
-    {
-        title  = "BigWigs",
-        detail = "Its message area, where boss warnings appear. Posted once "
-              .. "when the mismatch appears rather than held there.",
-        Available = function() return BigWigsMessages() ~= nil end,
-        Show = function(text, icon)
-            local plugin = BigWigsMessages()
-            if not plugin then return false end
-            -- BigWigs' own idiom, the one its Victory and Wipe plugins use.
-            -- The colour is passed as a TABLE rather than a name, which is what
-            -- makes the module and key arguments irrelevant: with a table it
-            -- never consults the Colors plugin, so there is no boss module to
-            -- pretend to be. Not emphasized -- that is the huge centre-screen
-            -- treatment, and this is a housekeeping note, not a mechanic.
-            plugin:SendMessage("BigWigs_Message", plugin, nil, text, WARN_COLOR, icon, false)
-            return true
-        end,
-        -- No Clear. A BigWigs message is something that already happened and
-        -- fades on its own; there is nothing standing there to take away.
-    },
-}
-
-local warnBackend, warnText
-
-local function ClearWarning()
-    if not warnBackend then return end
-    if warnBackend.Clear then warnBackend.Clear() end
-    warnBackend, warnText = nil, nil
-end
-
-local function PickBackend()
-    for _, backend in ipairs(BACKENDS) do
-        if backend.Available() then return backend end
-    end
-    return nil
-end
 
 local function WarnEnabled()
     return ModuleDB().warn ~= false
 end
 
 local function UpdateWarning(st)
+    -- Nothing to say is said by passing nothing: the channel takes the line
+    -- down for a held display and does nothing for a stream, which is the
+    -- right answer for each.
     if not (moduleEnabled and WarnEnabled() and st.state == "drift") then
-        ClearWarning()
+        warning:Show(nil)
         return
     end
 
-    local backend = PickBackend()
-    if not backend then
-        ClearWarning()
-        return
-    end
-
-    local text = ("Gear mismatch: %s, loadout wants %s"):format(
-        st.equippedName or "no set", st.targetName)
-
-    -- One rule serves both kinds of channel: post only when the line we would
-    -- put up differs from the one already up. A held display is left alone
-    -- while nothing changes, and a stream gets exactly one message when the
-    -- mismatch appears -- and another only if you drift into a DIFFERENT wrong
-    -- set, which is genuinely new information.
-    if backend == warnBackend and text == warnText then return end
-    if warnBackend and warnBackend ~= backend then ClearWarning() end
-
-    if backend.Show(text, st.targetIcon) then
-        warnBackend, warnText = backend, text
-    end
+    warning:Show(("Gear mismatch: %s, loadout wants %s"):format(
+        st.equippedName or "no set", st.targetName), st.targetIcon)
 end
 
 -- ---------------------------------------------------------------------------
@@ -863,34 +750,13 @@ function GearSync:GetInfoRows()
         end,
     }
 
-    rows[#rows + 1] = { section = "On-screen warning" }
-    local backend = PickBackend()
-    rows[#rows + 1] = {
-        label = "Warn on screen",
-        get   = WarnEnabled,
-        set   = function(v)
-            ModuleDB().warn = v and true or false
-            Refresh()
-        end,
-        help  = "Says so in your existing warning display when the set you are "
-             .. "wearing is not the one your loadout names. The data bar widget "
-             .. "only helps if you happen to look at it, and gear matters most "
-             .. "when you are looking somewhere else.",
-    }
-    rows[#rows + 1] = {
-        label = "Channel",
-        value = backend and backend.title or "none detected",
-        help  = (backend and (backend.detail .. "\n\n") or "")
-             .. "Northern Sky Raid Tools first, then BigWigs -- whichever is "
-             .. "there. Nothing is drawn when neither is: you have already "
-             .. "placed and styled a warning area, and a second one from us "
-             .. "would be another thing to position.\n\n"
-             .. "EllesmereUI is deliberately not in that list. Its combat alert "
-             .. "is the nearest thing it has and it takes no message -- it "
-             .. "draws the words you configured for entering and leaving "
-             .. "combat, and every other EllesmereUI warning writes its own "
-             .. "sentence the same way.",
-    }
+    for _, row in ipairs(AniMods.Warn.SectionRows(ModuleDB, Refresh,
+        "Says so in your existing warning display when the set you are "
+        .. "wearing is not the one your loadout names. The data bar widget "
+        .. "only helps if you happen to look at it, and gear matters most "
+        .. "when you are looking somewhere else.")) do
+        rows[#rows + 1] = row
+    end
 
     for _, row in ipairs(Broker.SectionRows(ModuleDB, UpdateBroker, "AniModsGearSync", {
         -- The icon is the equipment set's own and is published through LDB's

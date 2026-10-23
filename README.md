@@ -220,6 +220,35 @@ drifted to differently-named copies of the same getter before this was pulled ou
 broker's settings live in that module's own saved-variables table — shared *behaviour*,
 not shared state.
 
+### Shared warning channel (`Warn.lua`)
+
+Two modules now post an on-screen line — Gear Sync when the worn set isn't the one the
+loadout names, Action Bar Swap when the bar is off page 1 — so the plumbing moved out of
+Gear Sync rather than being copied. Nothing about it was ever specific to gear: what
+differs between callers is the sentence and the key it's filed under, and both are
+arguments.
+
+**It never draws a display of its own.** You've already placed, sized and coloured a
+warning area; a second one from us is another thing to move and another style to keep in
+line. It posts into yours — NSRT's QoL text display first, then BigWigs' message area —
+and when there's neither it stays quiet, because an unpositioned warning nobody asked for
+is worse than no warning.
+
+EllesmereUI is deliberately not in that list, and the comment says so at length so the
+gap reads as a finding rather than an oversight: its combat alert takes no message. The
+frame is an unexported local, the only entry point is `_combatAlertPreview(which)`, and
+what that draws is the words *you* configured for entering or leaving combat. Getting a
+line in would mean overwriting `combatAlertEnterText` and putting it back — corrupting a
+setting of yours to borrow a frame for 1.85 seconds.
+
+The two that do take a message are different *kinds* of channel and are used as each was
+built. NSRT's is a list of things true right now, so a line goes up and stays up; BigWigs'
+is a stream of things that just happened, so ours is posted once and expires on their
+schedule. One rule serves both: post only when the line differs from the one already up.
+A held display is left alone while nothing changes, and a stream gets exactly one message
+rather than one per refresh. `Warn.SectionRows` supplies the switch and the "Channel"
+readout, so two modules can't drift into describing the same channel two different ways.
+
 ### Broker hover popups (`W.Tooltip`)
 
 Every broker's hover popup is `W.Tooltip` — a themed panel, so it follows the user's
@@ -1229,6 +1258,16 @@ both toggleable in **General**.
   windows showing the same numbers. This switches it back on for a setup that has none.
   Its three conditions are all *forbids* — EllesmereUI, NDui, Details — because the
   module exists only when the field is empty.
+- **Action Bar Swap** — warns, in the same channel Gear Sync uses, while the main
+  action bar is on any page but 1. `/swapactionbar 1 2` is a toggle and a toggle has no
+  memory: you press it, something happens, and the only other way to tell which page
+  you're on is recognising your own buttons — exactly what you can't do at a glance when
+  the pages are deliberately similar, and pressing it again to check is a coin toss that
+  costs a global. Page 1 is home and *anything* else is not, rather than page 2
+  specifically, because the page also moves for reasons unrelated to the macro (a
+  vehicle, a form, another addon's paging) and "you are not on your own bar" is worth
+  saying in all of them — so the message names the page. `ACTIONBAR_PAGE_CHANGED` is the
+  entire event list; the page is a number the game changes and announces.
 - **Meeting Stone** — resizes MeetingStone's main window, which the addon fixes at
   922×447 in `MainPanel.lua`'s `OnInitialize` and offers no setting for. Its `uiscale`
   setting is not the same thing: scaling enlarges the text along with the window, so the

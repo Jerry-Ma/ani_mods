@@ -14,12 +14,14 @@ Libs\LibStub\LibStub.lua
 
 Core.lua
 Broker.lua
+Warn.lua
 Compat.lua
 Widgets.lua
 UI.lua
 Modules\General.lua
 Modules\Bar.lua
 Modules\AchievementShot.lua
+Modules\ActionBarSwap.lua
 Modules\AutoCombatLog.lua
 Modules\BarToggle.lua
 Modules\CDMSounds.lua
